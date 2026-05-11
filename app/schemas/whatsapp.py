@@ -1,0 +1,77 @@
+"""Pydantic models for Meta WhatsApp Cloud API webhook payloads."""
+
+from typing import Any, Optional
+
+from pydantic import BaseModel, Field
+
+
+class WhatsAppTextMessage(BaseModel):
+    body: str
+
+
+class WhatsAppAudioMessage(BaseModel):
+    id: str
+    mime_type: Optional[str] = None
+
+
+class WhatsAppImageMessage(BaseModel):
+    id: str
+    mime_type: Optional[str] = None
+
+
+class WhatsAppDocumentMessage(BaseModel):
+    id: str
+    mime_type: Optional[str] = None
+
+
+class WhatsAppInteractiveReply(BaseModel):
+    id: str
+    title: str
+
+
+class WhatsAppInteractiveMessage(BaseModel):
+    type: str
+    button_reply: Optional[WhatsAppInteractiveReply] = None
+    list_reply: Optional[WhatsAppInteractiveReply] = None
+
+
+class WhatsAppIncomingMessage(BaseModel):
+    id: str
+    from_number: str = Field(alias="from")
+    timestamp: str
+    type: str
+    text: Optional[WhatsAppTextMessage] = None
+    audio: Optional[WhatsAppAudioMessage] = None
+    image: Optional[WhatsAppImageMessage] = None
+    document: Optional[WhatsAppDocumentMessage] = None
+    interactive: Optional[WhatsAppInteractiveMessage] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class WhatsAppContact(BaseModel):
+    wa_id: str
+    profile: Optional[dict[str, Any]] = None
+
+
+class WhatsAppValue(BaseModel):
+    messaging_product: str
+    metadata: dict[str, Any]
+    contacts: Optional[list[WhatsAppContact]] = None
+    messages: Optional[list[WhatsAppIncomingMessage]] = None
+    statuses: Optional[list[Any]] = None
+
+
+class WhatsAppChange(BaseModel):
+    value: WhatsAppValue
+    field: str
+
+
+class WhatsAppEntry(BaseModel):
+    id: str
+    changes: list[WhatsAppChange]
+
+
+class WhatsAppWebhookPayload(BaseModel):
+    object: str
+    entry: list[WhatsAppEntry]

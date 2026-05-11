@@ -1,0 +1,127 @@
+{
+  "name": "GET_DOCTORES_ODONTOKING",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -144,
+        176
+      ],
+      "id": "de5e3e27-7dbd-470d-b98c-b524c79be4ae",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "url": "https://odontoking.sofopolis.com/api/doctors",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "page",
+              "value": "1"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        80,
+        176
+      ],
+      "id": "231e947c-08bb-4606-9dbf-dabe1e4d28b5",
+      "name": "GET DOCTORES"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json.data;\n\nconst filtered = data.map(item => ({\n  id: item.id,\n  name: item.name,\n  status: item.is_active,\n  specialties: item.specialties?.map(s => ({\n    id: s.id,\n    name: s.name\n  })) || [],\n  availability: item.availability?.map(s => ({\n    date: s.date,\n    start_time: s.start_time,\n    end_time: s.end_time\n  })) || [],\n}));\n\nreturn [\n  {\n    json: { data: filtered }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        0
+      ],
+      "id": "d93438f2-b9cf-4c1c-ae6b-f5d7e4390be9",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json.data;\n\nconst filtered = data.map(item => ({\n  id: item.id,\n  name: item.name,\n  status: item.is_active,\n  minimum_patient_age: item.age_range_min,\n  maximum_patient_age: item.age_range_max,\n  specialties: item.specialties?.map(s => ({\n    id: s.id,\n    name: s.name\n  })) || [],\n}));\n\nreturn [\n  {\n    json: { data: filtered }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        176
+      ],
+      "id": "2588b3b2-8857-4e8b-aab2-d6adbc4166d9",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {},
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "GET DOCTORES",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET DOCTORES": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "09b1d523-bac6-45ef-bc8c-26b8e15f7a75",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "79c9c47ad58f9fe9ba1a8b4adbf6c19079437cad5399cfc1d6786747a4432ff6"
+  },
+  "id": "eH7cRDJTtCGf5So3",
+  "tags": []
+}

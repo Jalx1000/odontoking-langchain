@@ -1,0 +1,123 @@
+{
+  "name": "GET_DOCTORES_HORARIOS_ODONTOKING",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "id_doctor",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -144,
+        176
+      ],
+      "id": "1e218a63-3960-4347-81f0-9ef96a86f72c",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "url": "https://odontoking.sofopolis.com/api/doctors",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "page",
+              "value": "1"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        80,
+        176
+      ],
+      "id": "824856c0-4752-4569-9ad9-bfa771393e8a",
+      "name": "GET DOCTORES"
+    },
+    {
+      "parameters": {
+        "jsCode": "const targetDoctorId = $('When Executed by Another Workflow').first().json.id_doctor;\nconst doctors = $input.first().json.data;\n\nreturn doctors\n  .filter(doctor => doctor.id === targetDoctorId)\n  .map(doctor => ({\n    json: {\n      doctor_id: doctor.id,\n      name: doctor.name,\n      availability: doctor.availability\n        .map(slot => ({\n          date: slot.date,\n          start_time: slot.start_time\n        }))\n    }\n  }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        176
+      ],
+      "id": "afa5e41c-1224-4a7a-8efc-4e4f1e9c5e3a",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "id_doctor": 9
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "GET DOCTORES",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET DOCTORES": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "ea9573f8-72dc-45b2-bde2-a86d05a89e12",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "79c9c47ad58f9fe9ba1a8b4adbf6c19079437cad5399cfc1d6786747a4432ff6"
+  },
+  "id": "Y5w8cXu0z4PvetCC",
+  "tags": []
+}
