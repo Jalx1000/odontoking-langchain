@@ -9,7 +9,7 @@ import httpx
 from app.core.config import settings
 from app.core.logging import logger
 
-_GRAPH_URL = "https://graph.facebook.com/v19.0"
+_GRAPH_URL = "https://graph.facebook.com/v25.0"
 
 
 def _auth_headers() -> dict[str, str]:

@@ -220,6 +220,7 @@ class Settings:
         # Odontoking API
         self.ODONTOKING_API_URL = os.getenv("ODONTOKING_API_URL", "https://odontoking.sofopolis.com")
         self.ODONTOKING_API_TOKEN = os.getenv("ODONTOKING_API_TOKEN", "")
+        self.ODONTOKING_MEMORY_ENABLED = os.getenv("ODONTOKING_MEMORY_ENABLED", "false").lower() in ("true", "1", "yes")
 
         # Sharemedata Calendar
         self.SHAREMEDATA_API_URL = os.getenv("SHAREMEDATA_API_URL", "http://gamma.sharemedata.com:3000")

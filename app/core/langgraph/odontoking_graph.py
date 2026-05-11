@@ -224,16 +224,24 @@ class OdontokingAgent:
         from app.utils import dump_messages as _dump
 
         try:
-            state, relevant_memory = await asyncio.gather(
-                graph.aget_state(config),
-                memory_service.search(wa_id, messages[-1].content if messages else ""),
-            )
+            if settings.ODONTOKING_MEMORY_ENABLED:
+                state_result, memory_result = await asyncio.gather(
+                    graph.aget_state(config),
+                    memory_service.search(wa_id, messages[-1].content if messages else ""),
+                    return_exceptions=True,
+                )
+                state = state_result if not isinstance(state_result, Exception) else None
+                relevant_memory = memory_result if isinstance(memory_result, str) else ""
+                if isinstance(memory_result, Exception):
+                    logger.warning("odontoking_memory_search_failed", wa_id=wa_id, error=str(memory_result))
+            else:
+                state = await graph.aget_state(config)
+                relevant_memory = ""
 
-            if state.next:
+            if state and state.next:
                 logger.info("odontoking_resuming_graph", wa_id=wa_id)
                 response = await graph.ainvoke(Command(resume=messages[-1].content), config=config)
             else:
-                relevant_memory = relevant_memory or ""
                 response = await graph.ainvoke(
                     input={"messages": _dump(messages), "long_term_memory": relevant_memory},
                     config=config,
@@ -257,9 +265,13 @@ class OdontokingAgent:
             except (json.JSONDecodeError, AttributeError):
                 mensaje = last_content
 
-            # Fire-and-forget memory update
-            openai_msgs = cast(list[dict], convert_to_openai_messages(response["messages"]))
-            asyncio.create_task(memory_service.add(wa_id, openai_msgs, {"wa_id": wa_id}))
+            # Fire-and-forget memory update (only when memory is enabled)
+            if settings.ODONTOKING_MEMORY_ENABLED:
+                try:
+                    openai_msgs = cast(list[dict], convert_to_openai_messages(response["messages"]))
+                    asyncio.create_task(memory_service.add(wa_id, openai_msgs, {"wa_id": wa_id}))
+                except Exception as mem_err:
+                    logger.warning("odontoking_memory_add_skipped", wa_id=wa_id, error=str(mem_err))
 
             return str(mensaje)
 
@@ -270,6 +282,21 @@ class OdontokingAgent:
         except Exception as e:
             logger.exception("odontoking_get_response_failed", wa_id=wa_id, error=str(e))
             raise
+
+
+    async def clear_history(self, wa_id: str) -> None:
+        """Delete all LangGraph checkpoint data for a given WhatsApp ID."""
+        pool = await self._get_connection_pool()
+        if pool is None:
+            raise RuntimeError("connection pool unavailable")
+        async with pool.connection() as conn:
+            async with conn.pipeline():
+                for table in settings.CHECKPOINT_TABLES:
+                    await conn.execute(
+                        sql.SQL("DELETE FROM {} WHERE thread_id = %s").format(sql.Identifier(table)),
+                        (wa_id,),
+                    )
+        logger.info("odontoking_history_cleared", wa_id=wa_id)
 
 
 odontoking_agent = OdontokingAgent()

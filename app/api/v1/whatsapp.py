@@ -43,6 +43,14 @@ async def verify_webhook(
     raise HTTPException(status_code=403, detail="Forbidden")
 
 
+@router.delete("/history/{wa_id}")
+async def clear_history(wa_id: str, request: Request) -> dict:
+    """Clear conversation history for a WhatsApp number. Dev/admin use only."""
+    await odontoking_agent.clear_history(wa_id)
+    logger.info("whatsapp_history_cleared_via_api", wa_id=wa_id)
+    return {"status": "ok", "wa_id": wa_id}
+
+
 @router.post("/webhook")
 @limiter.limit("100 per minute")
 async def receive_message(request: Request) -> dict:
@@ -105,7 +113,10 @@ async def receive_message(request: Request) -> dict:
                         continue
 
                 elif msg_type in ("image", "document", "video", "sticker"):
-                    await send_text_message(wa_id, _UNSUPPORTED_MSG)
+                    try:
+                        await send_text_message(wa_id, _UNSUPPORTED_MSG)
+                    except Exception as e:
+                        logger.exception("whatsapp_unsupported_reply_failed", wa_id=wa_id, error=str(e))
                     continue
 
                 else:
@@ -124,9 +135,12 @@ async def receive_message(request: Request) -> dict:
                     logger.info("whatsapp_response_sent", wa_id=wa_id, preview=response_text[:60])
                 except Exception as e:
                     logger.exception("whatsapp_agent_error", wa_id=wa_id, error=str(e))
-                    await send_text_message(
-                        wa_id,
-                        "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.",
-                    )
+                    try:
+                        await send_text_message(
+                            wa_id,
+                            "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.",
+                        )
+                    except Exception:
+                        pass
 
     return {"status": "ok"}

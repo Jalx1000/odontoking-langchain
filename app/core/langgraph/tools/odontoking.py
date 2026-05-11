@@ -30,6 +30,9 @@ async def get_services() -> str:
             filtered = [{"id": item["id"], "name": item["name"]} for item in data]
             logger.info("odontoking_services_fetched", count=len(filtered))
             return json.dumps({"data": filtered}, ensure_ascii=False)
+    except httpx.HTTPStatusError as e:
+        logger.exception("get_services_http_error", status=e.response.status_code, error=str(e))
+        return json.dumps({"error": f"API returned {e.response.status_code}", "status": e.response.status_code})
     except Exception as e:
         logger.exception("get_services_failed", error=str(e))
         return json.dumps({"error": str(e)})
