@@ -55,6 +55,8 @@ class WhatsAppContact(BaseModel):
 
 
 class WhatsAppValue(BaseModel):
+    """Value object containing messaging product, metadata, contacts, messages, and statuses."""
+
     messaging_product: str
     metadata: dict[str, Any]
     contacts: Optional[list[WhatsAppContact]] = None
@@ -63,15 +65,21 @@ class WhatsAppValue(BaseModel):
 
 
 class WhatsAppChange(BaseModel):
+    """Change object representing a change event in the webhook payload."""
+
     value: WhatsAppValue
     field: str
 
 
 class WhatsAppEntry(BaseModel):
+    """Entry object representing an entry in the webhook payload containing changes."""
+
     id: str
     changes: list[WhatsAppChange]
 
 
 class WhatsAppWebhookPayload(BaseModel):
+    """Root webhook payload from Meta WhatsApp Cloud API containing object type and entries."""
+
     object: str
     entry: list[WhatsAppEntry]
