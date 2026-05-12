@@ -42,7 +42,7 @@ from psycopg_pool import AsyncConnectionPool
 from pydantic import SecretStr
 
 from app.core.config import settings
-from app.core.langgraph.tools.crm import update_crm
+from app.core.langgraph.tools.crm import get_citas, update_crm
 from app.core.langgraph.tools.insurance import verify_insurance
 from app.core.langgraph.tools.odontoking import (
     get_doctor_schedule,
@@ -60,7 +60,7 @@ from app.utils import (
 
 PostgresConnPool = AsyncConnectionPool[AsyncConnection[DictRow]]
 
-_ODONTOKING_TOOLS = [get_services, get_specialties, get_doctors, get_doctor_schedule, verify_insurance, update_crm]
+_ODONTOKING_TOOLS = [get_services, get_specialties, get_doctors, get_doctor_schedule, verify_insurance, update_crm, get_citas]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "odontoking.md")
 

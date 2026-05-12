@@ -264,3 +264,92 @@ async def update_crm(
     except Exception as e:
         log.exception("update_crm_failed", error=str(e))
         return json.dumps({"success": False, "error": str(e)})
+
+
+@tool
+async def get_citas(wa_id: str) -> str:
+    """Get all appointments (meetings) for a patient by their WhatsApp ID.
+
+    Searches the CRM for the lead associated with the WhatsApp number and
+    returns all meeting activities (past and upcoming). Use this to check
+    what appointments a patient already has before scheduling a new one.
+
+    Args:
+        wa_id: WhatsApp ID of the patient (e.g. '591XXXXXXXX').
+    """
+    person_email = f"{wa_id}@whatsapp.sofopolis.net"
+    log = logger.bind(wa_id=wa_id)
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            # Step 1: find person by email
+            search_resp = await client.get(
+                f"{_BASE}/api/v1/contacts/persons/search",
+                params={"search": person_email, "searchFields": "emails:like"},
+                headers=_HEADERS,
+            )
+            search_resp.raise_for_status()
+            persons = search_resp.json().get("data", [])
+            if not persons:
+                log.info("get_citas_person_not_found", email=person_email)
+                return json.dumps({"citas": [], "message": "patient_not_found_in_crm"})
+
+            # Step 2: find lead for this person (same pattern as update_crm)
+            leads_resp = await client.get(
+                f"{_BASE}/api/v1/leads",
+                params={"sort": "id", "limit": 200},
+                headers=_HEADERS,
+            )
+            leads_resp.raise_for_status()
+            all_leads = leads_resp.json().get("data", [])
+            matching = [
+                ld for ld in all_leads
+                if any(
+                    (e.get("value", "")).lower() == person_email.lower()
+                    for e in (ld.get("person", {}).get("emails") or [])
+                )
+            ]
+            if not matching:
+                log.info("get_citas_lead_not_found", email=person_email)
+                return json.dumps({"citas": [], "message": "no_lead_found_for_patient"})
+
+            lead_id = matching[-1]["id"]
+
+            # Step 3: fetch activities for the lead
+            acts_resp = await client.get(
+                f"{_BASE}/api/v1/leads/{lead_id}/activities",
+                headers=_HEADERS,
+            )
+            acts_resp.raise_for_status()
+            raw = acts_resp.json()
+            # API may return {"data": [...]} or directly [...]
+            activities: list = raw.get("data", raw) if isinstance(raw, dict) else raw
+
+            # Step 4: filter meetings only, return minimal fields
+            meetings = [
+                {
+                    "id": a["id"],
+                    "title": a.get("title", ""),
+                    "schedule_from": a.get("schedule_from", ""),
+                    "schedule_to": a.get("schedule_to", ""),
+                    "is_done": a.get("is_done", 0),
+                    "comment": a.get("comment", ""),
+                    "participants": [
+                        p.get("person", {}).get("name", "")
+                        for p in (a.get("participants") or [])
+                        if p.get("person")
+                    ],
+                }
+                for a in (activities if isinstance(activities, list) else [])
+                if a.get("type") == "meeting"
+            ]
+
+            log.info("get_citas_fetched", lead_id=lead_id, count=len(meetings))
+            return json.dumps({"citas": meetings, "lead_id": lead_id}, ensure_ascii=False)
+
+    except httpx.HTTPStatusError as e:
+        log.exception("get_citas_http_error", status=e.response.status_code, error=str(e))
+        return json.dumps({"error": f"API returned {e.response.status_code}"})
+    except Exception as e:
+        log.exception("get_citas_failed", error=str(e))
+        return json.dumps({"error": str(e)})
