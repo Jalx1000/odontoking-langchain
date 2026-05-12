@@ -63,12 +63,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("graph_pre_warm_failed", error=str(e))
 
-    # Pre-warm mem0 AsyncMemory: initializes pgvector connection and schema check
-    # so the first search() cache miss or add() doesn't pay the ~130ms cold-init cost
-    try:
-        await memory_service.initialize()
-    except Exception as e:
-        logger.exception("memory_service_pre_warm_failed", error=str(e))
+    # Pre-warm mem0 AsyncMemory only when memory is enabled (requires pgvector extension)
+    if settings.ODONTOKING_MEMORY_ENABLED:
+        try:
+            await memory_service.initialize()
+        except Exception as e:
+            logger.exception("memory_service_pre_warm_failed", error=str(e))
 
     # Initialize message buffer (connects to Redis if VALKEY_HOST is configured)
     try:

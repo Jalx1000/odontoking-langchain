@@ -1,0 +1,151 @@
+version: '3.8'
+
+# ============================================================
+# Easypanel production stack — Odontoking WhatsApp Agent
+#
+# Variables requeridas (configurar en Easypanel → Environment):
+#   POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD
+#   OPENAI_API_KEY
+#   WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_VERIFY_TOKEN, WHATSAPP_ACCESS_TOKEN
+#   ODONTOKING_API_TOKEN
+#   JWT_SECRET_KEY
+#   LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY   (si usas Langfuse)
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # PostgreSQL con pgvector — necesario para checkpointing
+  # y (opcional) para memoria a largo plazo con mem0
+  # ----------------------------------------------------------
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-odontoking}
+      POSTGRES_USER: ${POSTGRES_USER:-odontoking}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-odontoking} -d ${POSTGRES_DB:-odontoking}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: always
+    networks:
+      - internal
+
+  # ----------------------------------------------------------
+  # Valkey — cache + message buffer por wa_id
+  # ----------------------------------------------------------
+  valkey:
+    image: valkey/valkey:8.1.6-alpine
+    command: valkey-server --save 60 1 --loglevel warning
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - internal
+
+  # ----------------------------------------------------------
+  # API — FastAPI + LangGraph agent
+  # El command corre migraciones antes de levantar uvicorn
+  # ----------------------------------------------------------
+  app:
+    build:
+      context: .
+      args:
+        APP_ENV: production
+    ports:
+      - "8000:8000"
+    # Las migraciones corren antes de iniciar la API
+    command: >
+      sh -c "/app/.venv/bin/alembic upgrade head &&
+             exec /app/.venv/bin/uvicorn app.main:app
+             --host 0.0.0.0 --port 8000 --workers 1"
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      LOG_LEVEL: WARNING
+      LOG_FORMAT: json
+
+      # Base de datos — apunta al servicio 'db' interno
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-odontoking}
+      POSTGRES_USER: ${POSTGRES_USER:-odontoking}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_POOL_SIZE: "5"
+      POSTGRES_MAX_OVERFLOW: "10"
+
+      # Valkey — apunta al servicio 'valkey' interno
+      VALKEY_HOST: valkey
+      VALKEY_PORT: "6379"
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:-}
+      VALKEY_MAX_CONNECTIONS: "20"
+      CACHE_TTL_SECONDS: "60"
+
+      # LLM
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DEFAULT_LLM_MODEL: gpt-4o-mini
+      DEFAULT_LLM_TEMPERATURE: "0.2"
+
+      # WhatsApp Cloud API
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}
+
+      # Message buffer
+      BUFFER_ENABLED: "true"
+      BUFFER_WINDOW_SECONDS: "3.0"
+      BUFFER_MAX_MESSAGES: "10"
+
+      # Odontoking CRM
+      ODONTOKING_API_URL: https://odontoking.sofopolis.com
+      ODONTOKING_API_TOKEN: ${ODONTOKING_API_TOKEN}
+      ODONTOKING_MEMORY_ENABLED: "false"
+
+      # JWT
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: HS256
+      JWT_ACCESS_TOKEN_EXPIRE_DAYS: "30"
+
+      # Langfuse (desactivar si no usas trazabilidad)
+      LANGFUSE_TRACING_ENABLED: ${LANGFUSE_TRACING_ENABLED:-false}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: https://cloud.langfuse.com
+
+      # Rate limiting
+      RATE_LIMIT_DEFAULT: "1000 per day,200 per hour"
+
+    volumes:
+      - app-logs:/app/logs
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: on-failure
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  valkey-data:
+  app-logs:

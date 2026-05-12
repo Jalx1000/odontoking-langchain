@@ -20,6 +20,7 @@ from app.core.config import (
     settings,
 )
 from app.core.logging import logger
+from app.models.chat_history_odonto import ChatHistoryOdonto
 from app.models.session import Session as ChatSession
 from app.models.user import User
 
@@ -225,6 +226,14 @@ class DatabaseService:
             session.refresh(chat_session)
             logger.info("session_name_updated", session_id=session_id, name=name)
             return chat_session
+
+    def save_chat_message(self, session_id: str, message: str) -> None:
+        """Persist a single serialized LangChain message for a WhatsApp session."""
+        with Session(self.engine) as db:
+            row = ChatHistoryOdonto(session_id=session_id, message=message)
+            db.add(row)
+            db.commit()
+        logger.info("chat_history_saved", session_id=session_id)
 
     def get_session_maker(self):
         """Get a session maker for creating database sessions.

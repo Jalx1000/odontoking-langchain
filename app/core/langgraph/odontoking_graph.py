@@ -13,6 +13,7 @@ from urllib.parse import quote_plus
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import (
     AIMessage,
+    BaseMessage,
     SystemMessage,
     ToolMessage,
     convert_to_openai_messages,
@@ -42,6 +43,7 @@ from psycopg_pool import AsyncConnectionPool
 from pydantic import SecretStr
 
 from app.core.config import settings
+from app.services.database import database_service
 from app.core.langgraph.tools.crm import get_citas, update_crm
 from app.core.langgraph.tools.insurance import verify_insurance
 from app.core.langgraph.tools.odontoking import (
@@ -75,6 +77,27 @@ def _load_odontoking_prompt(wa_id: str) -> str:
     return _PROMPT_TEMPLATE.format(current_datetime=current_datetime) + f"\n\n# Contexto\nwa_id del paciente actual: {wa_id}"
 
 
+def _chat_session_id(wa_id: str) -> str:
+    return f"{wa_id}@whatsapp.sofopolis.net"
+
+
+def _serialize_message(m: BaseMessage) -> str:
+    return json.dumps(m.model_dump(), ensure_ascii=False, default=str)
+
+
+def _persist_messages(wa_id: str, messages: list[BaseMessage]) -> None:
+    sid = _chat_session_id(wa_id)
+    for m in messages:
+        try:
+            database_service.save_chat_message(sid, _serialize_message(m))
+        except Exception as e:
+            logger.warning("chat_history_save_failed", wa_id=wa_id, error=str(e))
+
+
+async def _persist_messages_async(wa_id: str, messages: list[BaseMessage]) -> None:
+    await asyncio.to_thread(_persist_messages, wa_id, messages)
+
+
 class OdontokingAgent:
     """LangGraph agent for the Odontoking WhatsApp dental clinic assistant."""
 
@@ -102,15 +125,22 @@ class OdontokingAgent:
                 self._connection_pool = AsyncConnectionPool(
                     connection_url,
                     open=False,
+                    min_size=1,
                     max_size=settings.POSTGRES_POOL_SIZE,
+                    reconnect_timeout=30,
                     kwargs={
                         "autocommit": True,
-                        "connect_timeout": 5,
+                        "connect_timeout": 10,
                         "prepare_threshold": None,
                         "row_factory": dict_row,
+                        # TCP keepalives — prevent the remote server from closing idle connections
+                        "keepalives": 1,
+                        "keepalives_idle": 30,
+                        "keepalives_interval": 10,
+                        "keepalives_count": 5,
                     },
                 )
-                await self._connection_pool.open()
+                await self._connection_pool.open(wait=True, timeout=30)
                 logger.info("odontoking_connection_pool_created")
             except Exception as e:
                 logger.exception("odontoking_connection_pool_failed", error=str(e))
@@ -147,7 +177,11 @@ class OdontokingAgent:
         tool_calls = state.messages[-1].tool_calls
 
         async def _execute(tc: dict) -> ToolMessage:
-            result = await self.tools_by_name[tc["name"]].ainvoke(tc["args"])
+            try:
+                result = await self.tools_by_name[tc["name"]].ainvoke(tc["args"])
+            except Exception as e:
+                logger.warning("tool_execution_failed", tool=tc["name"], error=str(e))
+                result = json.dumps({"error": str(e)})
             return ToolMessage(content=result, name=tc["name"], tool_call_id=tc["id"])
 
         if len(tool_calls) == 1:
@@ -228,6 +262,8 @@ class OdontokingAgent:
                 state = await graph.aget_state(config)
                 relevant_memory = ""
 
+            existing_count = len(state.values.get("messages", [])) if state and state.values else 0
+
             if state and state.next:
                 logger.info("odontoking_resuming_graph", wa_id=wa_id)
                 response = await graph.ainvoke(Command(resume=messages[-1].content), config=config)
@@ -236,6 +272,11 @@ class OdontokingAgent:
                     input={"messages": dump_messages(messages), "long_term_memory": relevant_memory},
                     config=config,
                 )
+
+            # Persist new messages (human + AI + tool) to chat_histories_odonto
+            new_msgs = [m for m in response.get("messages", [])[existing_count:] if isinstance(m, BaseMessage)]
+            if new_msgs:
+                asyncio.create_task(_persist_messages_async(wa_id, new_msgs))
 
             # Extract mensaje from JSON response
             ai_messages = [m for m in response.get("messages", []) if isinstance(m, AIMessage) and m.content]
