@@ -196,14 +196,14 @@ class MessageBufferService:
             logger.info("message_buffer_worker_spawned", wa_id=wa_id)
 
     async def _worker(self, wa_id: str, process_fn: ProcessFn) -> None:
-        """Worker loop: sleep → drain → process → repeat until buffer is empty."""
+        """Worker loop: sleep once (debounce) → drain → process → drain immediately → repeat."""
         backend = self._backend
         assert backend is not None
 
         try:
+            # Single debounce window — accumulate rapid-fire messages
+            await asyncio.sleep(settings.BUFFER_WINDOW_SECONDS)
             while True:
-                await asyncio.sleep(settings.BUFFER_WINDOW_SECONDS)
-
                 messages = await backend.drain(wa_id)
                 if not messages:
                     return
@@ -215,7 +215,9 @@ class MessageBufferService:
                     await process_fn(wa_id, combined)
                 except Exception as e:
                     logger.exception("message_buffer_process_fn_failed", wa_id=wa_id, error=str(e))
-                # Loop: picks up any messages that arrived during LLM processing
+                # Yield once so any in-flight enqueue calls complete, then immediately
+                # re-drain — no extra BUFFER_WINDOW_SECONDS for messages received during LLM
+                await asyncio.sleep(0)
         finally:
             await backend.release_worker(wa_id)
             logger.info("message_buffer_worker_exited", wa_id=wa_id)

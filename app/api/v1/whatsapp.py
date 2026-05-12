@@ -1,5 +1,8 @@
 """WhatsApp Cloud API webhook — receive messages and respond via OdontokingAgent."""
 
+import asyncio
+import json
+
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -23,6 +26,9 @@ from app.services.whatsapp_client import (
 )
 
 router = APIRouter()
+
+# Background task set used when BUFFER_ENABLED=false to prevent GC of fire-and-forget tasks
+_background_tasks: set[asyncio.Task] = set()
 
 
 async def _process_and_reply(wa_id: str, text: str) -> None:
@@ -75,14 +81,13 @@ async def receive_message(request: Request) -> dict:
     raw = await request.body()
     logger.info("whatsapp_raw_payload", body=raw.decode("utf-8", errors="replace")[:500])
 
-    import json as _json
     try:
-        data = _json.loads(raw)
+        data = json.loads(raw)
         payload = WhatsAppWebhookPayload(**data)
     except Exception as e:
         logger.exception("whatsapp_payload_parse_error", error=str(e), raw=raw.decode()[:300])
         return {"status": "ok"}  # siempre 200 para que Meta no reintente
-    """Receive and process incoming WhatsApp messages."""
+
     if payload.object != "whatsapp_business_account":
         return {"status": "ignored"}
 
@@ -143,8 +148,12 @@ async def receive_message(request: Request) -> dict:
                 if not text_content.strip():
                     continue
 
-                # Buffer the message; worker will process after BUFFER_WINDOW_SECONDS
                 logger.info("whatsapp_message_received", wa_id=wa_id, preview=text_content[:60])
-                await message_buffer_service.enqueue(wa_id, text_content, _process_and_reply)
+                if settings.BUFFER_ENABLED:
+                    await message_buffer_service.enqueue(wa_id, text_content, _process_and_reply)
+                else:
+                    task = asyncio.create_task(_process_and_reply(wa_id, text_content))
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
 
     return {"status": "ok"}

@@ -31,6 +31,13 @@ async def send_text_message(to: str, text: str) -> dict:
             json=payload,
             headers={**_auth_headers(), "Content-Type": "application/json"},
         )
+        if not resp.is_success:
+            logger.error(
+                "whatsapp_send_error",
+                to=to,
+                status=resp.status_code,
+                body=resp.text[:500],
+            )
         resp.raise_for_status()
         logger.info("whatsapp_text_sent", to=to, length=len(text))
         return resp.json()
@@ -51,6 +58,13 @@ async def send_interactive_message(to: str, interactive: dict) -> dict:
             json=payload,
             headers={**_auth_headers(), "Content-Type": "application/json"},
         )
+        if not resp.is_success:
+            logger.error(
+                "whatsapp_send_error",
+                to=to,
+                status=resp.status_code,
+                body=resp.text[:500],
+            )
         resp.raise_for_status()
         logger.info("whatsapp_interactive_sent", to=to, type=interactive.get("type"))
         return resp.json()

@@ -18,10 +18,13 @@ def langfuse_init():
         debug=settings.DEBUG,
     )
 
-    if langfuse.auth_check():
-        logger.debug("langfuse_auth_success")
-    else:
-        logger.debug("langfuse_auth_failure")
+    try:
+        if langfuse.auth_check():
+            logger.debug("langfuse_auth_success")
+        else:
+            logger.warning("langfuse_auth_failure")
+    except Exception as e:
+        logger.warning("langfuse_auth_unreachable", error=str(e))
 
 
 def get_langfuse_callback_handler() -> CallbackHandler:

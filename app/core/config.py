@@ -223,6 +223,7 @@ class Settings:
         self.ODONTOKING_MEMORY_ENABLED = os.getenv("ODONTOKING_MEMORY_ENABLED", "false").lower() in ("true", "1", "yes")
 
         # WhatsApp message buffer
+        self.BUFFER_ENABLED = os.getenv("BUFFER_ENABLED", "true").lower() in ("true", "1", "yes")
         self.BUFFER_WINDOW_SECONDS = float(os.getenv("BUFFER_WINDOW_SECONDS", "3.0"))
         self.BUFFER_MAX_MESSAGES = int(os.getenv("BUFFER_MAX_MESSAGES", "10"))
 
