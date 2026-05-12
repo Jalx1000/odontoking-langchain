@@ -32,6 +32,7 @@ from app.core.middleware import (
 from app.core.observability import langfuse_init
 from app.services.database import database_service
 from app.services.memory import memory_service
+from app.services.message_buffer import message_buffer_service
 
 # Load environment variables
 load_dotenv()
@@ -69,9 +70,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("memory_service_pre_warm_failed", error=str(e))
 
+    # Initialize message buffer (connects to Redis if VALKEY_HOST is configured)
+    try:
+        await message_buffer_service.initialize()
+    except Exception as e:
+        logger.exception("message_buffer_initialization_failed", error=str(e))
+
     yield
 
     # Cleanup on shutdown
+    await message_buffer_service.close()
     await cache_service.close()
     if agent._connection_pool:
         await agent._connection_pool.close()

@@ -14,6 +14,7 @@ from app.core.limiter import limiter
 from app.core.logging import logger
 from app.schemas import Message
 from app.schemas.whatsapp import WhatsAppWebhookPayload
+from app.services.message_buffer import message_buffer_service
 from app.services.whatsapp_client import (
     download_media,
     send_response,
@@ -22,6 +23,22 @@ from app.services.whatsapp_client import (
 )
 
 router = APIRouter()
+
+
+async def _process_and_reply(wa_id: str, text: str) -> None:
+    """Invoke the agent and send the response back to the user."""
+    messages = [Message(role="user", content=text)]
+    try:
+        response_text = await odontoking_agent.get_response(messages, wa_id=wa_id)
+        await send_response(wa_id, response_text)
+        logger.info("whatsapp_response_sent", wa_id=wa_id, preview=response_text[:60])
+    except Exception as e:
+        logger.exception("whatsapp_agent_error", wa_id=wa_id, error=str(e))
+        try:
+            await send_text_message(wa_id, "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.")
+        except Exception:
+            pass
+
 
 _UNSUPPORTED_MSG = (
     "Disculpe, por el momento solo podemos recibir mensajes de texto y notas de voz 🙏. "
@@ -126,21 +143,8 @@ async def receive_message(request: Request) -> dict:
                 if not text_content.strip():
                     continue
 
-                # Process message through the agent
-                try:
-                    logger.info("whatsapp_message_received", wa_id=wa_id, preview=text_content[:60])
-                    messages = [Message(role="user", content=text_content)]
-                    response_text = await odontoking_agent.get_response(messages, wa_id=wa_id)
-                    await send_response(wa_id, response_text)
-                    logger.info("whatsapp_response_sent", wa_id=wa_id, preview=response_text[:60])
-                except Exception as e:
-                    logger.exception("whatsapp_agent_error", wa_id=wa_id, error=str(e))
-                    try:
-                        await send_text_message(
-                            wa_id,
-                            "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.",
-                        )
-                    except Exception:
-                        pass
+                # Buffer the message; worker will process after BUFFER_WINDOW_SECONDS
+                logger.info("whatsapp_message_received", wa_id=wa_id, preview=text_content[:60])
+                await message_buffer_service.enqueue(wa_id, text_content, _process_and_reply)
 
     return {"status": "ok"}

@@ -2,9 +2,9 @@
 
 import asyncio
 import json
+import os as _os
 from datetime import datetime
 from typing import (
-    AsyncGenerator,
     Optional,
     cast,
 )
@@ -13,11 +13,11 @@ from urllib.parse import quote_plus
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import (
     AIMessage,
-    AIMessageChunk,
-    BaseMessage,
+    SystemMessage,
     ToolMessage,
     convert_to_openai_messages,
 )
+from langchain_core.runnables.config import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.errors import GraphInterrupt
@@ -25,7 +25,6 @@ from langgraph.graph import (
     END,
     StateGraph,
 )
-from langchain_core.runnables.config import RunnableConfig
 from langgraph.graph.state import (
     Command,
     CompiledStateGraph,
@@ -42,8 +41,6 @@ from psycopg.rows import (
 from psycopg_pool import AsyncConnectionPool
 from pydantic import SecretStr
 
-from langchain_core.messages import SystemMessage
-
 from app.core.config import settings
 from app.core.langgraph.tools.crm import update_crm
 from app.core.langgraph.tools.insurance import verify_insurance
@@ -58,19 +55,12 @@ from app.core.observability import langfuse_callback_handler
 from app.schemas import GraphState
 from app.utils import (
     dump_messages,
-    extract_text_content,
     process_llm_response,
 )
 
 PostgresConnPool = AsyncConnectionPool[AsyncConnection[DictRow]]
 
 _ODONTOKING_TOOLS = [get_services, get_specialties, get_doctors, get_doctor_schedule, verify_insurance, update_crm]
-
-_ODONTOKING_PROMPT_PATH = __file__.replace("odontoking_graph.py", "../prompts/odontoking.md").replace(
-    "langgraph/../", ""
-)
-
-import os as _os
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "odontoking.md")
 
@@ -93,7 +83,7 @@ class OdontokingAgent:
         self._llm = ChatOpenAI(
             model="gpt-4o-mini",
             api_key=SecretStr(settings.OPENAI_API_KEY),
-            max_tokens=2000,
+            max_tokens=2000,  # pyright: ignore[reportCallIssue]
             temperature=0.2,
         ).bind_tools(_ODONTOKING_TOOLS)
         self.tools_by_name = {t.name: t for t in _ODONTOKING_TOOLS}
@@ -168,6 +158,7 @@ class OdontokingAgent:
         return Command(update={"messages": outputs}, goto="chat")
 
     async def create_graph(self) -> Optional[CompiledStateGraph]:
+        """Build and compile the LangGraph state machine, creating the Postgres checkpointer."""
         if self._graph is None:
             try:
                 builder = StateGraph(GraphState)
@@ -221,7 +212,6 @@ class OdontokingAgent:
         }
 
         from app.services.memory import memory_service
-        from app.utils import dump_messages as _dump
 
         try:
             if settings.ODONTOKING_MEMORY_ENABLED:
@@ -230,7 +220,7 @@ class OdontokingAgent:
                     memory_service.search(wa_id, messages[-1].content if messages else ""),
                     return_exceptions=True,
                 )
-                state = state_result if not isinstance(state_result, Exception) else None
+                state = state_result if not isinstance(state_result, BaseException) else None
                 relevant_memory = memory_result if isinstance(memory_result, str) else ""
                 if isinstance(memory_result, Exception):
                     logger.warning("odontoking_memory_search_failed", wa_id=wa_id, error=str(memory_result))
@@ -243,7 +233,7 @@ class OdontokingAgent:
                 response = await graph.ainvoke(Command(resume=messages[-1].content), config=config)
             else:
                 response = await graph.ainvoke(
-                    input={"messages": _dump(messages), "long_term_memory": relevant_memory},
+                    input={"messages": dump_messages(messages), "long_term_memory": relevant_memory},
                     config=config,
                 )
 

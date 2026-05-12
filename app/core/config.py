@@ -222,6 +222,10 @@ class Settings:
         self.ODONTOKING_API_TOKEN = os.getenv("ODONTOKING_API_TOKEN", "")
         self.ODONTOKING_MEMORY_ENABLED = os.getenv("ODONTOKING_MEMORY_ENABLED", "false").lower() in ("true", "1", "yes")
 
+        # WhatsApp message buffer
+        self.BUFFER_WINDOW_SECONDS = float(os.getenv("BUFFER_WINDOW_SECONDS", "3.0"))
+        self.BUFFER_MAX_MESSAGES = int(os.getenv("BUFFER_MAX_MESSAGES", "10"))
+
         # Sharemedata Calendar
         self.SHAREMEDATA_API_URL = os.getenv("SHAREMEDATA_API_URL", "http://gamma.sharemedata.com:3000")
         self.SHAREMEDATA_API_KEY = os.getenv("SHAREMEDATA_API_KEY", "")

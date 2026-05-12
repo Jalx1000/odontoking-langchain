@@ -6,36 +6,50 @@ from pydantic import BaseModel, Field
 
 
 class WhatsAppTextMessage(BaseModel):
+    """Plain text message body."""
+
     body: str
 
 
 class WhatsAppAudioMessage(BaseModel):
+    """Audio message with media ID and optional MIME type."""
+
     id: str
     mime_type: Optional[str] = None
 
 
 class WhatsAppImageMessage(BaseModel):
+    """Image message with media ID and optional MIME type."""
+
     id: str
     mime_type: Optional[str] = None
 
 
 class WhatsAppDocumentMessage(BaseModel):
+    """Document message with media ID and optional MIME type."""
+
     id: str
     mime_type: Optional[str] = None
 
 
 class WhatsAppInteractiveReply(BaseModel):
+    """Reply from a button or list interactive message."""
+
     id: str
     title: str
 
 
 class WhatsAppInteractiveMessage(BaseModel):
+    """Interactive message containing a button or list reply selection."""
+
     type: str
     button_reply: Optional[WhatsAppInteractiveReply] = None
     list_reply: Optional[WhatsAppInteractiveReply] = None
 
 
 class WhatsAppIncomingMessage(BaseModel):
+    """A single incoming message from a WhatsApp user."""
+
     id: str
     from_number: str = Field(alias="from")
     timestamp: str
@@ -50,6 +64,8 @@ class WhatsAppIncomingMessage(BaseModel):
 
 
 class WhatsAppContact(BaseModel):
+    """Contact information associated with a WhatsApp message."""
+
     wa_id: str
     profile: Optional[dict[str, Any]] = None
 
