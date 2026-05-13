@@ -32,8 +32,8 @@ else:
 
 ProcessFn = Callable[[str, str], Coroutine[Any, Any, None]]
 
-# Extra seconds on top of BUFFER_WINDOW for the LLM+tools processing time
-_LOCK_EXTRA_TTL = 120
+# How often the worker renews the Redis lock while the LLM is processing
+_LOCK_RENEW_INTERVAL = 30.0
 
 
 class _InMemoryMessageBuffer:
@@ -85,7 +85,8 @@ class _RedisMessageBuffer:
         return f"wa_worker:{wa_id}"
 
     def _lock_ttl(self) -> int:
-        return int(settings.BUFFER_WINDOW_SECONDS) + _LOCK_EXTRA_TTL
+        # Budget: debounce window + full LLM timeout + grace for retries
+        return int(settings.BUFFER_WINDOW_SECONDS) + settings.LLM_TOTAL_TIMEOUT + 30
 
     async def push(self, wa_id: str, text: str) -> None:
         key = self._buf_key(wa_id)
@@ -127,6 +128,30 @@ class _RedisMessageBuffer:
             await self._r.delete(self._lock_key(wa_id))
         except Exception as e:
             logger.warning("message_buffer_redis_release_failed", wa_id=wa_id, error=str(e))
+
+    async def renew_lock(self, wa_id: str) -> None:
+        """Extend the worker lock TTL — call every _LOCK_RENEW_INTERVAL during processing."""
+        try:
+            await self._r.expire(self._lock_key(wa_id), self._lock_ttl())
+        except Exception as e:
+            logger.warning("message_buffer_redis_renew_failed", wa_id=wa_id, error=str(e))
+
+    async def list_orphaned_buffers(self) -> list[str]:
+        """Return wa_ids that have buffered messages but no active worker lock.
+
+        Used on startup to recover messages that survived a process crash.
+        """
+        try:
+            buf_keys: list[str] = await self._r.keys("wa_incoming:*")
+            orphaned = []
+            for key in buf_keys:
+                wa_id = key.replace("wa_incoming:", "")
+                if not await self._r.exists(self._lock_key(wa_id)):
+                    orphaned.append(wa_id)
+            return orphaned
+        except Exception as e:
+            logger.exception("message_buffer_orphan_scan_failed", error=str(e))
+            return []
 
     async def close(self) -> None:
         pass  # Redis client lifecycle is managed by the caller
@@ -195,6 +220,13 @@ class MessageBufferService:
             task.add_done_callback(self._background_tasks.discard)
             logger.info("message_buffer_worker_spawned", wa_id=wa_id)
 
+    async def _renew_lock_loop(self, wa_id: str, backend: "_RedisMessageBuffer") -> None:
+        """Periodically extend the Redis lock while the LLM is processing."""
+        while True:
+            await asyncio.sleep(_LOCK_RENEW_INTERVAL)
+            await backend.renew_lock(wa_id)
+            logger.debug("message_buffer_lock_renewed", wa_id=wa_id)
+
     async def _worker(self, wa_id: str, process_fn: ProcessFn) -> None:
         """Worker loop: sleep once (debounce) → drain → process → drain immediately → repeat."""
         backend = self._backend
@@ -211,16 +243,44 @@ class MessageBufferService:
                 combined = "\n".join(messages)
                 logger.info("message_buffer_batch_ready", wa_id=wa_id, count=len(messages))
 
+                # Renew the Redis lock every 30s during LLM processing so it never expires
+                renew_task: Optional[asyncio.Task] = None
+                if isinstance(backend, _RedisMessageBuffer):
+                    renew_task = asyncio.create_task(self._renew_lock_loop(wa_id, backend))
                 try:
                     await process_fn(wa_id, combined)
                 except Exception as e:
                     logger.exception("message_buffer_process_fn_failed", wa_id=wa_id, error=str(e))
-                # Yield once so any in-flight enqueue calls complete, then immediately
-                # re-drain — no extra BUFFER_WINDOW_SECONDS for messages received during LLM
+                finally:
+                    if renew_task:
+                        renew_task.cancel()
+                # Yield once so any in-flight enqueue calls complete, then re-drain immediately
                 await asyncio.sleep(0)
         finally:
             await backend.release_worker(wa_id)
             logger.info("message_buffer_worker_exited", wa_id=wa_id)
+
+    async def recover(self, process_fn: ProcessFn) -> None:
+        """Recover messages that survived a process crash (Redis only).
+
+        On startup, finds wa_incoming:* keys with no active wa_worker:* lock
+        and spawns workers for them. Call this from the lifespan after initialize().
+        """
+        if not isinstance(self._backend, _RedisMessageBuffer):
+            return
+
+        orphaned = await self._backend.list_orphaned_buffers()
+        if not orphaned:
+            return
+
+        logger.warning("message_buffer_recovery_started", count=len(orphaned))
+        for wa_id in orphaned:
+            acquired = await self._backend.try_acquire_worker(wa_id)
+            if acquired:
+                task = asyncio.create_task(self._worker(wa_id, process_fn))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
+                logger.warning("message_buffer_orphan_recovered", wa_id=wa_id)
 
 
 message_buffer_service = MessageBufferService()

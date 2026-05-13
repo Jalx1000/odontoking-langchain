@@ -130,14 +130,15 @@ async def update_crm(
             if not person_id:
                 return json.dumps({"error": "could not obtain person_id"})
 
-            # 2. Find existing leads for this person
+            # 2. Find existing leads for this person — filter by person_id server-side
             leads_resp = await client.get(
                 f"{_BASE}/api/v1/leads",
-                params={"sort": "id", "limit": 200},
+                params={"sort": "id", "limit": 10, "person_id": str(person_id)},
                 headers=_HEADERS,
             )
             leads_resp.raise_for_status()
             all_leads = leads_resp.json().get("data", [])
+            # Python-side guard: keep only leads that truly belong to this person
             matching = [
                 ld for ld in all_leads
                 if any(
@@ -297,10 +298,11 @@ async def get_citas(wa_id: str) -> str:
                 log.info("get_citas_person_not_found", email=person_email)
                 return json.dumps({"citas": [], "message": "patient_not_found_in_crm"})
 
-            # Step 2: find lead for this person (same pattern as update_crm)
+            person_id = persons[0]["id"]
+            # Step 2: find lead filtered by person_id — avoids full-table scan
             leads_resp = await client.get(
                 f"{_BASE}/api/v1/leads",
-                params={"sort": "id", "limit": 200},
+                params={"sort": "id", "limit": 10, "person_id": str(person_id)},
                 headers=_HEADERS,
             )
             leads_resp.raise_for_status()

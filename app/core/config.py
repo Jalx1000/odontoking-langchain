@@ -147,7 +147,7 @@ class Settings:
 
         # LangGraph Configuration
         self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-        self.DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "gpt-5-mini")
+        self.DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "gpt-4o-mini")
         self.SESSION_NAMING_ENABLED = os.getenv("SESSION_NAMING_ENABLED", "true").lower() == "true"
         self.DEFAULT_LLM_TEMPERATURE = float(os.getenv("DEFAULT_LLM_TEMPERATURE", "0.2"))
         self.MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2000"))
@@ -155,7 +155,7 @@ class Settings:
         self.LLM_TOTAL_TIMEOUT = int(os.getenv("LLM_TOTAL_TIMEOUT", "60"))
 
         # Long term memory Configuration
-        self.LONG_TERM_MEMORY_MODEL = os.getenv("LONG_TERM_MEMORY_MODEL", "gpt-5-nano")
+        self.LONG_TERM_MEMORY_MODEL = os.getenv("LONG_TERM_MEMORY_MODEL", "gpt-4o-mini")
         self.LONG_TERM_MEMORY_EMBEDDER_MODEL = os.getenv("LONG_TERM_MEMORY_EMBEDDER_MODEL", "text-embedding-3-small")
         self.LONG_TERM_MEMORY_COLLECTION_NAME = os.getenv("LONG_TERM_MEMORY_COLLECTION_NAME", "longterm_memory")
         # JWT Configuration
@@ -231,8 +231,17 @@ class Settings:
         self.SHAREMEDATA_API_URL = os.getenv("SHAREMEDATA_API_URL", "http://gamma.sharemedata.com:3000")
         self.SHAREMEDATA_API_KEY = os.getenv("SHAREMEDATA_API_KEY", "")
 
+        # Alert Notifications — SMTP email
+        self.MAIL_HOST = os.getenv("MAIL_HOST", "")
+        self.MAIL_PORT = int(os.getenv("MAIL_PORT", "465"))
+        self.MAIL_USERNAME = os.getenv("MAIL_USERNAME", "")
+        self.MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
+        self.MAIL_FROM_ADDRESS = os.getenv("MAIL_FROM_ADDRESS", "")
+        self.MAIL_TO_ADDRESS = os.getenv("MAIL_TO_ADDRESS", "")  # recipient for alerts
+        self.NOTIFICATION_COOLDOWN_SECONDS = int(os.getenv("NOTIFICATION_COOLDOWN_SECONDS", "300"))
+
         # Evaluation Configuration
-        self.EVALUATION_LLM = os.getenv("EVALUATION_LLM", "gpt-5")
+        self.EVALUATION_LLM = os.getenv("EVALUATION_LLM", "gpt-4o")
         self.EVALUATION_BASE_URL = os.getenv("EVALUATION_BASE_URL", "https://api.openai.com/v1")
         self.EVALUATION_API_KEY = os.getenv("EVALUATION_API_KEY", self.OPENAI_API_KEY)
         self.EVALUATION_SLEEP_TIME = int(os.getenv("EVALUATION_SLEEP_TIME", "10"))

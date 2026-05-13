@@ -6,7 +6,7 @@ A production-ready template for building AI agent backends with FastAPI and Lang
 
 ## What's included
 
-- **LangGraph** stateful agent with checkpointing, tool calling, and human-in-the-loop support
+- **LangGraph** stateful agent with checkpointing, tool calling, and human-in-the-loop supwirport
 - **Long-term memory** via mem0 + pgvector — semantic search per user, cache-backed
 - **LLM service** with circular model fallback, exponential backoff retries, and total timeout budget
 - **Langfuse** tracing on all LLM calls; Prometheus metrics + Grafana dashboards
@@ -23,24 +23,24 @@ make install
 make docker-up                     # starts API + PostgreSQL
 ```
 
-Open [http://localhost:8000/docs](http://localhost:8000/docs) to see the interactive API.
+Open <http://localhost:8000/docs> to see the interactive API.
 
 > For local development without Docker see [docs/getting-started.md](docs/getting-started.md).
 
 ## Documentation
 
-| Guide | What it covers |
-|---|---|
-| [Getting Started](docs/getting-started.md) | Prerequisites, local setup, first API call |
-| [Architecture](docs/architecture.md) | System design, request flow, component diagrams |
-| [Configuration](docs/configuration.md) | All environment variables with defaults |
-| [Authentication](docs/authentication.md) | JWT flow, sessions, endpoint reference |
-| [Database & Migrations](docs/database.md) | Schema, Alembic migrations, pgvector |
-| [LLM Service](docs/llm-service.md) | Models, retries, fallback, timeout budget |
-| [Memory](docs/memory.md) | mem0 long-term memory, cache layer |
-| [Observability](docs/observability.md) | Langfuse, structured logging, Prometheus, profiling |
-| [Evaluation](docs/evaluation.md) | Eval framework, custom metrics, reports |
-| [Docker](docs/docker.md) | Docker, Compose, full monitoring stack |
+| Guide                                      | What it covers                                      |
+| ------------------------------------------ | --------------------------------------------------- |
+| [Getting Started](docs/getting-started.md) | Prerequisites, local setup, first API call          |
+| [Architecture](docs/architecture.md)       | System design, request flow, component diagrams     |
+| [Configuration](docs/configuration.md)     | All environment variables with defaults             |
+| [Authentication](docs/authentication.md)   | JWT flow, sessions, endpoint reference              |
+| [Database & Migrations](docs/database.md)  | Schema, Alembic migrations, pgvector                |
+| [LLM Service](docs/llm-service.md)         | Models, retries, fallback, timeout budget           |
+| [Memory](docs/memory.md)                   | mem0 long-term memory, cache layer                  |
+| [Observability](docs/observability.md)     | Langfuse, structured logging, Prometheus, profiling |
+| [Evaluation](docs/evaluation.md)           | Eval framework, custom metrics, reports             |
+| [Docker](docs/docker.md)                   | Docker, Compose, full monitoring stack              |
 
 ## Project structure
 
@@ -106,11 +106,13 @@ Yes. Set `LANGFUSE_TRACING_ENABLED=false` (or omit the Langfuse keys). The agent
 ### Troubleshooting
 
 **The API won't start**
+
 - Ensure PostgreSQL is running (`make docker-up` brings it up alongside the API)
 - Confirm `.env.development` exists — copy from `.env.example` and fill in required keys
 - Apply migrations: `make migrate`
 
 **Memory / semantic search returns nothing**
+
 - Verify the `pgvector` extension is enabled in your PostgreSQL instance
 - Confirm `OPENAI_API_KEY` is valid (mem0 calls OpenAI for fact extraction + embeddings)
 - Check `LONG_TERM_MEMORY_MODEL` and `LONG_TERM_MEMORY_EMBEDDER_MODEL` are set in `.env.development`

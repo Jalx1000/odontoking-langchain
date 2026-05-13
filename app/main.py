@@ -78,6 +78,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("message_buffer_initialization_failed", error=str(e))
 
+    # Recover any messages that survived a previous process crash (Redis only)
+    try:
+        from app.api.v1.whatsapp import _process_and_reply
+        await message_buffer_service.recover(_process_and_reply)
+    except Exception as e:
+        logger.exception("message_buffer_recovery_failed", error=str(e))
+
     yield
 
     # Cleanup on shutdown — order matters: buffer first (drains workers), then agents

@@ -187,6 +187,10 @@ def get_structlog_processors(include_file_info: bool = True) -> List[Any]:
     # Add environment info
     processors.append(lambda _, __, event_dict: {**event_dict, "environment": settings.ENVIRONMENT.value})
 
+    # Fire email alerts on error/exception (debounced, non-blocking)
+    from app.core.notifications import alert_processor
+    processors.append(alert_processor)
+
     return processors
 
 
