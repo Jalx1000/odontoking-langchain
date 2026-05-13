@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(APP_ENV=test uv run pytest tests/ -q)"
+      "Bash(APP_ENV=test uv run pytest tests/ -q)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 *)",
+      "Bash(git checkout *)"
     ]
   }
 }
