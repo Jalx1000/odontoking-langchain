@@ -79,8 +79,9 @@ echo "Database User: $( [[ -n ${POSTGRES_USER:-${DB_USER:-}} ]] && echo 'set' ||
 echo "LLM Model: ${DEFAULT_LLM_MODEL:-Not set}"
 echo "Debug Mode: ${DEBUG:-false}"
 
-# Run database migrations if necessary
-# e.g., alembic upgrade head
+# Run database migrations
+echo "Running database migrations..."
+/app/.venv/bin/alembic upgrade head
 
 # Execute the CMD
 exec "$@"
