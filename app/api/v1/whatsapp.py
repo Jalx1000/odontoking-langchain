@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import time
+from collections import defaultdict
 
 from fastapi import (
     APIRouter,
@@ -20,8 +22,10 @@ from app.schemas.whatsapp import WhatsAppWebhookPayload
 from app.services.message_buffer import message_buffer_service
 from app.services.whatsapp_client import (
     download_media,
+    mark_as_read,
     send_response,
     send_text_message,
+    send_typing_indicator,
     transcribe_audio,
 )
 
@@ -30,26 +34,63 @@ router = APIRouter()
 # Background task set used when BUFFER_ENABLED=false to prevent GC of fire-and-forget tasks
 _background_tasks: set[asyncio.Task] = set()
 
+# Per-wa_id rate limiting: sliding window counter (in-memory, single process)
+_wa_message_times: dict[str, list[float]] = defaultdict(list)
+_WA_RATE_WINDOW_SECONDS = 60
+_WA_RATE_MAX_MESSAGES = 20
+
+# Fallback message sent when LLM processing exceeds the global timeout
+_TIMEOUT_MSG = (
+    "Disculpe, la consulta está tardando más de lo esperado. "
+    "Por favor intente de nuevo en un momento 🙏."
+)
+_UNSUPPORTED_MSG = (
+    "Disculpe, por el momento solo podemos recibir mensajes de texto y notas de voz 🙏. "
+    "Si tiene alguna consulta, escríbanos con texto y con gusto le atendemos 🦷✨."
+)
+
+
+def _is_wa_rate_limited(wa_id: str) -> bool:
+    """Return True if this wa_id has exceeded the per-user rate limit."""
+    now = time.monotonic()
+    window = _wa_message_times[wa_id]
+    # Drop timestamps outside the sliding window
+    window[:] = [t for t in window if now - t < _WA_RATE_WINDOW_SECONDS]
+    if len(window) >= _WA_RATE_MAX_MESSAGES:
+        return True
+    window.append(now)
+    return False
+
 
 async def _process_and_reply(wa_id: str, text: str) -> None:
-    """Invoke the agent and send the response back to the user."""
+    """Invoke the agent and send the response back to the user.
+
+    Shows typing indicator before the LLM call and enforces a hard timeout
+    so users never see indefinite silence when the LLM hangs.
+    """
     messages = [Message(role="user", content=text)]
     try:
-        response_text = await odontoking_agent.get_response(messages, wa_id=wa_id)
+        # Show typing indicator while the LLM processes (best-effort, never blocks)
+        asyncio.create_task(send_typing_indicator(wa_id))
+
+        response_text = await asyncio.wait_for(
+            odontoking_agent.get_response(messages, wa_id=wa_id),
+            timeout=settings.LLM_TOTAL_TIMEOUT + 30,  # grace window on top of LLM budget
+        )
         await send_response(wa_id, response_text)
         logger.info("whatsapp_response_sent", wa_id=wa_id, preview=response_text[:60])
+    except asyncio.TimeoutError:
+        logger.warning("whatsapp_agent_timeout", wa_id=wa_id)
+        try:
+            await send_text_message(wa_id, _TIMEOUT_MSG)
+        except Exception:
+            pass
     except Exception as e:
         logger.exception("whatsapp_agent_error", wa_id=wa_id, error=str(e))
         try:
             await send_text_message(wa_id, "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.")
         except Exception:
             pass
-
-
-_UNSUPPORTED_MSG = (
-    "Disculpe, por el momento solo podemos recibir mensajes de texto y notas de voz 🙏. "
-    "Si tiene alguna consulta, escríbanos con texto y con gusto le atendemos 🦷✨."
-)
 
 
 @router.get("/webhook")
@@ -147,6 +188,16 @@ async def receive_message(request: Request) -> dict:
 
                 if not text_content.strip():
                     continue
+
+                # Per-user rate limit — silently drop, Meta will show sent/not-delivered
+                if _is_wa_rate_limited(wa_id):
+                    logger.warning("whatsapp_rate_limited", wa_id=wa_id)
+                    continue
+
+                # Mark message as read immediately so the user sees the double blue ticks
+                task_read = asyncio.create_task(mark_as_read(wa_id, msg.id))
+                _background_tasks.add(task_read)
+                task_read.add_done_callback(_background_tasks.discard)
 
                 logger.info("whatsapp_message_received", wa_id=wa_id, preview=text_content[:60])
                 if settings.BUFFER_ENABLED:

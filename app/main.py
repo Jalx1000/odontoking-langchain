@@ -1,5 +1,6 @@
 """This file contains the main application entry point."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -30,6 +31,7 @@ from app.core.middleware import (
     ProfilingMiddleware,
 )
 from app.core.observability import langfuse_init
+from app.core.langgraph.odontoking_graph import odontoking_agent
 from app.services.database import database_service
 from app.services.memory import memory_service
 from app.services.message_buffer import message_buffer_service
@@ -78,8 +80,9 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Cleanup on shutdown
+    # Cleanup on shutdown — order matters: buffer first (drains workers), then agents
     await message_buffer_service.close()
+    await odontoking_agent.close()  # awaits pending persist tasks + closes pool
     await cache_service.close()
     if agent._connection_pool:
         await agent._connection_pool.close()
@@ -187,18 +190,34 @@ async def health_check(request: Request) -> JSONResponse:
     """
     logger.info("health_check_called")
 
-    # Check database connectivity
-    db_healthy = await database_service.health_check()
+    # Check all components concurrently
+    db_healthy, cache_healthy = await asyncio.gather(
+        database_service.health_check(),
+        cache_service.health_check(),
+        return_exceptions=True,
+    )
+
+    db_ok = db_healthy is True
+    cache_ok = cache_healthy is True
+
+    # Buffer is healthy if it has a backend initialized
+    buffer_ok = message_buffer_service._backend is not None
+
+    overall_healthy = db_ok and buffer_ok
+    overall_status = "healthy" if overall_healthy else "degraded"
 
     response = {
-        "status": "healthy" if db_healthy else "degraded",
+        "status": overall_status,
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT.value,
-        "components": {"api": "healthy", "database": "healthy" if db_healthy else "unhealthy"},
+        "components": {
+            "api": "healthy",
+            "database": "healthy" if db_ok else "unhealthy",
+            "cache": "healthy" if cache_ok else "unhealthy",
+            "buffer": "healthy" if buffer_ok else "not_initialized",
+        },
         "timestamp": datetime.now().isoformat(),
     }
 
-    # If DB is unhealthy, set the appropriate status code
-    status_code = status.HTTP_200_OK if db_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
-
+    status_code = status.HTTP_200_OK if overall_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
     return JSONResponse(content=response, status_code=status_code)

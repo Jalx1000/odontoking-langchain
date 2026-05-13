@@ -85,6 +85,10 @@ class InMemoryCacheService:
         """
         self._cache.pop(key, None)
 
+    async def health_check(self) -> bool:
+        """Always healthy for in-memory cache."""
+        return True
+
     async def close(self) -> None:
         """Clear the in-memory cache."""
         self._cache.clear()
@@ -166,6 +170,17 @@ class ValkeyCacheService:
             await self._client.delete(key)
         except Exception as e:
             logger.warning("cache_delete_failed", key=key, error=str(e))
+
+    async def health_check(self) -> bool:
+        """Ping Redis to verify connectivity."""
+        if not self._client:
+            return False
+        try:
+            await cast(Awaitable[bool], self._client.ping())
+            return True
+        except Exception as e:
+            logger.warning("cache_health_check_failed", error=str(e))
+            return False
 
     async def close(self) -> None:
         """Close the Valkey connection."""

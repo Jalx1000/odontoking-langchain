@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(APP_ENV=test uv run pytest tests/ -q)"
+    ]
+  }
+}

@@ -112,6 +112,8 @@ class OdontokingAgent:
         self.tools_by_name = {t.name: t for t in _ODONTOKING_TOOLS}
         self._connection_pool: Optional[PostgresConnPool] = None
         self._graph: Optional[CompiledStateGraph] = None
+        # Tracked background tasks so shutdown can await them and not lose chat history
+        self._persist_tasks: set[asyncio.Task] = set()
         logger.info("odontoking_agent_initialized", tools=list(self.tools_by_name.keys()))
 
     async def _get_connection_pool(self) -> Optional[PostgresConnPool]:
@@ -276,7 +278,9 @@ class OdontokingAgent:
             # Persist new messages (human + AI + tool) to chat_histories_odonto
             new_msgs = [m for m in response.get("messages", [])[existing_count:] if isinstance(m, BaseMessage)]
             if new_msgs:
-                asyncio.create_task(_persist_messages_async(wa_id, new_msgs))
+                task = asyncio.create_task(_persist_messages_async(wa_id, new_msgs))
+                self._persist_tasks.add(task)
+                task.add_done_callback(self._persist_tasks.discard)
 
             # Extract mensaje from JSON response
             ai_messages = [m for m in response.get("messages", []) if isinstance(m, AIMessage) and m.content]
@@ -314,6 +318,14 @@ class OdontokingAgent:
             logger.exception("odontoking_get_response_failed", wa_id=wa_id, error=str(e))
             raise
 
+
+    async def close(self) -> None:
+        """Await pending persist tasks and close the connection pool on shutdown."""
+        if self._persist_tasks:
+            await asyncio.gather(*self._persist_tasks, return_exceptions=True)
+        if self._connection_pool:
+            await self._connection_pool.close()
+            logger.info("odontoking_connection_pool_closed")
 
     async def clear_history(self, wa_id: str) -> None:
         """Delete all LangGraph checkpoint data for a given WhatsApp ID."""

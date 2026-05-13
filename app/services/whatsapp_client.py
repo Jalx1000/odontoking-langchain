@@ -83,7 +83,7 @@ def build_interactive_payload(mensaje: str, to: str) -> Optional[dict]:
 
     body_text = option_pattern.split(mensaje)[0].strip() or mensaje[:1024]
 
-    if len(options) == 2:
+    if len(options) <= 3:
         return {
             "type": "button",
             "body": {"text": body_text[:1024]},
@@ -116,6 +116,53 @@ def build_interactive_payload(mensaje: str, to: str) -> Optional[dict]:
             ],
         },
     }
+
+
+async def mark_as_read(to: str, message_id: str) -> None:
+    """Mark an incoming message as read (shows double blue ticks to the sender)."""
+    payload = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": message_id,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.post(
+                f"{_GRAPH_URL}/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages",
+                json=payload,
+                headers={**_auth_headers(), "Content-Type": "application/json"},
+            )
+            if not resp.is_success:
+                logger.warning("whatsapp_mark_read_failed", to=to, status=resp.status_code)
+    except Exception as e:
+        logger.warning("whatsapp_mark_read_error", to=to, error=str(e))
+
+
+async def send_typing_indicator(to: str) -> None:
+    """Show the 'typing…' indicator to the user while the agent processes.
+
+    Uses the WhatsApp Cloud API typing status. Best-effort: errors are logged
+    but never raised so the main processing flow is never blocked.
+    """
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "typing",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.post(
+                f"{_GRAPH_URL}/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages",
+                json=payload,
+                headers={**_auth_headers(), "Content-Type": "application/json"},
+            )
+            if resp.is_success:
+                logger.debug("whatsapp_typing_sent", to=to)
+            else:
+                logger.debug("whatsapp_typing_not_supported", to=to, status=resp.status_code)
+    except Exception as e:
+        logger.debug("whatsapp_typing_error", to=to, error=str(e))
 
 
 async def send_response(to: str, mensaje: str) -> None:
