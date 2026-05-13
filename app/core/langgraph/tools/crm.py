@@ -231,14 +231,13 @@ async def update_crm(
             if es_cita_confirmada and horario_cita and doctor_id:
                 schedule_from, schedule_to = _parse_appointment_datetime(horario_cita)
                 if schedule_from:
-                    activity_body = {
+                    activity_body: dict = {
                         "lead_id": lead_id,
                         "title": f"{person_name} - {products_name or 'Consulta'}",
                         "type": "meeting",
                         "schedule_from": schedule_from,
                         "schedule_to": schedule_to,
                         "location": "Consultorio",
-                        "product_id": products_product_id,
                         "comment": f"{products_name or ''} - Seguro: {seguro_de_vida or 'Ninguno'}",
                         "participants": {
                             "persons": [str(person_id)],
@@ -246,11 +245,15 @@ async def update_crm(
                             "doctors": [str(doctor_id)],
                         },
                     }
+                    if products_product_id is not None:
+                        activity_body["product_id"] = products_product_id
                     act_resp = await client.post(
                         f"{_BASE}/api/v1/activities",
                         json=activity_body,
                         headers=_HEADERS,
                     )
+                    if act_resp.status_code == 422:
+                        log.error("crm_activity_422", body=activity_body, response=act_resp.text)
                     act_resp.raise_for_status()
                     log.info("crm_activity_created", lead_id=lead_id, schedule=schedule_from)
 
