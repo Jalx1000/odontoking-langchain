@@ -1,4 +1,4 @@
-"""Unit tests for Odontoking API tools (services, specialties, doctors, schedules)."""
+"""Unit tests for Odontoking API tools (services, specialties, doctors, schedules, availability)."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 
-def _make_response(status: int, data: dict) -> MagicMock:
+def _make_response(status: int, data) -> MagicMock:
     resp = MagicMock()
     resp.status_code = status
     resp.json.return_value = data
@@ -233,8 +233,164 @@ class TestGetDoctorSchedule:
 
             result = json.loads(await get_doctor_schedule.ainvoke({"id_doctor": 3}))
             slot = result["availability"][0]
-            # Only date and start_time should be present
             assert "date" in slot
             assert "start_time" in slot
             assert "end_time" not in slot
             assert "internal_id" not in slot
+
+
+class TestGetHorarios:
+    @pytest.mark.asyncio
+    async def test_returns_all_horarios_without_filter(self):
+        from app.core.langgraph.tools.odontoking import get_horarios
+
+        data = [
+            {"doctorId": 1, "doctorName": "Dr. García", "horarioRaw": "Lun-Vie 09:00-17:00"},
+            {"doctorId": 2, "doctorName": "Dra. López", "horarioRaw": "Lun-Sáb 08:00-14:00"},
+        ]
+        resp = _make_response(200, data)
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=resp)
+            cls.return_value = client
+
+            result = json.loads(await get_horarios.ainvoke({}))
+            assert len(result) == 2
+            assert result[0]["doctorName"] == "Dr. García"
+
+    @pytest.mark.asyncio
+    async def test_filters_by_doctor_id(self):
+        from app.core.langgraph.tools.odontoking import get_horarios
+
+        data = [{"doctorId": 5, "doctorName": "Dr. Specific", "horarioRaw": "Lun-Vie 10:00-18:00"}]
+        resp = _make_response(200, data)
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=resp)
+            cls.return_value = client
+
+            result = json.loads(await get_horarios.ainvoke({"doctor_id": 5}))
+            # Verify doctorId param was passed
+            call_params = client.get.call_args[1]["params"]
+            assert call_params["doctorId"] == 5
+            assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_doctor_id_omits_param(self):
+        from app.core.langgraph.tools.odontoking import get_horarios
+
+        resp = _make_response(200, [])
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=resp)
+            cls.return_value = client
+
+            await get_horarios.ainvoke({})
+            call_params = client.get.call_args[1]["params"]
+            assert "doctorId" not in call_params
+
+    @pytest.mark.asyncio
+    async def test_returns_error_on_404(self):
+        from app.core.langgraph.tools.odontoking import get_horarios
+
+        resp = _make_response(404, {"message": "Not found"})
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=resp)
+            cls.return_value = client
+
+            result = json.loads(await get_horarios.ainvoke({"doctor_id": 999}))
+            assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_returns_error_on_exception(self):
+        from app.core.langgraph.tools.odontoking import get_horarios
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=Exception("timeout"))
+            cls.return_value = client
+
+            result = json.loads(await get_horarios.ainvoke({}))
+            assert "error" in result
+
+
+class TestGetDisponibilidad:
+    @pytest.mark.asyncio
+    async def test_returns_available_slots(self):
+        from app.core.langgraph.tools.odontoking import get_disponibilidad
+
+        data = [
+            {"doctorId": 5, "date": "2026-05-15", "startTime": "09:00", "endTime": "10:00"},
+            {"doctorId": 5, "date": "2026-05-15", "startTime": "11:00", "endTime": "12:00"},
+        ]
+        resp = _make_response(200, data)
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=resp)
+            cls.return_value = client
+
+            result = json.loads(await get_disponibilidad.ainvoke({"doctor_id": 5, "date": "2026-05-15"}))
+            assert len(result) == 2
+            assert result[0]["startTime"] == "09:00"
+
+    @pytest.mark.asyncio
+    async def test_passes_correct_query_params(self):
+        from app.core.langgraph.tools.odontoking import get_disponibilidad
+
+        resp = _make_response(200, [])
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=resp)
+            cls.return_value = client
+
+            await get_disponibilidad.ainvoke({"doctor_id": 19, "date": "2026-05-20"})
+            call_params = client.get.call_args[1]["params"]
+            assert call_params["doctorId"] == 19
+            assert call_params["date"] == "2026-05-20"
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_when_no_slots(self):
+        from app.core.langgraph.tools.odontoking import get_disponibilidad
+
+        resp = _make_response(200, [])
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=resp)
+            cls.return_value = client
+
+            result = json.loads(await get_disponibilidad.ainvoke({"doctor_id": 5, "date": "2026-05-15"}))
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_returns_error_on_400(self):
+        from app.core.langgraph.tools.odontoking import get_disponibilidad
+
+        resp = _make_response(400, {"message": "invalid date"})
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=resp)
+            cls.return_value = client
+
+            result = json.loads(await get_disponibilidad.ainvoke({"doctor_id": 5, "date": "not-a-date"}))
+            assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_returns_error_on_exception(self):
+        from app.core.langgraph.tools.odontoking import get_disponibilidad
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=Exception("network error"))
+            cls.return_value = client
+
+            result = json.loads(await get_disponibilidad.ainvoke({"doctor_id": 5, "date": "2026-05-15"}))
+            assert "error" in result

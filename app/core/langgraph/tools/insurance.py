@@ -27,6 +27,23 @@ def _is_transient(exc: BaseException) -> bool:
     retry=retry_if_exception(_is_transient),
     reraise=True,
 )
+async def _search_person(client: httpx.AsyncClient, person_email: str) -> list:
+    """Search for a person in the CRM by email with retry on 5xx."""
+    search_resp = await client.get(
+        f"{_BASE}/api/v1/contacts/persons/search",
+        params={"search": person_email, "searchFields": "emails:like"},
+        headers=_HEADERS,
+    )
+    search_resp.raise_for_status()
+    return search_resp.json().get("data", [])
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=8),
+    retry=retry_if_exception(_is_transient),
+    reraise=True,
+)
 async def _call_verify(client: httpx.AsyncClient, person_id: int, carnet_identidad: str, empresa_seguro: str) -> dict:
     verify_resp = await client.post(
         f"{_BASE}/api/insurance/verify",
@@ -43,20 +60,14 @@ async def verify_insurance(empresa_seguro: str, carnet_identidad: str, wa_id: st
 
     Args:
         empresa_seguro: Exact insurance company name. Must be one of:
-            'Nacional Vida' or 'Membresía Odontoking'.
+            'Alianza', 'Nacional Seguro', or 'Membresía Odontoking'.
         carnet_identidad: Patient's ID card number (digits and dashes only, no spaces).
         wa_id: WhatsApp ID of the contact (used to look up the person in CRM).
     """
     try:
         person_email = f"{wa_id}@whatsapp.sofopolis.net"
         async with httpx.AsyncClient(timeout=15) as client:
-            search_resp = await client.get(
-                f"{_BASE}/api/v1/contacts/persons/search",
-                params={"search": person_email, "searchFields": "emails:like"},
-                headers=_HEADERS,
-            )
-            search_resp.raise_for_status()
-            persons = search_resp.json().get("data", [])
+            persons = await _search_person(client, person_email)
 
             if not persons:
                 logger.warning("insurance_person_not_found", wa_id=wa_id)

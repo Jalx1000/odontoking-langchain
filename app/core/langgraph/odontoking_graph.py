@@ -47,8 +47,10 @@ from app.services.database import database_service
 from app.core.langgraph.tools.crm import get_citas, update_crm
 from app.core.langgraph.tools.insurance import verify_insurance
 from app.core.langgraph.tools.odontoking import (
+    get_disponibilidad,
     get_doctor_schedule,
     get_doctors,
+    get_horarios,
     get_services,
     get_specialties,
 )
@@ -62,7 +64,17 @@ from app.utils import (
 
 PostgresConnPool = AsyncConnectionPool[AsyncConnection[DictRow]]
 
-_ODONTOKING_TOOLS = [get_services, get_specialties, get_doctors, get_doctor_schedule, verify_insurance, update_crm, get_citas]
+_ODONTOKING_TOOLS = [
+    get_services,
+    get_specialties,
+    get_doctors,
+    get_doctor_schedule,
+    get_horarios,
+    get_disponibilidad,
+    verify_insurance,
+    update_crm,
+    get_citas,
+]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "odontoking.md")
 
@@ -104,7 +116,7 @@ class OdontokingAgent:
     def __init__(self):
         """Initialize the Odontoking agent with its own LLM and tool set."""
         self._llm = ChatOpenAI(
-            model="gpt-4o-mini",
+            model=settings.ODONTOKING_LLM_MODEL,
             api_key=SecretStr(settings.OPENAI_API_KEY),
             max_tokens=2000,  # pyright: ignore[reportCallIssue]
             temperature=0.2,

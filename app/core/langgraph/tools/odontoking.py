@@ -1,4 +1,4 @@
-"""Odontoking API tools — services, specialties, doctors, schedules."""
+"""Odontoking API tools — services, specialties, doctors, schedules, availability."""
 
 import json
 
@@ -122,4 +122,73 @@ async def get_doctor_schedule(id_doctor: int) -> str:
             return json.dumps(matches[0], ensure_ascii=False)
     except Exception as e:
         logger.exception("get_doctor_schedule_failed", id_doctor=id_doctor, error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@tool
+async def get_horarios(doctor_id: int | None = None) -> str:
+    """Get the base weekly schedule (in text format) for one or all doctors.
+
+    Use this to show a doctor's general working hours (e.g., Mon-Fri 09:00-17:00).
+    For real-time available slots on a specific date, use get_disponibilidad instead.
+
+    Args:
+        doctor_id: Optional doctor ID to filter results. Returns all doctors if omitted.
+    """
+    try:
+        params: dict = {}
+        if doctor_id is not None:
+            params["doctorId"] = doctor_id
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{_BASE}/api/horarios",
+                params=params,
+                headers=_HEADERS,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            logger.info("odontoking_horarios_fetched", doctor_id=doctor_id)
+            return json.dumps(data, ensure_ascii=False)
+    except httpx.HTTPStatusError as e:
+        logger.exception("get_horarios_http_error", status=e.response.status_code, error=str(e))
+        return json.dumps({"error": f"API returned {e.response.status_code}"})
+    except Exception as e:
+        logger.exception("get_horarios_failed", error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@tool
+async def get_disponibilidad(doctor_id: int, date: str) -> str:
+    """Get real-time available appointment slots for a doctor on a specific date.
+
+    Returns a list of available time blocks (startTime, endTime) that can be offered
+    to the patient. Always call this before confirming an appointment to ensure the
+    slot is actually free.
+
+    Args:
+        doctor_id: The numeric ID of the doctor from get_doctors().
+        date: The date to check in YYYY-MM-DD format (e.g., '2026-05-15').
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{_BASE}/api/disponibilidad",
+                params={"doctorId": doctor_id, "date": date},
+                headers=_HEADERS,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            logger.info("odontoking_disponibilidad_fetched", doctor_id=doctor_id, date=date)
+            return json.dumps(data, ensure_ascii=False)
+    except httpx.HTTPStatusError as e:
+        logger.exception(
+            "get_disponibilidad_http_error",
+            status=e.response.status_code,
+            doctor_id=doctor_id,
+            date=date,
+            error=str(e),
+        )
+        return json.dumps({"error": f"API returned {e.response.status_code}"})
+    except Exception as e:
+        logger.exception("get_disponibilidad_failed", doctor_id=doctor_id, date=date, error=str(e))
         return json.dumps({"error": str(e)})

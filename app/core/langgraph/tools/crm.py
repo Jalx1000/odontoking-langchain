@@ -254,7 +254,19 @@ async def update_crm(
                         headers=_HEADERS,
                     )
                     if act_resp.status_code == 422:
+                        try:
+                            error_detail = act_resp.json()
+                        except Exception:
+                            error_detail = {"message": act_resp.text}
                         log.error("crm_activity_422", body=activity_body, response=act_resp.text)
+                        return json.dumps({
+                            "success": False,
+                            "appointment_registered": False,
+                            "error_type": "appointment_conflict",
+                            "message": error_detail.get("message", "No se pudo registrar la cita."),
+                            "person_id": person_id,
+                            "lead_id": lead_id,
+                        })
                     act_resp.raise_for_status()
                     log.info("crm_activity_created", lead_id=lead_id, schedule=schedule_from)
 

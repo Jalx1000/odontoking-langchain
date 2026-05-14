@@ -216,6 +216,103 @@ class TestParseAppointmentDatetime:
         assert delta == 3600
 
 
+class TestUpdateCrmActivity422:
+    """Appointment 422 responses must be returned gracefully, never raise."""
+
+    def _confirmed_args(self, **overrides) -> dict:
+        args = {
+            "wa_id": "591700000000",
+            "person_name": "Ana López",
+            "person_phone": "591700000000",
+            "doctor_id": 19,
+            "horario_cita": "15/05/2026 09:00",
+            "es_cita_confirmada": True,
+            "products_name": "Limpieza",
+            "products_product_id": 174,
+        }
+        args.update(overrides)
+        return args
+
+    @pytest.mark.asyncio
+    async def test_422_doctor_conflict_returns_graceful_error(self):
+        """When doctor is already booked (422), tool returns error payload without raising."""
+        from app.core.langgraph.tools.crm import update_crm
+
+        conflict_resp = MagicMock()
+        conflict_resp.status_code = 422
+        conflict_resp.text = '{"message":"El doctor ya tiene una cita programada en este horario en el sistema local.","details":[]}'
+        conflict_resp.json.return_value = {
+            "message": "El doctor ya tiene una cita programada en este horario en el sistema local.",
+            "details": [],
+        }
+        conflict_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            client.post = AsyncMock(return_value=conflict_resp)
+            cls.return_value = client
+
+            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+
+        assert result["success"] is False
+        assert result["appointment_registered"] is False
+        assert result["error_type"] == "appointment_conflict"
+        assert "doctor" in result["message"].lower() or "cita" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_422_sharemedata_auth_failure_returns_graceful_error(self):
+        """When ShareMeData auth fails (422), tool returns error payload without raising."""
+        from app.core.langgraph.tools.crm import update_crm
+
+        smd_resp = MagicMock()
+        smd_resp.status_code = 422
+        smd_resp.text = '{"message":"Error al registrar la cita en ShareMeData. La cita no fue creada.","details":{"smd_response":{"success":false,"message":"@error.authenticationFailed","status":401}}}'
+        smd_resp.json.return_value = {
+            "message": "Error al registrar la cita en ShareMeData. La cita no fue creada.",
+            "details": {"smd_response": {"success": False, "message": "@error.authenticationFailed", "status": 401}},
+        }
+        smd_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            client.post = AsyncMock(return_value=smd_resp)
+            cls.return_value = client
+
+            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+
+        assert result["success"] is False
+        assert result["appointment_registered"] is False
+        assert result["error_type"] == "appointment_conflict"
+        assert "ShareMeData" in result["message"] or "registrar" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_422_preserves_person_and_lead_ids(self):
+        """Even on 422, person_id and lead_id are returned so the agent has context."""
+        from app.core.langgraph.tools.crm import update_crm
+
+        conflict_resp = MagicMock()
+        conflict_resp.status_code = 422
+        conflict_resp.text = '{"message":"Horario ocupado."}'
+        conflict_resp.json.return_value = {"message": "Horario ocupado."}
+        conflict_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            client.post = AsyncMock(return_value=conflict_resp)
+            cls.return_value = client
+
+            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+
+        assert result.get("person_id") == 99
+        assert result.get("lead_id") == 77
+
+
 class TestGetCitas:
     @pytest.mark.asyncio
     async def test_returns_meetings_for_patient(self):

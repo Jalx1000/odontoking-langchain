@@ -1,0 +1,118 @@
+{
+    "paths": {
+        "/api/horarios": {
+            "get": {
+                "tags": ["Horarios y Disponibilidad"],
+                "summary": "Obtener horarios base de los doctores",
+                "description": "Devuelve el horario base en formato de texto para uno o todos los doctores.",
+                "operationId": "getHorarios",
+                "security": [{"bearerAuth": []}],
+                "parameters": [
+                    {
+                        "name": "doctorId",
+                        "in": "query",
+                        "description": "ID del doctor para filtrar los resultados.",
+                        "required": false,
+                        "schema": {"type": "integer"}
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Operación exitosa.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {"$ref": "#/components/schemas/Horario"}
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "No se encontraron horarios.",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/Error"}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/disponibilidad": {
+            "get": {
+                "tags": ["Horarios y Disponibilidad"],
+                "summary": "Obtener la disponibilidad de un doctor",
+                "description": "Calcula los bloques de tiempo disponibles para un doctor en una fecha específica.",
+                "operationId": "getDisponibilidad",
+                "security": [{"bearerAuth": []}],
+                "parameters": [
+                    {
+                        "name": "doctorId",
+                        "in": "query",
+                        "description": "ID del doctor.",
+                        "required": true,
+                        "schema": {"type": "integer"}
+                    },
+                    {
+                        "name": "date",
+                        "in": "query",
+                        "description": "Fecha (YYYY-MM-DD).",
+                        "required": true,
+                        "schema": {"type": "string", "format": "date"}
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Operación exitosa.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {"$ref": "#/components/schemas/Disponibilidad"}
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Parámetros inválidos.",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/Error"}
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Doctor no encontrado o sin horario.",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/Error"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "Horario": {
+                "type": "object",
+                "properties": {
+                    "doctorId": {"type": "integer"},
+                    "doctorName": {"type": "string"},
+                    "horarioRaw": {"type": "string"}
+                }
+            },
+            "Disponibilidad": {
+                "type": "object",
+                "properties": {
+                    "doctorId": {"type": "integer"},
+                    "date": {"type": "string", "format": "date"},
+                    "startTime": {"type": "string", "format": "time"},
+                    "endTime": {"type": "string", "format": "time"}
+                }
+            }
+        }
+    }
+}

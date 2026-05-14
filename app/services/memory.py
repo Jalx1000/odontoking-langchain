@@ -1,5 +1,7 @@
 """Long-term memory service using mem0 and pgvector with optional cache layer."""
 
+import inspect
+
 from mem0 import AsyncMemory
 
 from app.core.cache import (
@@ -19,29 +21,32 @@ class MemoryService:
 
     async def _get_memory(self) -> AsyncMemory:
         if self._memory is None:
-            self._memory = await AsyncMemory.from_config(
-                config_dict={
-                    "vector_store": {
-                        "provider": "pgvector",
-                        "config": {
-                            "collection_name": settings.LONG_TERM_MEMORY_COLLECTION_NAME,
-                            "dbname": settings.POSTGRES_DB,
-                            "user": settings.POSTGRES_USER,
-                            "password": settings.POSTGRES_PASSWORD,
-                            "host": settings.POSTGRES_HOST,
-                            "port": settings.POSTGRES_PORT,
-                        },
+            config_dict = {
+                "vector_store": {
+                    "provider": "pgvector",
+                    "config": {
+                        "collection_name": settings.LONG_TERM_MEMORY_COLLECTION_NAME,
+                        "dbname": settings.POSTGRES_DB,
+                        "user": settings.POSTGRES_USER,
+                        "password": settings.POSTGRES_PASSWORD,
+                        "host": settings.POSTGRES_HOST,
+                        "port": settings.POSTGRES_PORT,
                     },
-                    "llm": {
-                        "provider": "openai",
-                        "config": {"model": settings.LONG_TERM_MEMORY_MODEL},
-                    },
-                    "embedder": {
-                        "provider": "openai",
-                        "config": {"model": settings.LONG_TERM_MEMORY_EMBEDDER_MODEL},
-                    },
-                }
-            )
+                },
+                "llm": {
+                    "provider": "openai",
+                    "config": {"model": settings.LONG_TERM_MEMORY_MODEL},
+                },
+                "embedder": {
+                    "provider": "openai",
+                    "config": {"model": settings.LONG_TERM_MEMORY_EMBEDDER_MODEL},
+                },
+            }
+            # Handle both sync and async from_config across mem0 versions
+            result = AsyncMemory.from_config(config_dict=config_dict)
+            if inspect.isawaitable(result):
+                result = await result
+            self._memory = result
         return self._memory
 
     async def initialize(self) -> None:
@@ -73,8 +78,10 @@ class MemoryService:
                 return cached
 
             memory = await self._get_memory()
-            results = await memory.search(user_id=str(user_id), query=query)
-            result = "\n".join([f"* {r['memory']}" for r in results["results"]])
+            result_data = memory.search(user_id=str(user_id), query=query)
+            if inspect.isawaitable(result_data):
+                result_data = await result_data
+            result = "\n".join([f"* {r['memory']}" for r in result_data["results"]])
 
             # Cache successful results
             if result:
@@ -94,7 +101,9 @@ class MemoryService:
             return
         try:
             memory = await self._get_memory()
-            await memory.add(messages, user_id=str(user_id), metadata=metadata)
+            result = memory.add(messages, user_id=str(user_id), metadata=metadata)
+            if inspect.isawaitable(result):
+                await result
             logger.info("long_term_memory_updated_successfully", user_id=user_id)
         except Exception as e:
             logger.exception("failed_to_update_long_term_memory", user_id=user_id, error=str(e))
