@@ -201,11 +201,155 @@ class TestRedisStreamBroker:
         assert await broker.dlq_retry("odontoking", 5) is False
 
 
+class TestRabbitMQBroker:
+    """Tests for RabbitMQBroker — mocks the AMQP channel/message layer."""
+
+    def _broker(self) -> "RabbitMQBroker":
+        from app.core.broker import RabbitMQBroker
+        return RabbitMQBroker("amqp://guest:guest@localhost/")
+
+    def _mock_message(self, wa_id: str = "591700000001", retry_count: int = 0) -> MagicMock:
+        msg = MagicMock()
+        msg.body = json.dumps({
+            "wa_id": wa_id,
+            "payload": json.dumps({"text": "hello"}),
+        }).encode()
+        msg.headers = {"x-retry-count": retry_count}
+        msg.ack = AsyncMock()
+        msg.nack = AsyncMock()
+        return msg
+
+    @pytest.mark.asyncio
+    async def test_process_message_acks_on_success(self):
+        broker = self._broker()
+        channel = AsyncMock()
+        message = self._mock_message()
+        calls: list = []
+
+        async def handler(payload: dict) -> None:
+            calls.append(payload)
+
+        with patch.object(broker, "_republish", AsyncMock()):
+            await broker._process_message("odontoking", channel, message, handler)
+
+        assert len(calls) == 1
+        assert calls[0]["wa_id"] == "591700000001"
+        message.ack.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_process_message_retries_on_first_failure(self):
+        broker = self._broker()
+        channel = AsyncMock()
+        message = self._mock_message(retry_count=0)
+
+        async def failing_handler(payload: dict) -> None:
+            raise RuntimeError("LLM error")
+
+        with patch.object(broker, "_republish", AsyncMock()) as mock_republish:
+            await broker._process_message("odontoking", channel, message, failing_handler)
+
+        message.ack.assert_called_once()   # ack original before republish
+        mock_republish.assert_called_once_with("odontoking", channel, message, 1)
+
+    @pytest.mark.asyncio
+    async def test_process_message_moves_to_dlq_at_max_retries(self):
+        broker = self._broker()
+        channel = AsyncMock()
+        message = self._mock_message(retry_count=2)  # next failure = 3 = MAX_RETRIES
+
+        async def failing_handler(payload: dict) -> None:
+            raise RuntimeError("always fails")
+
+        with patch("app.core.notifications.notify"):
+            await broker._process_message("odontoking", channel, message, failing_handler)
+
+        assert len(broker._dlq.get("odontoking", [])) == 1
+        assert broker._dlq["odontoking"][0]["wa_id"] == "591700000001"
+        message.ack.assert_called_once()  # ACKed from queue after DLQ save
+
+    @pytest.mark.asyncio
+    async def test_process_message_no_retry_when_already_at_limit(self):
+        broker = self._broker()
+        channel = AsyncMock()
+        message = self._mock_message(retry_count=2)
+
+        async def failing_handler(payload: dict) -> None:
+            raise RuntimeError("fail")
+
+        with patch.object(broker, "_republish", AsyncMock()) as mock_republish, \
+                patch("app.core.notifications.notify"):
+            await broker._process_message("odontoking", channel, message, failing_handler)
+
+        mock_republish.assert_not_called()  # DLQ path, not retry
+
+    @pytest.mark.asyncio
+    async def test_dlq_list_returns_pending_entries(self):
+        broker = self._broker()
+        broker._dlq["odontoking"] = [
+            {"wa_id": "591700000001", "error": "timeout", "tenant": "odontoking"},
+        ]
+        result = await broker.dlq_list("odontoking")
+        assert len(result) == 1
+        assert result[0]["wa_id"] == "591700000001"
+
+    @pytest.mark.asyncio
+    async def test_dlq_list_empty_for_unknown_tenant(self):
+        broker = self._broker()
+        result = await broker.dlq_list("unknown-tenant")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_dlq_retry_republishes_and_removes(self):
+        broker = self._broker()
+        broker._dlq["odontoking"] = [{
+            "wa_id": "591700000001",
+            "payload": json.dumps({
+                "wa_id": "591700000001",
+                "payload": '{"text": "retry me"}',
+            }),
+            "error": "timeout",
+            "tenant": "odontoking",
+        }]
+
+        with patch.object(broker, "publish", AsyncMock()) as mock_publish:
+            result = await broker.dlq_retry("odontoking", 0)
+
+        assert result is True
+        mock_publish.assert_called_once()
+        assert len(broker._dlq["odontoking"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_dlq_retry_out_of_range_returns_false(self):
+        broker = self._broker()
+        broker._dlq["odontoking"] = []
+        result = await broker.dlq_retry("odontoking", 5)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_save_to_dlq_sends_email_notification(self):
+        broker = self._broker()
+        message = self._mock_message()
+
+        with patch("app.core.notifications.notify") as mock_notify:
+            await broker._save_to_dlq("odontoking", message, "591700000001", "connection refused")
+
+        # notify is called once explicitly + once via alert_processor on logger.error()
+        assert mock_notify.called
+        events = [c[1].get("event", "") for c in mock_notify.call_args_list]
+        assert any("rabbitmq_message_dlq" in e for e in events)
+
+    @pytest.mark.asyncio
+    async def test_close_is_safe_when_not_connected(self):
+        broker = self._broker()
+        await broker.close()  # should not raise
+
+
 class TestCreateBroker:
     def test_returns_in_memory_when_no_valkey(self):
         from app.core.broker import InMemoryBroker, create_broker
         with patch("app.core.config.settings") as mock_settings:
             mock_settings.VALKEY_HOST = ""
+            mock_settings.RABBITMQ_URL = ""
             broker = create_broker()
         assert isinstance(broker, InMemoryBroker)
 
@@ -214,9 +358,32 @@ class TestCreateBroker:
         if not _REDIS_AVAILABLE:
             pytest.skip("redis not installed")
         with patch("app.core.config.settings") as mock_settings:
+            mock_settings.RABBITMQ_URL = ""
             mock_settings.VALKEY_HOST = "localhost"
             mock_settings.VALKEY_PORT = 6379
             mock_settings.VALKEY_DB = 0
             mock_settings.VALKEY_PASSWORD = ""
             broker = create_broker()
         assert isinstance(broker, RedisStreamBroker)
+
+    def test_returns_rabbitmq_broker_when_configured(self):
+        from app.core.broker import RabbitMQBroker, create_broker, _RABBITMQ_AVAILABLE
+        if not _RABBITMQ_AVAILABLE:
+            pytest.skip("aio-pika not installed")
+        with patch("app.core.config.settings") as mock_settings:
+            mock_settings.RABBITMQ_URL = "amqp://guest:guest@localhost/"
+            broker = create_broker()
+        assert isinstance(broker, RabbitMQBroker)
+
+    def test_rabbitmq_takes_priority_over_redis(self):
+        from app.core.broker import RabbitMQBroker, create_broker, _RABBITMQ_AVAILABLE, _REDIS_AVAILABLE
+        if not _RABBITMQ_AVAILABLE or not _REDIS_AVAILABLE:
+            pytest.skip("aio-pika or redis not installed")
+        with patch("app.core.config.settings") as mock_settings:
+            mock_settings.RABBITMQ_URL = "amqp://guest:guest@localhost/"
+            mock_settings.VALKEY_HOST = "localhost"
+            mock_settings.VALKEY_PORT = 6379
+            mock_settings.VALKEY_DB = 0
+            mock_settings.VALKEY_PASSWORD = ""
+            broker = create_broker()
+        assert isinstance(broker, RabbitMQBroker)

@@ -201,6 +201,12 @@ class Settings:
         self.VALKEY_MAX_CONNECTIONS = int(os.getenv("VALKEY_MAX_CONNECTIONS", "20"))
         self.CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "60"))
 
+        # RabbitMQ / CloudAMQP (optional — Fase 5, higher priority than Redis Streams)
+        # Set to enable enterprise-grade message broker with native DLQ and management UI.
+        # Format: amqp://user:password@host:5672/vhost  (amqps:// for TLS)
+        # Install: uv add aio-pika --optional rabbitmq
+        self.RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
+
         # Rate Limiting Configuration
         self.RATE_LIMIT_DEFAULT = parse_list_from_env("RATE_LIMIT_DEFAULT", ["200 per day", "50 per hour"])
 

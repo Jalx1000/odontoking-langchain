@@ -501,17 +501,34 @@ La agencia tiene visibilidad total de todos los clientes desde un panel.
 
 ---
 
-### 🔜 Fase 5 — RabbitMQ + Monitoring Dashboard
+### ✅ Fase 5 — RabbitMQ + Monitoring Dashboard
 **Objetivo:** Enterprise-grade para clientes nacionales de alto volumen.
 
 **Tareas:**
-1. Migrar `RedisStreamBroker` → `RabbitMQBroker` (aio-pika)
-   - Un VHost por tenant en CloudAMQP
-   - Exchange topic: `wa.{tenant}.messages`
-   - DLQ nativa con routing key `wa.{tenant}.dlq`
-2. Dashboard de colas: RabbitMQ Management UI o integración con Grafana
-3. Alertas de DLQ: email cuando un mensaje llega a DLQ
-4. Retry policy configurable por tenant (backoff exponencial)
+1. ✅ `RabbitMQBroker` implementado en `app/core/broker.py` (aio-pika)
+   - Exchange `wa.{tenant}` (direct, durable) + Queue `wa.{tenant}.messages`
+   - DLX `wa.{tenant}.dlx` + DLQ queue `wa.{tenant}.dlq` (native dead-letter)
+   - Retry con header `x-retry-count` (ack + republish con contador incrementado)
+   - In-memory DLQ dict para `dlq_list`/`dlq_retry` via admin panel
+2. ✅ `create_broker()` con prioridad: RabbitMQ > Redis Streams > InMemory
+3. ✅ `RABBITMQ_URL` en settings + `.env.example` con instrucciones CloudAMQP
+4. ✅ `aio-pika>=9.4.0` como optional dep (`uv add aio-pika --optional rabbitmq`)
+5. ✅ 10 tests nuevos para `RabbitMQBroker` (122 passed total)
+6. ✅ Alertas DLQ: email via `notify()` cuando mensaje supera MAX_RETRIES
+7. 🔜 Dashboard de colas: RabbitMQ Management UI disponible en CloudAMQP (sin código)
+8. 🔜 Fase 5b (futuro): DLQ persistente en PostgreSQL `dlq_messages` para sobrevivir reinicios
+
+**Activar RabbitMQ:**
+```bash
+# 1. Instalar dependencia
+uv add aio-pika --optional rabbitmq
+
+# 2. Configurar en .env
+RABBITMQ_URL=amqps://user:pass@host.cloudamqp.com/vhost
+
+# 3. El worker llama setup() automáticamente al arrancar
+python -m app.worker
+```
 
 ---
 

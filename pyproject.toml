@@ -56,6 +56,9 @@ cache = [
     "redis>=7.4.0",
     "valkey[libvalkey]>=6.1.0",
 ]
+rabbitmq = [
+    "aio-pika>=9.4.0",
+]
 
 [dependency-groups]
 dev = [
