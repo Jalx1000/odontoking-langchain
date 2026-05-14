@@ -18,6 +18,7 @@ from slowapi.errors import RateLimitExceeded
 
 from asgi_correlation_id import CorrelationIdMiddleware
 
+from app.api.admin.router import admin_router
 from app.api.v1.api import api_router
 from app.api.v1.chatbot import agent
 from app.core.cache import cache_service
@@ -169,6 +170,9 @@ app.add_middleware(
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# Include Admin router (protected by X-Admin-Key header)
+app.include_router(admin_router, prefix=settings.API_V1_STR)
 
 
 @app.get("/")

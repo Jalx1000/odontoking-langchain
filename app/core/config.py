@@ -163,6 +163,17 @@ class Settings:
         self.JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
         self.JWT_ACCESS_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_DAYS", "30"))
 
+        # Security — Fernet key for encrypting tenant credentials in DB
+        # Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+        self.ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+
+        # Admin panel — static API key for accessing /admin endpoints
+        # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+        self.ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
+
+        # Tenant DB registry cache TTL (seconds)
+        self.TENANT_CACHE_TTL = int(os.getenv("TENANT_CACHE_TTL", "300"))
+
         # Logging Configuration
         self.LOG_DIR = Path(os.getenv("LOG_DIR", "logs"))
         self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

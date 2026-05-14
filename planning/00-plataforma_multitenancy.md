@@ -435,7 +435,7 @@ Costo adicional en Railway: ~$10–15/mes (2 workers).
 
 ---
 
-### 🔜 Fase 4 — DB Registry + Admin Panel
+### ✅ Fase 4 — DB Registry + Admin Panel
 **Objetivo:** Agregar clientes sin redeploy. Panel de administración para la agencia.
 
 **Tareas:**
