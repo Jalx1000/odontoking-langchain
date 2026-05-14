@@ -21,9 +21,17 @@ if settings.VALKEY_HOST:
     _storage_uri = f"redis://{_password_part}{settings.VALKEY_HOST}:{settings.VALKEY_PORT}/{settings.VALKEY_DB}"
     logger.info("rate_limiter_using_valkey", host=settings.VALKEY_HOST, port=settings.VALKEY_PORT)
 
-# Initialize rate limiter (uses in-memory storage if no Valkey)
-limiter = Limiter(
-    key_func=get_remote_address,
-    default_limits=settings.RATE_LIMIT_DEFAULT,  # pyright: ignore[reportArgumentType]
-    storage_uri=_storage_uri,
-)
+# Initialize rate limiter — fall back to in-memory if redis package is missing
+try:
+    limiter = Limiter(
+        key_func=get_remote_address,
+        default_limits=settings.RATE_LIMIT_DEFAULT,  # pyright: ignore[reportArgumentType]
+        storage_uri=_storage_uri,
+    )
+except Exception as e:
+    logger.warning("rate_limiter_redis_unavailable_using_memory", error=str(e))
+    limiter = Limiter(
+        key_func=get_remote_address,
+        default_limits=settings.RATE_LIMIT_DEFAULT,  # pyright: ignore[reportArgumentType]
+        storage_uri=None,
+    )

@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y \
 
 # Copy dependency files first to leverage Docker cache (lock file pins exact versions)
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra cache
 
 # Copy the application
 COPY . .
