@@ -260,12 +260,6 @@ async def verify_webhook_legacy(
     )
 
 
-@router.post("/webhook")
-@limiter.limit("100 per minute")
-async def receive_message_legacy(request: Request) -> dict:
-    """Legacy receive endpoint — routes to odontoking tenant."""
-    return await receive_message_tenant(tenant_slug="odontoking", request=request)
-
 
 # ── Admin / dev endpoints ────────────────────────────────────────────────────
 
