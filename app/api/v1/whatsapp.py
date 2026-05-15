@@ -78,29 +78,31 @@ def _is_wa_rate_limited(wa_id: str) -> bool:
 
 
 def _make_process_fn(tenant: TenantConfig) -> ProcessFn:
-    """Return a ProcessFn closure bound to the given tenant's agent and WA token."""
+    """Return a ProcessFn closure bound to the given tenant's agent and WA credentials."""
     agent = _AGENT_REGISTRY.get(tenant.slug, odontoking_agent)
+    pid = tenant.phone_number_id
+    tok = tenant.wa_access_token
 
     async def _process(wa_id: str, text: str) -> None:
         messages = [Message(role="user", content=text)]
         try:
-            asyncio.create_task(send_typing_indicator(wa_id))
+            asyncio.create_task(send_typing_indicator(wa_id, phone_number_id=pid, token=tok))
             response_text = await asyncio.wait_for(
                 agent.get_response(messages, wa_id=wa_id),
                 timeout=settings.LLM_TOTAL_TIMEOUT + 30,
             )
-            await send_response(wa_id, response_text)
+            await send_response(wa_id, response_text, phone_number_id=pid, token=tok)
             logger.info("whatsapp_response_sent", tenant=tenant.slug, wa_id=wa_id, preview=response_text[:60])
         except asyncio.TimeoutError:
             logger.warning("whatsapp_agent_timeout", tenant=tenant.slug, wa_id=wa_id)
             try:
-                await send_text_message(wa_id, _TIMEOUT_MSG)
+                await send_text_message(wa_id, _TIMEOUT_MSG, phone_number_id=pid, token=tok)
             except Exception:
                 pass
         except Exception as e:
             logger.exception("whatsapp_agent_error", tenant=tenant.slug, wa_id=wa_id, error=str(e))
             try:
-                await send_text_message(wa_id, "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.")
+                await send_text_message(wa_id, "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.", phone_number_id=pid, token=tok)
             except Exception:
                 pass
 
@@ -160,19 +162,19 @@ async def _handle_webhook_payload(
                 elif msg_type == "audio" and msg.audio:
                     logger.info("whatsapp_audio_received", tenant=tenant.slug, wa_id=wa_id)
                     try:
-                        audio_bytes = await download_media(msg.audio.id)
+                        audio_bytes = await download_media(msg.audio.id, token=tenant.wa_access_token)
                         text_content = await transcribe_audio(audio_bytes, msg.audio.mime_type or "audio/ogg")
                         if not text_content:
-                            await send_text_message(wa_id, "Disculpe, no pude entender el audio. ¿Podría escribirnos su consulta? 🙏")
+                            await send_text_message(wa_id, "Disculpe, no pude entender el audio. ¿Podría escribirnos su consulta? 🙏", phone_number_id=tenant.phone_number_id, token=tenant.wa_access_token)
                             continue
                     except Exception as e:
                         logger.exception("whatsapp_audio_processing_failed", tenant=tenant.slug, wa_id=wa_id, error=str(e))
-                        await send_text_message(wa_id, "Disculpe, tuve un problema procesando su audio. ¿Podría escribirnos? 🙏")
+                        await send_text_message(wa_id, "Disculpe, tuve un problema procesando su audio. ¿Podría escribirnos? 🙏", phone_number_id=tenant.phone_number_id, token=tenant.wa_access_token)
                         continue
 
                 elif msg_type in ("image", "document", "video", "sticker"):
                     try:
-                        await send_text_message(wa_id, _UNSUPPORTED_MSG)
+                        await send_text_message(wa_id, _UNSUPPORTED_MSG, phone_number_id=tenant.phone_number_id, token=tenant.wa_access_token)
                     except Exception:
                         pass
                     continue
@@ -188,7 +190,7 @@ async def _handle_webhook_payload(
                     logger.warning("whatsapp_rate_limited", tenant=tenant.slug, wa_id=wa_id)
                     continue
 
-                task_read = asyncio.create_task(mark_as_read(wa_id, msg.id))
+                task_read = asyncio.create_task(mark_as_read(wa_id, msg.id, phone_number_id=tenant.phone_number_id, token=tenant.wa_access_token))
                 _background_tasks.add(task_read)
                 task_read.add_done_callback(_background_tasks.discard)
 
