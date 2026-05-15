@@ -25,7 +25,7 @@ from app.core.config import settings
 from app.core.langgraph.odontoking_graph import odontoking_agent
 from app.core.limiter import limiter
 from app.core.logging import logger
-from app.core.tenant import TenantConfig, get_tenant
+from app.core.tenant import TenantConfig, get_tenant_async
 from app.schemas import Message
 from app.schemas.whatsapp import WhatsAppWebhookPayload
 from app.services.message_buffer import MessageBufferService, ProcessFn, message_buffer_service
@@ -214,7 +214,7 @@ async def verify_webhook_tenant(
     hub_challenge: str = Query(alias="hub.challenge", default=""),
 ) -> PlainTextResponse:
     """Meta webhook verification for a specific tenant."""
-    tenant = get_tenant(tenant_slug)
+    tenant = await get_tenant_async(tenant_slug)
     if tenant is None:
         logger.warning("whatsapp_unknown_tenant", tenant=tenant_slug)
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -231,7 +231,7 @@ async def verify_webhook_tenant(
 @limiter.limit("100 per minute")
 async def receive_message_tenant(tenant_slug: str, request: Request) -> dict:
     """Receive and process incoming WhatsApp messages for a specific tenant."""
-    tenant = get_tenant(tenant_slug)
+    tenant = await get_tenant_async(tenant_slug)
     if tenant is None:
         logger.warning("whatsapp_unknown_tenant_post", tenant=tenant_slug)
         return {"status": "ok"}  # 200 to prevent Meta retries on bad slug

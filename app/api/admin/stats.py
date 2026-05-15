@@ -93,7 +93,7 @@ async def tenant_stats(slug: str, days: int = 30):
         "dlq_depth": dlq_depth,
         "daily": [
             {
-                "date": str(r.date),
+                "date": str(r.log_date),
                 "msg_received": r.msg_received,
                 "msg_processed": r.msg_processed,
                 "msg_failed": r.msg_failed,
