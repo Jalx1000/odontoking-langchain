@@ -5,7 +5,14 @@
       "Bash(python3 -c ' *)",
       "Bash(python3 *)",
       "Bash(git checkout *)",
-      "Bash(uv run *)"
+      "Bash(uv run *)",
+      "Read(//home/jal/09.platzi/**)",
+      "Bash(npm --version)",
+      "Bash(pnpm add *)",
+      "Bash(pnpm dlx *)",
+      "Bash(pnpm build *)",
+      "Bash(pnpm dev *)",
+      "Bash(curl -s http://localhost:5173)"
     ]
   }
 }
