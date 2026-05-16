@@ -121,12 +121,15 @@ class RedisStreamBroker(MessageBroker):
         self._consumer = os.getenv("WORKER_CONSUMER_NAME", socket.gethostname())
 
     async def publish(self, tenant_slug: str, wa_id: str, payload: dict[str, Any]) -> None:
-        """XADD — publish a message. Called from the webhook, must be fast."""
+        """XADD — publish a message. Called from the webhook, must be fast.
+
+        Flat wire format: a single field "data" containing the full payload as
+        JSON, with wa_id merged in. Consumers parse `data` and receive the same
+        dict shape as the publisher sent.
+        """
         key = _stream_key(tenant_slug)
-        entry = {
-            "wa_id": wa_id,
-            "payload": json.dumps(payload, ensure_ascii=False),
-        }
+        body = json.dumps({"wa_id": wa_id, **payload}, ensure_ascii=False)
+        entry = {"data": body}
         try:
             await self._r.xadd(key, entry, maxlen=10_000, approximate=True)
             logger.debug("broker_published", tenant=tenant_slug, wa_id=wa_id)
@@ -182,10 +185,15 @@ class RedisStreamBroker(MessageBroker):
         handler: MessageHandler,
     ) -> None:
         """Process one stream entry: call handler, ACK on success, DLQ after max retries."""
-        wa_id = fields.get("wa_id", "unknown")
         try:
-            payload = json.loads(fields.get("payload", "{}"))
-            payload["wa_id"] = wa_id
+            payload = json.loads(fields.get("data", "{}"))
+        except Exception as e:
+            logger.warning("broker_invalid_payload", tenant=tenant_slug, error=str(e))
+            await self._r.xack(key, _GROUP, stream_id)
+            return
+
+        wa_id = payload.get("wa_id", "unknown")
+        try:
             await handler(payload)
             await self._r.xack(key, _GROUP, stream_id)
             await self._r.delete(_retry_key(stream_id))
@@ -227,11 +235,18 @@ class RedisStreamBroker(MessageBroker):
         error: str,
     ) -> None:
         """Move a failed entry to the Dead Letter Queue and ACK it from the stream."""
+        # The flat payload is in fields["data"] as a JSON string.
+        data_raw = fields.get("data", "{}")
+        try:
+            wa_id_recovered = json.loads(data_raw).get("wa_id")
+        except Exception:
+            wa_id_recovered = None
+
         dlq_entry = json.dumps({
             "stream_id": stream_id,
             "tenant": tenant_slug,
-            "wa_id": fields.get("wa_id"),
-            "payload": fields.get("payload"),
+            "wa_id": wa_id_recovered,
+            "data": data_raw,
             "error": error[:500],
             "failed_at": time.time(),
         }, ensure_ascii=False)
@@ -242,9 +257,9 @@ class RedisStreamBroker(MessageBroker):
         from app.core.notifications import notify
         notify(
             event="broker_message_dlq",
-            error=f"tenant={tenant_slug} wa_id={fields.get('wa_id')} err={error[:200]}",
+            error=f"tenant={tenant_slug} wa_id={wa_id_recovered} err={error[:200]}",
         )
-        logger.error("broker_message_moved_to_dlq", tenant=tenant_slug, wa_id=fields.get("wa_id"), error=error[:200])
+        logger.error("broker_message_moved_to_dlq", tenant=tenant_slug, wa_id=wa_id_recovered, error=error[:200])
 
     async def dlq_list(self, tenant_slug: str) -> list[dict[str, Any]]:
         raw = await self._r.lrange(_dlq_key(tenant_slug), 0, -1)
@@ -256,7 +271,9 @@ class RedisStreamBroker(MessageBroker):
             return False
         entry = json.loads(items[dlq_index])
         try:
-            await self.publish(tenant_slug, entry["wa_id"], json.loads(entry.get("payload", "{}")))
+            flat = json.loads(entry.get("data", "{}"))
+            wa_id = flat.pop("wa_id", entry.get("wa_id", ""))
+            await self.publish(tenant_slug, wa_id, flat)
             await self._r.lset(_dlq_key(tenant_slug), dlq_index, "__deleted__")
             await self._r.lrem(_dlq_key(tenant_slug), 1, "__deleted__")
             return True
@@ -298,6 +315,7 @@ class RabbitMQBroker(MessageBroker):
         self._url = url
         self._dlq: dict[str, list[dict[str, Any]]] = {}
         self._connection: Optional[Any] = None  # aio_pika.RobustConnection
+        self._setup_done: set[str] = set()  # tenants whose topology was declared in this process
 
     def _exchange_name(self, tenant_slug: str) -> str:
         return f"wa.{tenant_slug}"
@@ -345,14 +363,21 @@ class RabbitMQBroker(MessageBroker):
         logger.info("rabbitmq_setup_done", tenant=tenant_slug)
 
     async def publish(self, tenant_slug: str, wa_id: str, payload: dict[str, Any]) -> None:
-        """Publish a persistent message to the tenant exchange."""
+        """Publish a persistent message to the tenant exchange.
+
+        Flat wire format: the message body is the JSON of `{"wa_id": ..., **payload}`.
+        Consumers parse a single JSON object — no payload-in-payload nesting.
+        """
+        # Declare topology once per tenant per process so the first publish
+        # works even if the consumer hasn't started yet.
+        if tenant_slug not in self._setup_done:
+            await self.setup(tenant_slug)
+            self._setup_done.add(tenant_slug)
+
         conn = await self._get_connection()
         async with conn.channel() as channel:
             exchange = await channel.get_exchange(self._exchange_name(tenant_slug))
-            body = json.dumps(
-                {"wa_id": wa_id, "payload": json.dumps(payload, ensure_ascii=False)},
-                ensure_ascii=False,
-            ).encode()
+            body = json.dumps({"wa_id": wa_id, **payload}, ensure_ascii=False).encode()
             await exchange.publish(
                 aio_pika.Message(  # type: ignore[union-attr]
                     body=body,
@@ -390,10 +415,8 @@ class RabbitMQBroker(MessageBroker):
         retry_count = int(headers.get(self._RETRY_HEADER, 0))
         wa_id = "unknown"
         try:
-            data = json.loads(message.body.decode())
-            wa_id = data.get("wa_id", "unknown")
-            payload = json.loads(data.get("payload", "{}"))
-            payload["wa_id"] = wa_id
+            payload = json.loads(message.body.decode())
+            wa_id = payload.get("wa_id", "unknown")
             await handler(payload)
             await message.ack()
             logger.info("rabbitmq_message_acked", tenant=tenant_slug, wa_id=wa_id)
@@ -476,11 +499,9 @@ class RabbitMQBroker(MessageBroker):
             return False
         entry = items[dlq_index]
         try:
-            raw = json.loads(entry["payload"])
-            wa_id = raw.get("wa_id", entry.get("wa_id", ""))
-            payload_str = raw.get("payload", "{}")
-            payload = json.loads(payload_str) if isinstance(payload_str, str) else payload_str
-            await self.publish(tenant_slug, wa_id, payload)
+            flat = json.loads(entry["payload"])
+            wa_id = flat.pop("wa_id", entry.get("wa_id", ""))
+            await self.publish(tenant_slug, wa_id, flat)
             items.pop(dlq_index)
             logger.info("rabbitmq_dlq_retried", tenant=tenant_slug, wa_id=wa_id)
             return True

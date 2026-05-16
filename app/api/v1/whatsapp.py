@@ -11,7 +11,7 @@ import asyncio
 import json
 import time
 from collections import defaultdict
-from functools import partial
+from typing import Any
 
 from fastapi import (
     APIRouter,
@@ -21,11 +21,12 @@ from fastapi import (
 )
 from fastapi.responses import PlainTextResponse
 
+from app.core.broker import broker
 from app.core.config import settings
 from app.core.langgraph.odontoking_graph import odontoking_agent
 from app.core.limiter import limiter
 from app.core.logging import logger
-from app.core.tenant import TenantConfig, get_tenant_async
+from app.core.tenant import TenantConfig, get_tenant, get_tenant_async
 from app.schemas import Message
 from app.schemas.whatsapp import WhatsAppWebhookPayload
 from app.services.message_buffer import MessageBufferService, ProcessFn, message_buffer_service
@@ -58,9 +59,9 @@ _UNSUPPORTED_MSG = (
 )
 
 # ── Agent registry ──────────────────────────────────────────────────────────
-# Maps tenant_slug → agent instance.
-# Phase 3 will replace this with a proper agent factory (BaseAgent pattern).
-_AGENT_REGISTRY = {
+# Maps agent_type → internal agent instance.
+# External agents (agent_endpoint_url set) bypass this registry entirely.
+_AGENT_REGISTRY: dict[str, Any] = {
     "odontoking": odontoking_agent,
 }
 
@@ -79,7 +80,7 @@ def _is_wa_rate_limited(wa_id: str) -> bool:
 
 def _make_process_fn(tenant: TenantConfig) -> ProcessFn:
     """Return a ProcessFn closure bound to the given tenant's agent and WA credentials."""
-    agent = _AGENT_REGISTRY.get(tenant.slug, odontoking_agent)
+    agent = _AGENT_REGISTRY.get(tenant.agent_type, odontoking_agent)
     pid = tenant.phone_number_id
     tok = tenant.wa_access_token
 
@@ -112,8 +113,7 @@ def _make_process_fn(tenant: TenantConfig) -> ProcessFn:
 # Keep a module-level reference so main.py can pass it to buffer.recover()
 async def _process_and_reply(wa_id: str, text: str) -> None:
     """Default process fn for the legacy /webhook route (odontoking)."""
-    from app.core.tenant import get_tenant as _get
-    tenant = _get("odontoking")
+    tenant = get_tenant("odontoking")
     if tenant:
         await _make_process_fn(tenant)(wa_id, text)
 
@@ -196,6 +196,31 @@ async def _handle_webhook_payload(
 
                 logger.info("whatsapp_message_received", tenant=tenant.slug, wa_id=wa_id, preview=text_content[:60])
 
+                # ── Route: external agent (RabbitMQ) vs internal agent (in-process) ─
+                if tenant.agent_endpoint_url:
+                    try:
+                        await broker.publish(
+                            tenant.slug,
+                            wa_id,
+                            {"text": text_content, "message_id": msg.id},
+                        )
+                        logger.info(
+                            "whatsapp_message_published_to_broker",
+                            tenant=tenant.slug,
+                            wa_id=wa_id,
+                            message_id=msg.id,
+                        )
+                    except Exception as e:
+                        # Never raise — Meta would retry. Log and drop; DLQ on the
+                        # consumer side will surface persistent issues separately.
+                        logger.exception(
+                            "whatsapp_broker_publish_failed",
+                            tenant=tenant.slug,
+                            wa_id=wa_id,
+                            error=str(e),
+                        )
+                    continue
+
                 if settings.BUFFER_ENABLED:
                     await buffer.enqueue(wa_id, text_content, process_fn)
                 else:
@@ -266,7 +291,8 @@ async def verify_webhook_legacy(
 @router.delete("/{tenant_slug}/history/{wa_id}")
 async def clear_history(tenant_slug: str, wa_id: str, request: Request) -> dict:
     """Clear conversation history for a WhatsApp number. Dev/admin use only."""
-    agent = _AGENT_REGISTRY.get(tenant_slug)
+    _tenant_cfg = get_tenant(tenant_slug)
+    agent = _AGENT_REGISTRY.get(_tenant_cfg.agent_type) if _tenant_cfg else None
     if agent is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
     await agent.clear_history(wa_id)

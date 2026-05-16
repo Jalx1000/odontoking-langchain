@@ -21,6 +21,7 @@ from asgi_correlation_id import CorrelationIdMiddleware
 from app.api.admin.router import admin_router
 from app.api.v1.api import api_router
 from app.api.v1.chatbot import agent
+from app.core.broker import broker
 from app.core.cache import cache_service
 from app.core.config import settings
 from app.core.limiter import limiter
@@ -97,6 +98,10 @@ async def lifespan(app: FastAPI):
     await message_buffer_service.close()
     await odontoking_agent.close()  # awaits pending persist tasks + closes pool
     await cache_service.close()
+    try:
+        await broker.close()
+    except Exception as e:
+        logger.exception("broker_close_failed", error=str(e))
     if agent._connection_pool:
         await agent._connection_pool.close()
         logger.info("connection_pool_closed")
