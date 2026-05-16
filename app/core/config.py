@@ -171,6 +171,10 @@ class Settings:
         # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
         self.ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 
+        # Internal API key — used by agent services to call POST /internal/usage
+        # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+        self.INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
+
         # Tenant DB registry cache TTL (seconds)
         self.TENANT_CACHE_TTL = int(os.getenv("TENANT_CACHE_TTL", "300"))
 

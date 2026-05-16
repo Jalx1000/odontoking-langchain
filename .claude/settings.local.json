@@ -12,7 +12,18 @@
       "Bash(pnpm dlx *)",
       "Bash(pnpm build *)",
       "Bash(pnpm dev *)",
-      "Bash(curl -s http://localhost:5173)"
+      "Bash(curl -s http://localhost:5173)",
+      "Read(//home/jal/.claude/agents/**)",
+      "Read(//home/jal/**)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh api *)",
+      "WebFetch(domain:github.com)",
+      "Bash(git show *)",
+      "Read(//tmp/**)",
+      "Bash(cp -r /home/jal/09.platzi/05.agent-template /home/jal/09.platzi/06.odontoking-agent)",
+      "Bash(rm -rf /home/jal/09.platzi/06.odontoking-agent/.git)",
+      "Bash(curl *)"
     ]
   }
 }

@@ -1113,6 +1113,7 @@ name = "langgraph-fastapi-template"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "aio-pika" },
     { name = "alembic" },
     { name = "asgi-correlation-id" },
     { name = "asgiref" },
@@ -1184,6 +1185,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aio-pika", specifier = ">=9.6.2" },
     { name = "aio-pika", marker = "extra == 'rabbitmq'", specifier = ">=9.4.0" },
     { name = "alembic", specifier = ">=1.18.4" },
     { name = "asgi-correlation-id", specifier = ">=4.3.4" },

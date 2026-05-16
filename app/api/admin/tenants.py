@@ -10,12 +10,25 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.admin.deps import require_admin
+from app.core.config import Environment, settings
 from app.core.logging import logger
 from app.core.tenant import invalidate_tenant_cache
 from app.models.tenant import Tenant
 from app.services.database import database_service
 from app.services.encryption import decrypt, encrypt
 from app.utils.sanitization import validate_external_url
+
+
+def _validate_urls(crm_url: str | None, agent_endpoint_url: str | None) -> None:
+    """Run SSRF validation. In development, agent_endpoint_url skips the check
+    so localhost URLs can be used without direct DB writes."""
+    try:
+        if crm_url:
+            validate_external_url(crm_url, "crm_url")
+        if agent_endpoint_url and settings.ENVIRONMENT != Environment.DEVELOPMENT:
+            validate_external_url(agent_endpoint_url, "agent_endpoint_url")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 router = APIRouter(prefix="/tenants", tags=["admin-tenants"])
 
@@ -112,13 +125,7 @@ async def list_tenants():
 @router.post("", response_model=TenantResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
 async def create_tenant(body: TenantCreate):
     """Create a new tenant. Sensitive tokens are encrypted before storage."""
-    try:
-        if body.crm_url:
-            validate_external_url(body.crm_url, "crm_url")
-        if body.agent_endpoint_url:
-            validate_external_url(body.agent_endpoint_url, "agent_endpoint_url")
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    _validate_urls(body.crm_url, body.agent_endpoint_url)
 
     with Session(database_service.engine) as session:
         existing = session.exec(select(Tenant).where(Tenant.slug == body.slug)).first()
@@ -162,13 +169,7 @@ async def get_tenant(slug: str):
 @router.patch("/{slug}", response_model=TenantResponse, dependencies=[Depends(require_admin)])
 async def update_tenant(slug: str, body: TenantUpdate):
     """Update tenant fields. Omit fields to leave them unchanged."""
-    try:
-        if body.crm_url:
-            validate_external_url(body.crm_url, "crm_url")
-        if body.agent_endpoint_url:
-            validate_external_url(body.agent_endpoint_url, "agent_endpoint_url")
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    _validate_urls(body.crm_url, body.agent_endpoint_url)
 
     with Session(database_service.engine) as session:
         row = session.exec(select(Tenant).where(Tenant.slug == slug)).first()

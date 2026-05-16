@@ -24,6 +24,8 @@ class Tenant(SQLModel, table=True):
     # Agent configuration
     agent_type: str = Field(max_length=64)           # "odontoking" | "kohlberg"
     llm_model: str = Field(default="gpt-4o-mini", max_length=64)
+    agent_endpoint_url: Optional[str] = Field(default=None, max_length=512)
+    agent_api_key: Optional[str] = Field(default=None, max_length=2048)
 
     # CRM / external API (encrypted at rest)
     crm_url: str = Field(default="", max_length=512)

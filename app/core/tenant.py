@@ -31,6 +31,8 @@ class TenantConfig:
     agent_type: str
     crm_url: str = ""
     crm_token: str = ""
+    agent_endpoint_url: Optional[str] = None
+    agent_api_key: Optional[str] = None
     llm_model: str = "gpt-4o-mini"
     billing_model: str = "fixed"
     billing_tier: str = "local"
@@ -46,6 +48,8 @@ class TenantConfig:
             "agent_type": self.agent_type,
             "crm_url": self.crm_url,
             "crm_token": self.crm_token,
+            "agent_endpoint_url": self.agent_endpoint_url,
+            "agent_api_key": self.agent_api_key,
             "llm_model": self.llm_model,
             "billing_model": self.billing_model,
             "billing_tier": self.billing_tier,
@@ -134,6 +138,8 @@ def _tenant_from_db_row(row) -> TenantConfig:
         agent_type=row.agent_type,
         crm_url=row.crm_url,
         crm_token=decrypt(row.crm_token) if row.crm_token else "",
+        agent_endpoint_url=row.agent_endpoint_url,
+        agent_api_key=decrypt(row.agent_api_key) if row.agent_api_key else None,
         llm_model=row.llm_model,
         billing_model=row.billing_model,
         billing_tier=row.billing_tier,

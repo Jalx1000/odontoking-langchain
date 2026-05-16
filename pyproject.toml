@@ -41,6 +41,7 @@ dependencies = [
     "asgi-correlation-id>=4.3.4",
     "alembic>=1.18.4",
     "cryptography>=44.0.2",
+    "aio-pika>=9.6.2",
 ]
 
 [project.optional-dependencies]
