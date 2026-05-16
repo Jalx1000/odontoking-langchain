@@ -15,6 +15,7 @@ from app.core.tenant import invalidate_tenant_cache
 from app.models.tenant import Tenant
 from app.services.database import database_service
 from app.services.encryption import decrypt, encrypt
+from app.utils.sanitization import validate_external_url
 
 router = APIRouter(prefix="/tenants", tags=["admin-tenants"])
 
@@ -31,6 +32,8 @@ class TenantCreate(BaseModel):
     llm_model: str = "gpt-4o-mini"
     crm_url: str = ""
     crm_token: str = ""
+    agent_endpoint_url: Optional[str] = None
+    agent_api_key: Optional[str] = None
     billing_model: str = "fixed"
     billing_tier: str = "local"
     msg_limit_month: int = 5000
@@ -44,6 +47,8 @@ class TenantUpdate(BaseModel):
     llm_model: Optional[str] = None
     crm_url: Optional[str] = None
     crm_token: Optional[str] = None
+    agent_endpoint_url: Optional[str] = None
+    agent_api_key: Optional[str] = None
     billing_model: Optional[str] = None
     billing_tier: Optional[str] = None
     msg_limit_month: Optional[int] = None
@@ -58,6 +63,8 @@ class TenantResponse(BaseModel):
     agent_type: str
     llm_model: str
     crm_url: str
+    agent_endpoint_url: Optional[str] = None
+    # agent_api_key is write-only — never returned in responses
     billing_model: str
     billing_tier: str
     msg_limit_month: int
@@ -80,6 +87,7 @@ class TenantResponse(BaseModel):
             agent_type=row.agent_type,
             llm_model=row.llm_model,
             crm_url=row.crm_url,
+            agent_endpoint_url=row.agent_endpoint_url,
             billing_model=row.billing_model,
             billing_tier=row.billing_tier,
             msg_limit_month=row.msg_limit_month,
@@ -104,6 +112,14 @@ async def list_tenants():
 @router.post("", response_model=TenantResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
 async def create_tenant(body: TenantCreate):
     """Create a new tenant. Sensitive tokens are encrypted before storage."""
+    try:
+        if body.crm_url:
+            validate_external_url(body.crm_url, "crm_url")
+        if body.agent_endpoint_url:
+            validate_external_url(body.agent_endpoint_url, "agent_endpoint_url")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
     with Session(database_service.engine) as session:
         existing = session.exec(select(Tenant).where(Tenant.slug == body.slug)).first()
         if existing:
@@ -119,6 +135,8 @@ async def create_tenant(body: TenantCreate):
             llm_model=body.llm_model,
             crm_url=body.crm_url,
             crm_token=encrypt(body.crm_token) if body.crm_token else "",
+            agent_endpoint_url=body.agent_endpoint_url or "",
+            agent_api_key=encrypt(body.agent_api_key) if body.agent_api_key else "",
             billing_model=body.billing_model,
             billing_tier=body.billing_tier,
             msg_limit_month=body.msg_limit_month,
@@ -144,6 +162,14 @@ async def get_tenant(slug: str):
 @router.patch("/{slug}", response_model=TenantResponse, dependencies=[Depends(require_admin)])
 async def update_tenant(slug: str, body: TenantUpdate):
     """Update tenant fields. Omit fields to leave them unchanged."""
+    try:
+        if body.crm_url:
+            validate_external_url(body.crm_url, "crm_url")
+        if body.agent_endpoint_url:
+            validate_external_url(body.agent_endpoint_url, "agent_endpoint_url")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
     with Session(database_service.engine) as session:
         row = session.exec(select(Tenant).where(Tenant.slug == slug)).first()
         if not row:
@@ -163,6 +189,10 @@ async def update_tenant(slug: str, body: TenantUpdate):
             row.crm_url = body.crm_url
         if body.crm_token is not None:
             row.crm_token = encrypt(body.crm_token)
+        if body.agent_endpoint_url is not None:
+            row.agent_endpoint_url = body.agent_endpoint_url
+        if body.agent_api_key:  # only update if non-empty string sent
+            row.agent_api_key = encrypt(body.agent_api_key)
         if body.billing_model is not None:
             row.billing_model = body.billing_model
         if body.billing_tier is not None:
@@ -221,14 +251,17 @@ async def test_tenant_credentials(slug: str):
     # Test CRM connectivity
     if row.crm_url:
         try:
+            validate_external_url(row.crm_url, "crm_url")
             crm_token = decrypt(row.crm_token) if row.crm_token else ""
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
                 resp = await client.get(
                     f"{row.crm_url}/api/v1/leads",
                     params={"limit": 1},
                     headers={"Authorization": f"Bearer {crm_token}"},
                 )
                 results["crm"] = {"status": resp.status_code, "ok": resp.is_success}
+        except ValueError as e:
+            results["crm"] = {"ok": False, "error": str(e)}
         except Exception as e:
             results["crm"] = {"ok": False, "error": str(e)}
 
