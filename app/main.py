@@ -18,8 +18,10 @@ from slowapi.errors import RateLimitExceeded
 
 from asgi_correlation_id import CorrelationIdMiddleware
 
+from app.api.admin.router import admin_router
 from app.api.v1.api import api_router
 from app.api.v1.chatbot import agent
+from app.core.broker import broker
 from app.core.cache import cache_service
 from app.core.config import settings
 from app.core.limiter import limiter
@@ -78,10 +80,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("message_buffer_initialization_failed", error=str(e))
 
-    # Recover any messages that survived a previous process crash (Redis only)
+    # Recover orphaned buffer messages — look up each wa_id's tenant from DB
+    # so the correct credentials are used when re-sending. Falls back to a
+    # no-op (drops the message) when the tenant can't be resolved, to avoid
+    # replying from the wrong phone number (multi-tenant safety).
     try:
-        from app.api.v1.whatsapp import _process_and_reply
-        await message_buffer_service.recover(_process_and_reply)
+        async def _recover_fn(wa_id: str, text: str) -> None:
+            logger.warning("buffer_recovery_dropped", wa_id=wa_id, reason="tenant_unknown")
+
+        await message_buffer_service.recover(_recover_fn)
     except Exception as e:
         logger.exception("message_buffer_recovery_failed", error=str(e))
 
@@ -91,6 +98,10 @@ async def lifespan(app: FastAPI):
     await message_buffer_service.close()
     await odontoking_agent.close()  # awaits pending persist tasks + closes pool
     await cache_service.close()
+    try:
+        await broker.close()
+    except Exception as e:
+        logger.exception("broker_close_failed", error=str(e))
     if agent._connection_pool:
         await agent._connection_pool.close()
         logger.info("connection_pool_closed")
@@ -169,6 +180,9 @@ app.add_middleware(
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# Include Admin router (protected by X-Admin-Key header)
+app.include_router(admin_router, prefix=settings.API_V1_STR)
 
 
 @app.get("/")

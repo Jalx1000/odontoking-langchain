@@ -1,3 +1,4 @@
+# ── API Gateway (shared by all tenants) ─────────────────────────────────────
 [build]
 builder = "dockerfile"
 dockerfilePath = "Dockerfile"
@@ -8,3 +9,21 @@ healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
+
+# ── Workers (one service per tenant in Railway) ──────────────────────────────
+# To deploy a worker, create a new Railway service pointing to this repo
+# and override startCommand + set WORKER_TENANT:
+#
+# service: worker-odontoking
+#   startCommand = "python -m app.worker"
+#   WORKER_TENANT = odontoking
+#   replicas = 1
+#
+# service: worker-kohlberg
+#   startCommand = "python -m app.worker"
+#   WORKER_TENANT = kohlberg
+#   replicas = 2   # national scale (~20 concurrent conversations)
+#
+# All worker services share the same Docker image as the API.
+# Each worker only needs: APP_ENV, WORKER_TENANT, POSTGRES_*, VALKEY_*,
+# OPENAI_API_KEY, and the WhatsApp credentials for its tenant.

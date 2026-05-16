@@ -163,6 +163,21 @@ class Settings:
         self.JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
         self.JWT_ACCESS_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_DAYS", "30"))
 
+        # Security — Fernet key for encrypting tenant credentials in DB
+        # Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+        self.ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+
+        # Admin panel — static API key for accessing /admin endpoints
+        # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+        self.ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
+
+        # Internal API key — used by agent services to call POST /internal/usage
+        # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+        self.INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
+
+        # Tenant DB registry cache TTL (seconds)
+        self.TENANT_CACHE_TTL = int(os.getenv("TENANT_CACHE_TTL", "300"))
+
         # Logging Configuration
         self.LOG_DIR = Path(os.getenv("LOG_DIR", "logs"))
         self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
@@ -189,6 +204,12 @@ class Settings:
         self.VALKEY_PASSWORD = os.getenv("VALKEY_PASSWORD", "")
         self.VALKEY_MAX_CONNECTIONS = int(os.getenv("VALKEY_MAX_CONNECTIONS", "20"))
         self.CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "60"))
+
+        # RabbitMQ / CloudAMQP (optional — Fase 5, higher priority than Redis Streams)
+        # Set to enable enterprise-grade message broker with native DLQ and management UI.
+        # Format: amqp://user:password@host:5672/vhost  (amqps:// for TLS)
+        # Install: uv add aio-pika --optional rabbitmq
+        self.RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 
         # Rate Limiting Configuration
         self.RATE_LIMIT_DEFAULT = parse_list_from_env("RATE_LIMIT_DEFAULT", ["200 per day", "50 per hour"])

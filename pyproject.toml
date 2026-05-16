@@ -40,6 +40,8 @@ dependencies = [
     "uvloop>=0.22.1; platform_system != 'Windows'",
     "asgi-correlation-id>=4.3.4",
     "alembic>=1.18.4",
+    "cryptography>=44.0.2",
+    "aio-pika>=9.6.2",
 ]
 
 [project.optional-dependencies]
@@ -54,6 +56,9 @@ dev = [
 cache = [
     "redis>=7.4.0",
     "valkey[libvalkey]>=6.1.0",
+]
+rabbitmq = [
+    "aio-pika>=9.4.0",
 ]
 
 [dependency-groups]

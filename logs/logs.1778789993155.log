@@ -1,0 +1,998 @@
+2026-05-14T20:15:31.850281455Z [inf]  Starting Container
+2026-05-14T20:15:32.400735978Z [err]  Downloading primp (3.1MiB)
+2026-05-14T20:15:32.400741446Z [err]  Downloading brotli (2.8MiB)
+2026-05-14T20:15:32.400746101Z [err]  Downloading zstandard (5.2MiB)
+2026-05-14T20:15:32.400750096Z [err]  Downloading sqlalchemy (3.0MiB)
+2026-05-14T20:15:32.400754438Z [err]  Downloading aiohttp (1.6MiB)
+2026-05-14T20:15:32.400758266Z [err]  Downloading grpcio (6.3MiB)
+2026-05-14T20:15:32.400763016Z [err]  Downloading lxml (5.0MiB)
+2026-05-14T20:15:32.400767836Z [err]  Downloading tiktoken (1.1MiB)
+2026-05-14T20:15:32.400771902Z [err]  Downloading psycopg2-binary (2.9MiB)
+2026-05-14T20:15:32.400776135Z [err]  Downloading ruff (10.8MiB)
+2026-05-14T20:15:32.400781297Z [err]  Downloading virtualenv (5.6MiB)
+2026-05-14T20:15:32.400785827Z [err]  Downloading pyright (6.1MiB)
+2026-05-14T20:15:32.400790622Z [err]  Downloading cryptography (4.0MiB)
+2026-05-14T20:15:32.400795922Z [err]  Downloading psycopg-binary (4.9MiB)
+2026-05-14T20:15:32.400800494Z [err]  Downloading numpy (15.4MiB)
+2026-05-14T20:15:32.400805102Z [err]  Downloading pydantic-core (1.9MiB)
+2026-05-14T20:15:32.400809671Z [err]   Downloaded tiktoken
+2026-05-14T20:15:32.400814880Z [err]   Downloaded pydantic-core
+2026-05-14T20:15:32.400819149Z [err]   Downloaded aiohttp
+2026-05-14T20:15:32.530637121Z [err]   Downloaded brotli
+2026-05-14T20:15:32.533513147Z [err]   Downloaded psycopg2-binary
+2026-05-14T20:15:32.560641798Z [err]   Downloaded primp
+2026-05-14T20:15:32.586005888Z [err]   Downloaded sqlalchemy
+2026-05-14T20:15:32.782019683Z [err]   Downloaded zstandard
+2026-05-14T20:15:32.806503448Z [err]   Downloaded psycopg-binary
+2026-05-14T20:15:32.806507496Z [err]   Downloaded virtualenv
+2026-05-14T20:15:32.826127855Z [err]   Downloaded grpcio
+2026-05-14T20:15:32.832524238Z [err]   Downloaded cryptography
+2026-05-14T20:15:32.860694371Z [err]   Downloaded lxml
+2026-05-14T20:15:32.904560721Z [err]   Downloaded ruff
+2026-05-14T20:15:33.046912878Z [err]   Downloaded numpy
+2026-05-14T20:15:33.778079762Z [err]   Downloaded pyright
+2026-05-14T20:15:35.401293669Z [err]  Uninstalled 104 packages in 1.46s
+2026-05-14T20:15:35.813426450Z [err]  Installed 124 packages in 564ms
+2026-05-14T20:15:37.658388851Z [inf]  ============================= test session starts ==============================
+2026-05-14T20:15:37.658399216Z [inf]  platform linux -- Python 3.13.2, pytest-8.3.5, pluggy-1.5.0
+2026-05-14T20:15:37.658402332Z [inf]  configfile: pyproject.toml
+2026-05-14T20:15:37.658406062Z [inf]  rootdir: /app
+2026-05-14T20:15:37.658414525Z [inf]  plugins: mock-3.14.0, anyio-4.9.0, langsmith-0.4.41
+2026-05-14T20:15:38.137719067Z [inf]  collected 113 items
+2026-05-14T20:15:38.137724651Z [inf]  
+2026-05-14T20:15:38.137728839Z [inf]  tests/unit/test_broker.py sssssssss
+2026-05-14T20:15:38.432961090Z [inf]  ssssss.s                              [ 15%]
+2026-05-14T20:15:40.516812409Z [inf]  tests/unit/test_message_buffer.py sssssssss
+2026-05-14T20:15:40.521986887Z [inf]  ssssssssss
+2026-05-14T20:15:40.527434472Z [inf]  ssssssss            [ 38%]
+2026-05-14T20:15:44.522053256Z [inf]  tests/unit/test_tenant_webhook.py .........
+2026-05-14T20:15:44.529997071Z [inf]  ...                           [ 49%]
+2026-05-14T20:15:44.621270263Z [inf]  tests/unit/test_webhook.py .........
+2026-05-14T20:15:55.224728563Z [inf]  ..
+2026-05-14T20:18:00.814418552Z [inf]  Stopping Container
+2026-05-14T20:18:04.481685264Z [inf]                                     [ 59%]
+2026-05-14T20:18:04.481688676Z [inf]  tests/unit/test_whatsapp_client.py .........
+2026-05-14T20:18:04.481692151Z [inf]  .sssss                       [ 72%]
+2026-05-14T20:18:04.481695665Z [inf]  tests/unit/tools/test_crm_tool.py ssssss...
+2026-05-14T20:18:04.481698911Z [inf]  ..sss                         [ 84%]
+2026-05-14T20:18:04.483410066Z [inf]  tests/unit/tools/test_insurance_tool.py ssssss                           [ 90%]
+2026-05-14T20:18:04.483419660Z [inf]  tests/unit/tools/test_odontoking_tools.py sssssssss
+2026-05-14T20:18:04.483426958Z [inf]  ss                    [100%]
+2026-05-14T20:18:04.483438416Z [inf]  
+2026-05-14T20:18:04.483444787Z [inf]  =============================== warnings summary ===============================
+2026-05-14T20:18:04.483451700Z [inf]  .venv/lib/python3.13/site-packages/_pytest/config/__init__.py:1441
+2026-05-14T20:18:04.483457392Z [inf]    /app/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:1441: PytestConfigWarning: Unknown config option: asyncio_default_fixture_loop_scope
+2026-05-14T20:18:04.483462680Z [inf]    
+2026-05-14T20:18:04.483468342Z [inf]      self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+2026-05-14T20:18:04.483476892Z [inf]  
+2026-05-14T20:18:04.483482176Z [inf]  .venv/lib/python3.13/site-packages/_pytest/config/__init__.py:1441
+2026-05-14T20:18:04.483487607Z [inf]    /app/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:1441: PytestConfigWarning: Unknown config option: asyncio_mode
+2026-05-14T20:18:04.483492967Z [inf]    
+2026-05-14T20:18:04.483498534Z [inf]      self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+2026-05-14T20:18:04.484802753Z [inf]  
+2026-05-14T20:18:04.484810222Z [inf]  tests/unit/test_broker.py:14
+2026-05-14T20:18:04.484814693Z [inf]    /app/tests/unit/test_broker.py:14: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.484819174Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.484823636Z [inf]  
+2026-05-14T20:18:04.484827927Z [inf]  tests/unit/test_broker.py:20
+2026-05-14T20:18:04.484832619Z [inf]    /app/tests/unit/test_broker.py:20: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.484836279Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.484839693Z [inf]  
+2026-05-14T20:18:04.484843855Z [inf]  tests/unit/test_broker.py:25
+2026-05-14T20:18:04.484847577Z [inf]    /app/tests/unit/test_broker.py:25: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.484851631Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.484855364Z [inf]  
+2026-05-14T20:18:04.484860597Z [inf]  tests/unit/test_broker.py:30
+2026-05-14T20:18:04.484864396Z [inf]    /app/tests/unit/test_broker.py:30: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.484867460Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.484870457Z [inf]  
+2026-05-14T20:18:04.484875242Z [inf]  tests/unit/test_broker.py:35
+2026-05-14T20:18:04.484878980Z [inf]    /app/tests/unit/test_broker.py:35: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.486595168Z [inf]  tests/unit/test_broker.py:97
+2026-05-14T20:18:04.486636925Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.486650132Z [inf]  
+2026-05-14T20:18:04.486657370Z [inf]  tests/unit/test_broker.py:61
+2026-05-14T20:18:04.486663100Z [inf]    /app/tests/unit/test_broker.py:61: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.486668825Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.486675273Z [inf]  
+2026-05-14T20:18:04.486681417Z [inf]  tests/unit/test_broker.py:73
+2026-05-14T20:18:04.486686969Z [inf]    /app/tests/unit/test_broker.py:73: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.486695546Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.486702045Z [inf]  
+2026-05-14T20:18:04.486708008Z [inf]  tests/unit/test_broker.py:81
+2026-05-14T20:18:04.486713687Z [inf]    /app/tests/unit/test_broker.py:81: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.486719023Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.486723915Z [inf]  
+2026-05-14T20:18:04.486728764Z [inf]  tests/unit/test_broker.py:90
+2026-05-14T20:18:04.486734496Z [inf]    /app/tests/unit/test_broker.py:90: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.486741660Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.486747740Z [inf]  
+2026-05-14T20:18:04.488635039Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.488641664Z [inf]  
+2026-05-14T20:18:04.488646675Z [inf]  tests/unit/test_broker.py:171
+2026-05-14T20:18:04.488652581Z [inf]    /app/tests/unit/test_broker.py:171: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.488656194Z [inf]    /app/tests/unit/test_broker.py:97: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.488661133Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.488668480Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.488670518Z [inf]  
+2026-05-14T20:18:04.488679342Z [inf]  tests/unit/test_broker.py:181
+2026-05-14T20:18:04.488679783Z [inf]  
+2026-05-14T20:18:04.488688447Z [inf]    /app/tests/unit/test_broker.py:181: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.488691281Z [inf]  tests/unit/test_broker.py:122
+2026-05-14T20:18:04.488697264Z [inf]    /app/tests/unit/test_broker.py:122: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.488702929Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.488708883Z [inf]  
+2026-05-14T20:18:04.488713909Z [inf]  tests/unit/test_broker.py:146
+2026-05-14T20:18:04.488719446Z [inf]    /app/tests/unit/test_broker.py:146: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.490165595Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.490165779Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.490172981Z [inf]  
+2026-05-14T20:18:04.490177210Z [inf]  
+2026-05-14T20:18:04.490179232Z [inf]  tests/unit/test_message_buffer.py:45
+2026-05-14T20:18:04.490185923Z [inf]    /app/tests/unit/test_message_buffer.py:45: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.490187938Z [inf]  tests/unit/test_broker.py:196
+2026-05-14T20:18:04.490195709Z [inf]    /app/tests/unit/test_broker.py:196: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.490201216Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.490205935Z [inf]  
+2026-05-14T20:18:04.490211166Z [inf]  tests/unit/test_message_buffer.py:31
+2026-05-14T20:18:04.490216515Z [inf]    /app/tests/unit/test_message_buffer.py:31: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.490221504Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.490226111Z [inf]  
+2026-05-14T20:18:04.490233295Z [inf]  tests/unit/test_message_buffer.py:38
+2026-05-14T20:18:04.490237775Z [inf]    /app/tests/unit/test_message_buffer.py:38: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.491662255Z [inf]    /app/tests/unit/test_message_buffer.py:76: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.491671938Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.491678134Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.491684731Z [inf]  
+2026-05-14T20:18:04.491689831Z [inf]  tests/unit/test_message_buffer.py:50
+2026-05-14T20:18:04.491695373Z [inf]    /app/tests/unit/test_message_buffer.py:50: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.491701209Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.491706150Z [inf]  
+2026-05-14T20:18:04.491710857Z [inf]  tests/unit/test_message_buffer.py:60
+2026-05-14T20:18:04.491717275Z [inf]    /app/tests/unit/test_message_buffer.py:60: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.491722296Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.491727317Z [inf]  
+2026-05-14T20:18:04.491732272Z [inf]  tests/unit/test_message_buffer.py:69
+2026-05-14T20:18:04.491737281Z [inf]    /app/tests/unit/test_message_buffer.py:69: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.491741748Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.491746557Z [inf]  
+2026-05-14T20:18:04.491751157Z [inf]  tests/unit/test_message_buffer.py:76
+2026-05-14T20:18:04.493517089Z [inf]  
+2026-05-14T20:18:04.493523014Z [inf]  tests/unit/test_message_buffer.py:83
+2026-05-14T20:18:04.493528936Z [inf]    /app/tests/unit/test_message_buffer.py:83: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.493535251Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.493541041Z [inf]  
+2026-05-14T20:18:04.493546625Z [inf]  tests/unit/test_message_buffer.py:88
+2026-05-14T20:18:04.493553567Z [inf]    /app/tests/unit/test_message_buffer.py:88: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.493559094Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.493564982Z [inf]  
+2026-05-14T20:18:04.493570494Z [inf]  tests/unit/test_message_buffer.py:95
+2026-05-14T20:18:04.493575358Z [inf]    /app/tests/unit/test_message_buffer.py:95: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.493580429Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.493586694Z [inf]  
+2026-05-14T20:18:04.493591808Z [inf]  tests/unit/test_message_buffer.py:110
+2026-05-14T20:18:04.493597266Z [inf]    /app/tests/unit/test_message_buffer.py:110: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.493602407Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.493607799Z [inf]  
+2026-05-14T20:18:04.493613481Z [inf]  tests/unit/test_message_buffer.py:117
+2026-05-14T20:18:04.494849651Z [inf]    /app/tests/unit/test_message_buffer.py:184: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.494860820Z [inf]    /app/tests/unit/test_message_buffer.py:117: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.494867258Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.494871470Z [inf]  
+2026-05-14T20:18:04.494875616Z [inf]  tests/unit/test_message_buffer.py:128
+2026-05-14T20:18:04.494880283Z [inf]    /app/tests/unit/test_message_buffer.py:128: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.494885900Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.494889892Z [inf]  
+2026-05-14T20:18:04.494893434Z [inf]  tests/unit/test_message_buffer.py:142
+2026-05-14T20:18:04.494897443Z [inf]    /app/tests/unit/test_message_buffer.py:142: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.494901420Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.494904893Z [inf]  
+2026-05-14T20:18:04.494908890Z [inf]  tests/unit/test_message_buffer.py:164
+2026-05-14T20:18:04.494912591Z [inf]    /app/tests/unit/test_message_buffer.py:164: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.494916043Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.494920482Z [inf]  
+2026-05-14T20:18:04.494924399Z [inf]  tests/unit/test_message_buffer.py:184
+2026-05-14T20:18:04.496598087Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.496605316Z [inf]  
+2026-05-14T20:18:04.496609831Z [inf]  tests/unit/test_message_buffer.py:200
+2026-05-14T20:18:04.496614792Z [inf]    /app/tests/unit/test_message_buffer.py:200: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.496619749Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.496624051Z [inf]  
+2026-05-14T20:18:04.496628498Z [inf]  tests/unit/test_message_buffer.py:216
+2026-05-14T20:18:04.496632693Z [inf]    /app/tests/unit/test_message_buffer.py:216: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.496637290Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.496642635Z [inf]  
+2026-05-14T20:18:04.496647029Z [inf]  tests/unit/test_message_buffer.py:239
+2026-05-14T20:18:04.496651328Z [inf]    /app/tests/unit/test_message_buffer.py:239: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.496655191Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.496659981Z [inf]  
+2026-05-14T20:18:04.496663693Z [inf]  tests/unit/test_message_buffer.py:277
+2026-05-14T20:18:04.496667485Z [inf]    /app/tests/unit/test_message_buffer.py:277: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.497956023Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.497962120Z [inf]  
+2026-05-14T20:18:04.497968485Z [inf]  tests/unit/test_message_buffer.py:286
+2026-05-14T20:18:04.497974851Z [inf]    /app/tests/unit/test_message_buffer.py:286: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.497980387Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.497984971Z [inf]  
+2026-05-14T20:18:04.497989210Z [inf]  tests/unit/test_message_buffer.py:299
+2026-05-14T20:18:04.497993850Z [inf]    /app/tests/unit/test_message_buffer.py:299: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.497998211Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.498002230Z [inf]  
+2026-05-14T20:18:04.498006365Z [inf]  tests/unit/test_message_buffer.py:308
+2026-05-14T20:18:04.498010545Z [inf]    /app/tests/unit/test_message_buffer.py:308: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.498015186Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.498019440Z [inf]  
+2026-05-14T20:18:04.498023328Z [inf]  tests/unit/test_message_buffer.py:318
+2026-05-14T20:18:04.498027996Z [inf]    /app/tests/unit/test_message_buffer.py:318: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.498032180Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.498035848Z [inf]  
+2026-05-14T20:18:04.499398276Z [inf]  tests/unit/test_whatsapp_client.py:101
+2026-05-14T20:18:04.499403235Z [inf]    /app/tests/unit/test_whatsapp_client.py:101: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.499407204Z [inf]  tests/unit/test_message_buffer.py:328
+2026-05-14T20:18:04.499412586Z [inf]    /app/tests/unit/test_message_buffer.py:328: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.499416493Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.499419683Z [inf]  
+2026-05-14T20:18:04.499423042Z [inf]  tests/unit/test_message_buffer.py:338
+2026-05-14T20:18:04.499425901Z [inf]    /app/tests/unit/test_message_buffer.py:338: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.499429505Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.499432908Z [inf]  
+2026-05-14T20:18:04.499436213Z [inf]  tests/unit/test_message_buffer.py:349
+2026-05-14T20:18:04.499439068Z [inf]    /app/tests/unit/test_message_buffer.py:349: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.499442160Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.499445153Z [inf]  
+2026-05-14T20:18:04.499448406Z [inf]  tests/unit/test_whatsapp_client.py:82
+2026-05-14T20:18:04.499451368Z [inf]    /app/tests/unit/test_whatsapp_client.py:82: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.499454822Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.499457740Z [inf]  
+2026-05-14T20:18:04.500934451Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.500941849Z [inf]  
+2026-05-14T20:18:04.500946094Z [inf]  tests/unit/test_whatsapp_client.py:125
+2026-05-14T20:18:04.500949489Z [inf]    /app/tests/unit/test_whatsapp_client.py:125: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.500953901Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.500957723Z [inf]  
+2026-05-14T20:18:04.500961002Z [inf]  tests/unit/test_whatsapp_client.py:143
+2026-05-14T20:18:04.500964842Z [inf]    /app/tests/unit/test_whatsapp_client.py:143: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.500969260Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.500972764Z [inf]  
+2026-05-14T20:18:04.500978100Z [inf]  tests/unit/test_whatsapp_client.py:157
+2026-05-14T20:18:04.500982301Z [inf]    /app/tests/unit/test_whatsapp_client.py:157: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.500985328Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.500988340Z [inf]  
+2026-05-14T20:18:04.500991222Z [inf]  tests/unit/tools/test_crm_tool.py:63
+2026-05-14T20:18:04.500998226Z [inf]    /app/tests/unit/tools/test_crm_tool.py:63: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.501001716Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.501005685Z [inf]  
+2026-05-14T20:18:04.501009409Z [inf]  tests/unit/tools/test_crm_tool.py:79
+2026-05-14T20:18:04.502743253Z [inf]    /app/tests/unit/tools/test_crm_tool.py:79: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.502749512Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.502754686Z [inf]  
+2026-05-14T20:18:04.502759404Z [inf]  tests/unit/tools/test_crm_tool.py:97
+2026-05-14T20:18:04.502764031Z [inf]    /app/tests/unit/tools/test_crm_tool.py:97: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.502768264Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.502772035Z [inf]  
+2026-05-14T20:18:04.502776197Z [inf]  tests/unit/tools/test_crm_tool.py:125
+2026-05-14T20:18:04.502782846Z [inf]    /app/tests/unit/tools/test_crm_tool.py:125: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.502787262Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.502791378Z [inf]  
+2026-05-14T20:18:04.502795271Z [inf]  tests/unit/tools/test_crm_tool.py:147
+2026-05-14T20:18:04.502798964Z [inf]    /app/tests/unit/tools/test_crm_tool.py:147: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.502806077Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.502817983Z [inf]  
+2026-05-14T20:18:04.502823153Z [inf]  tests/unit/tools/test_crm_tool.py:160
+2026-05-14T20:18:04.502827663Z [inf]    /app/tests/unit/tools/test_crm_tool.py:160: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.504455202Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.504463753Z [inf]  
+2026-05-14T20:18:04.504470108Z [inf]  tests/unit/tools/test_crm_tool.py:220
+2026-05-14T20:18:04.504482745Z [inf]    /app/tests/unit/tools/test_crm_tool.py:220: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.504487699Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.504491978Z [inf]  
+2026-05-14T20:18:04.504496485Z [inf]  tests/unit/tools/test_crm_tool.py:271
+2026-05-14T20:18:04.504500870Z [inf]    /app/tests/unit/tools/test_crm_tool.py:271: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.504504771Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.504510745Z [inf]  
+2026-05-14T20:18:04.504516397Z [inf]  tests/unit/tools/test_crm_tool.py:284
+2026-05-14T20:18:04.504520593Z [inf]    /app/tests/unit/tools/test_crm_tool.py:284: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.504524527Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.504528721Z [inf]  
+2026-05-14T20:18:04.504534827Z [inf]  tests/unit/tools/test_insurance_tool.py:35
+2026-05-14T20:18:04.504538612Z [inf]    /app/tests/unit/tools/test_insurance_tool.py:35: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.504542644Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.504546821Z [inf]  
+2026-05-14T20:18:04.504550456Z [inf]  tests/unit/tools/test_insurance_tool.py:55
+2026-05-14T20:18:04.505806355Z [inf]    /app/tests/unit/tools/test_insurance_tool.py:55: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.505819525Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.505824928Z [inf]  
+2026-05-14T20:18:04.505829659Z [inf]  tests/unit/tools/test_insurance_tool.py:74
+2026-05-14T20:18:04.505834701Z [inf]    /app/tests/unit/tools/test_insurance_tool.py:74: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.505839218Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.505843443Z [inf]  
+2026-05-14T20:18:04.505847121Z [inf]  tests/unit/tools/test_insurance_tool.py:95
+2026-05-14T20:18:04.505851604Z [inf]    /app/tests/unit/tools/test_insurance_tool.py:95: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.505856154Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.505859479Z [inf]  
+2026-05-14T20:18:04.505863508Z [inf]  tests/unit/tools/test_insurance_tool.py:119
+2026-05-14T20:18:04.505867691Z [inf]    /app/tests/unit/tools/test_insurance_tool.py:119: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.505871528Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.505875375Z [inf]  
+2026-05-14T20:18:04.505879423Z [inf]  tests/unit/tools/test_insurance_tool.py:145
+2026-05-14T20:18:04.505883523Z [inf]    /app/tests/unit/tools/test_insurance_tool.py:145: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.507398167Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.507404723Z [inf]  
+2026-05-14T20:18:04.507408943Z [inf]  tests/unit/tools/test_odontoking_tools.py:30
+2026-05-14T20:18:04.507413023Z [inf]    /app/tests/unit/tools/test_odontoking_tools.py:30: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.507417312Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.507421192Z [inf]  
+2026-05-14T20:18:04.507425307Z [inf]  tests/unit/tools/test_odontoking_tools.py:49
+2026-05-14T20:18:04.507429426Z [inf]    /app/tests/unit/tools/test_odontoking_tools.py:49: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.507435106Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.507439563Z [inf]  
+2026-05-14T20:18:04.507443052Z [inf]  tests/unit/tools/test_odontoking_tools.py:63
+2026-05-14T20:18:04.507446723Z [inf]    /app/tests/unit/tools/test_odontoking_tools.py:63: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.507450038Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.507453523Z [inf]  
+2026-05-14T20:18:04.507457215Z [inf]  tests/unit/tools/test_odontoking_tools.py:75
+2026-05-14T20:18:04.507460534Z [inf]    /app/tests/unit/tools/test_odontoking_tools.py:75: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.507464159Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.509161635Z [inf]  
+2026-05-14T20:18:04.509167985Z [inf]  tests/unit/tools/test_odontoking_tools.py:91
+2026-05-14T20:18:04.509182485Z [inf]    /app/tests/unit/tools/test_odontoking_tools.py:91: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.509188041Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.509193024Z [inf]  
+2026-05-14T20:18:04.509198828Z [inf]  tests/unit/tools/test_odontoking_tools.py:106
+2026-05-14T20:18:04.509204078Z [inf]    /app/tests/unit/tools/test_odontoking_tools.py:106: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.509211962Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.509217408Z [inf]  
+2026-05-14T20:18:04.509222724Z [inf]  tests/unit/tools/test_odontoking_tools.py:120
+2026-05-14T20:18:04.509227771Z [inf]    /app/tests/unit/tools/test_odontoking_tools.py:120: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.509233441Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.509240409Z [inf]  
+2026-05-14T20:18:04.509245261Z [inf]  tests/unit/tools/test_odontoking_tools.py:152
+2026-05-14T20:18:04.509250620Z [inf]    /app/tests/unit/tools/test_odontoking_tools.py:152: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.509257796Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.509262936Z [inf]  
+2026-05-14T20:18:04.509268548Z [inf]  tests/unit/tools/test_odontoking_tools.py:169
+2026-05-14T20:18:04.510568458Z [inf]    /app/tests/unit/tools/test_odontoking_tools.py:169: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.510574920Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.510579127Z [inf]  
+2026-05-14T20:18:04.510583141Z [inf]  tests/unit/tools/test_odontoking_tools.py:198
+2026-05-14T20:18:04.510586953Z [inf]    /app/tests/unit/tools/test_odontoking_tools.py:198: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.510590374Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.510594738Z [inf]  
+2026-05-14T20:18:04.510599016Z [inf]  tests/unit/tools/test_odontoking_tools.py:212
+2026-05-14T20:18:04.510602897Z [inf]    /app/tests/unit/tools/test_odontoking_tools.py:212: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+2026-05-14T20:18:04.510607056Z [inf]      @pytest.mark.asyncio
+2026-05-14T20:18:04.510611013Z [inf]  
+2026-05-14T20:18:04.510614822Z [inf]  tests/unit/test_broker.py: 15 warnings
+2026-05-14T20:18:04.510618808Z [inf]  tests/unit/test_message_buffer.py: 27 warnings
+2026-05-14T20:18:04.510622521Z [inf]  tests/unit/test_whatsapp_client.py: 5 warnings
+2026-05-14T20:18:04.510625994Z [inf]  tests/unit/tools/test_crm_tool.py: 9 warnings
+2026-05-14T20:18:04.510629327Z [inf]  tests/unit/tools/test_insurance_tool.py: 6 warnings
+2026-05-14T20:18:04.510632916Z [inf]  tests/unit/tools/test_odontoking_tools.py: 11 warnings
+2026-05-14T20:18:04.510636967Z [inf]    /app/.venv/lib/python3.13/site-packages/_pytest/python.py:148: PytestUnhandledCoroutineWarning: async def functions are not natively supported and have been skipped.
+2026-05-14T20:18:04.512236073Z [inf]    You need to install a suitable plugin for your async framework, for example:
+2026-05-14T20:18:04.512240506Z [inf]      - anyio
+2026-05-14T20:18:04.512244874Z [inf]      - pytest-asyncio
+2026-05-14T20:18:04.512249037Z [inf]      - pytest-tornasync
+2026-05-14T20:18:04.512255860Z [inf]      - pytest-trio
+2026-05-14T20:18:04.512260068Z [inf]      - pytest-twisted
+2026-05-14T20:18:04.512264279Z [inf]      warnings.warn(PytestUnhandledCoroutineWarning(msg.format(nodeid)))
+2026-05-14T20:18:04.512268912Z [inf]  
+2026-05-14T20:18:04.512273498Z [inf]  tests/unit/test_message_buffer.py::TestInMemoryMessageBuffer::test_push_and_drain
+2026-05-14T20:18:04.512279667Z [inf]    /app/app/services/llm/__init__.py:3: UserWarning: Parameters {'max_completion_tokens'} should be specified explicitly. Instead they were passed in as part of `model_kwargs` parameter.
+2026-05-14T20:18:04.512284261Z [inf]      from app.services.llm.registry import LLMRegistry
+2026-05-14T20:18:04.512288036Z [inf]  
+2026-05-14T20:18:04.512292807Z [inf]  -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2026-05-14T20:18:04.512296772Z [inf]  =========== 39 passed, 74 skipped, 149 warnings in 140.47s (0:02:20) ===========
+2026-05-14T20:18:08.489584766Z [inf]  Debug Mode: false
+2026-05-14T20:18:08.489596579Z [inf]  Running database migrations...
+2026-05-14T20:18:08.489615968Z [inf]  Warning: No .env file found. Using system environment variables.
+2026-05-14T20:18:08.489636709Z [inf]  
+2026-05-14T20:18:08.489641375Z [inf]  Initial Database User: set
+2026-05-14T20:18:08.489643490Z [inf]  Final environment configuration:
+2026-05-14T20:18:08.489671827Z [inf]  Starting with these environment variables:
+2026-05-14T20:18:08.489674438Z [inf]  Initial Database Port: set
+2026-05-14T20:18:08.489675392Z [inf]  Environment: production
+2026-05-14T20:18:08.489677617Z [inf]  Database Name: set
+2026-05-14T20:18:08.489683194Z [inf]  Database Host: set
+2026-05-14T20:18:08.489684717Z [inf]  APP_ENV: production
+2026-05-14T20:18:08.489685161Z [inf]  Initial Database Name: set
+2026-05-14T20:18:08.489689908Z [inf]  Database Port: set
+2026-05-14T20:18:08.489691149Z [inf]  Database User: set
+2026-05-14T20:18:08.489694619Z [inf]  Initial Database Host: set
+2026-05-14T20:18:08.489699639Z [inf]  LLM Model: gpt-4o-mini
+2026-05-14T20:18:08.600543940Z [inf]  Starting Container
+2026-05-14T20:18:10.366855717Z [err]      return self.pool.connect()
+2026-05-14T20:18:10.366867675Z [err]             ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.366892301Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+2026-05-14T20:18:10.366902642Z [err]      self._dbapi_connection = engine.raw_connection()
+2026-05-14T20:18:10.366909364Z [inf]  Loading environment: Environment.PRODUCTION
+2026-05-14T20:18:10.366913671Z [err]      return _ConnectionRecord(self)
+2026-05-14T20:18:10.366919647Z [err]  Traceback (most recent call last):
+2026-05-14T20:18:10.366923807Z [err]                               ~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.366933427Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+2026-05-14T20:18:10.366946634Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+2026-05-14T20:18:10.366959461Z [err]      return _ConnectionFairy._checkout(self)
+2026-05-14T20:18:10.366969046Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:10.366976436Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+2026-05-14T20:18:10.366983876Z [err]      fairy = _ConnectionRecord.checkout(pool)
+2026-05-14T20:18:10.366992747Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+2026-05-14T20:18:10.367003890Z [err]      rec = pool._do_get()
+2026-05-14T20:18:10.367010399Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 306, in _do_get
+2026-05-14T20:18:10.367016733Z [err]      return self._create_connection()
+2026-05-14T20:18:10.367023555Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.367030984Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+2026-05-14T20:18:10.368659204Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+2026-05-14T20:18:10.368667693Z [err]      return dialect.connect(*cargs_tup, **cparams)
+2026-05-14T20:18:10.368700224Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+2026-05-14T20:18:10.368709351Z [err]      self.__connect()
+2026-05-14T20:18:10.368718088Z [err]      with util.safe_reraise():
+2026-05-14T20:18:10.368722330Z [err]      ~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.368733849Z [err]           ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.368734854Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+2026-05-14T20:18:10.368735069Z [err]             ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:10.368742968Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+2026-05-14T20:18:10.368755392Z [err]      raise exc_value.with_traceback(exc_tb)
+2026-05-14T20:18:10.368768021Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+2026-05-14T20:18:10.368768343Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+2026-05-14T20:18:10.368778265Z [err]      self.dbapi_connection = connection = pool._invoke_creator(self)
+2026-05-14T20:18:10.368788344Z [err]                                           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:10.368897708Z [err]      return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+2026-05-14T20:18:10.368932125Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:10.368940785Z [err]    File "/app/.venv/lib/python3.13/site-packages/psycopg2/__init__.py", line 122, in connect
+2026-05-14T20:18:10.368950012Z [err]      conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+2026-05-14T20:18:10.372013060Z [err]  
+2026-05-14T20:18:10.372022785Z [err]          **{k: getattr(options, k, None) for k in kwarg},
+2026-05-14T20:18:10.372023003Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/config.py", line 971, in run_cmd
+2026-05-14T20:18:10.372024359Z [err]  
+2026-05-14T20:18:10.372034911Z [err]          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:10.372035193Z [err]  The above exception was the direct cause of the following exception:
+2026-05-14T20:18:10.372053427Z [err]      fn(
+2026-05-14T20:18:10.372060816Z [err]      ~~^
+2026-05-14T20:18:10.372071237Z [err]          config,
+2026-05-14T20:18:10.372074405Z [err]  
+2026-05-14T20:18:10.372083075Z [err]          ^^^^^^^
+2026-05-14T20:18:10.372085485Z [err]  psycopg2.OperationalError: connection to server at "pgvector.railway.internal" (fd12:9599:a6ce:1:8000:102:aff1:ea9c), port 5432 failed: FATAL:  password authentication failed for user "postgres"
+2026-05-14T20:18:10.372092038Z [err]  Traceback (most recent call last):
+2026-05-14T20:18:10.372094431Z [err]          *[getattr(options, k, None) for k in positional],
+2026-05-14T20:18:10.372099766Z [err]               ~~~~^^
+2026-05-14T20:18:10.372106436Z [err]    File "/app/.venv/bin/alembic", line 10, in <module>
+2026-05-14T20:18:10.372106673Z [err]          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:10.372113645Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/config.py", line 1047, in main
+2026-05-14T20:18:10.372123960Z [err]      CommandLine(prog=prog).main(argv=argv)
+2026-05-14T20:18:10.372128778Z [err]      sys.exit(main())
+2026-05-14T20:18:10.372135867Z [err]      ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+2026-05-14T20:18:10.372192354Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/config.py", line 1037, in main
+2026-05-14T20:18:10.372217283Z [err]      self.run_cmd(cfg, options)
+2026-05-14T20:18:10.372227750Z [err]      ~~~~~~~~~~~~^^^^^^^^^^^^^^
+2026-05-14T20:18:10.376247841Z [err]    File "/app/alembic/env.py", line 86, in run_migrations_online
+2026-05-14T20:18:10.376250577Z [err]      )
+2026-05-14T20:18:10.376261771Z [err]      with connectable.connect() as connection:
+2026-05-14T20:18:10.376269519Z [err]      ^
+2026-05-14T20:18:10.376274725Z [err]           ~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.376276872Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/script/base.py", line 545, in run_env
+2026-05-14T20:18:10.376285662Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+2026-05-14T20:18:10.376286893Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/command.py", line 483, in upgrade
+2026-05-14T20:18:10.376294297Z [err]      util.load_python_file(self.dir, "env.py")
+2026-05-14T20:18:10.376298636Z [err]      module = load_module_py(module_id, path)
+2026-05-14T20:18:10.376305150Z [err]      ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:10.376312633Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/util/pyfiles.py", line 136, in load_module_py
+2026-05-14T20:18:10.376315838Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/util/pyfiles.py", line 116, in load_python_file
+2026-05-14T20:18:10.376326475Z [err]      spec.loader.exec_module(module)  # type: ignore
+2026-05-14T20:18:10.376332423Z [err]      script.run_env()
+2026-05-14T20:18:10.376334859Z [err]      ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+2026-05-14T20:18:10.376343827Z [err]    File "<frozen importlib._bootstrap_external>", line 1026, in exec_module
+2026-05-14T20:18:10.376344807Z [err]      ~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.376353542Z [err]    File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+2026-05-14T20:18:10.376370687Z [err]    File "/app/alembic/env.py", line 100, in <module>
+2026-05-14T20:18:10.376379027Z [err]      run_migrations_online()
+2026-05-14T20:18:10.376388465Z [err]      ~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.380747506Z [err]             ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.380762828Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+2026-05-14T20:18:10.380770337Z [err]      return _ConnectionFairy._checkout(self)
+2026-05-14T20:18:10.380777283Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:10.380783439Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+2026-05-14T20:18:10.380812486Z [err]      return self._connection_cls(self)
+2026-05-14T20:18:10.380818077Z [err]             ~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:10.380823142Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+2026-05-14T20:18:10.380828090Z [err]      Connection._handle_dbapi_exception_noconnection(
+2026-05-14T20:18:10.380834428Z [err]      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+2026-05-14T20:18:10.380840153Z [err]          err, dialect, engine
+2026-05-14T20:18:10.380856507Z [err]          ^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:10.380863704Z [err]      )
+2026-05-14T20:18:10.380868515Z [err]      ^
+2026-05-14T20:18:10.380878252Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2448, in _handle_dbapi_exception_noconnection
+2026-05-14T20:18:10.380888067Z [err]      raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+2026-05-14T20:18:10.380893586Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+2026-05-14T20:18:10.380899902Z [err]      self._dbapi_connection = engine.raw_connection()
+2026-05-14T20:18:10.380905363Z [err]                               ~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.380912569Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+2026-05-14T20:18:10.380918921Z [err]      return self.pool.connect()
+2026-05-14T20:18:10.383891679Z [err]      fairy = _ConnectionRecord.checkout(pool)
+2026-05-14T20:18:10.383924293Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+2026-05-14T20:18:10.383930382Z [err]      with util.safe_reraise():
+2026-05-14T20:18:10.383936518Z [err]           ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.383941985Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+2026-05-14T20:18:10.383946877Z [err]      raise exc_value.with_traceback(exc_tb)
+2026-05-14T20:18:10.383954068Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+2026-05-14T20:18:10.383978706Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+2026-05-14T20:18:10.383994626Z [err]      rec = pool._do_get()
+2026-05-14T20:18:10.384003768Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 306, in _do_get
+2026-05-14T20:18:10.384011527Z [err]      return self._create_connection()
+2026-05-14T20:18:10.384019557Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.384029938Z [err]      self.dbapi_connection = connection = pool._invoke_creator(self)
+2026-05-14T20:18:10.384030978Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+2026-05-14T20:18:10.384041622Z [err]      return _ConnectionRecord(self)
+2026-05-14T20:18:10.384049133Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+2026-05-14T20:18:10.384058634Z [err]      self.__connect()
+2026-05-14T20:18:10.384065315Z [err]                                           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:10.384069185Z [err]      ~~~~~~~~~~~~~~^^
+2026-05-14T20:18:10.384127098Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+2026-05-14T20:18:10.387134899Z [err]      return dialect.connect(*cargs_tup, **cparams)
+2026-05-14T20:18:10.387143767Z [err]             ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:10.387150927Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+2026-05-14T20:18:10.387157481Z [err]      return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+2026-05-14T20:18:10.387163759Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:10.387181954Z [err]    File "/app/.venv/lib/python3.13/site-packages/psycopg2/__init__.py", line 122, in connect
+2026-05-14T20:18:10.387189639Z [err]      conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+2026-05-14T20:18:10.387196393Z [err]  sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) connection to server at "pgvector.railway.internal" (fd12:9599:a6ce:1:8000:102:aff1:ea9c), port 5432 failed: FATAL:  password authentication failed for user "postgres"
+2026-05-14T20:18:10.387203963Z [err]  
+2026-05-14T20:18:10.387214617Z [err]  (Background on this error at: https://sqlalche.me/e/20/e3q8)
+2026-05-14T20:18:11.416434332Z [inf]  Starting with these environment variables:
+2026-05-14T20:18:11.416441935Z [inf]  APP_ENV: production
+2026-05-14T20:18:11.416448643Z [inf]  Initial Database Host: set
+2026-05-14T20:18:11.416456892Z [inf]  Initial Database Port: set
+2026-05-14T20:18:11.416546447Z [inf]  Initial Database Name: set
+2026-05-14T20:18:11.416557166Z [inf]  Initial Database User: set
+2026-05-14T20:18:11.416564106Z [inf]  Warning: No .env file found. Using system environment variables.
+2026-05-14T20:18:11.416570962Z [inf]  
+2026-05-14T20:18:11.416577189Z [inf]  Final environment configuration:
+2026-05-14T20:18:11.416583039Z [inf]  Environment: production
+2026-05-14T20:18:11.416589731Z [inf]  Database Host: set
+2026-05-14T20:18:11.416596781Z [inf]  Database Port: set
+2026-05-14T20:18:11.416602970Z [inf]  Database Name: set
+2026-05-14T20:18:11.416608706Z [inf]  Database User: set
+2026-05-14T20:18:11.416614249Z [inf]  LLM Model: gpt-4o-mini
+2026-05-14T20:18:11.416656345Z [inf]  Debug Mode: false
+2026-05-14T20:18:11.416662382Z [inf]  Running database migrations...
+2026-05-14T20:18:12.441445151Z [inf]  Loading environment: Environment.PRODUCTION
+2026-05-14T20:18:12.441450079Z [err]  Traceback (most recent call last):
+2026-05-14T20:18:12.441454073Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+2026-05-14T20:18:12.441457781Z [err]      self._dbapi_connection = engine.raw_connection()
+2026-05-14T20:18:12.441463690Z [err]                               ~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.441467768Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+2026-05-14T20:18:12.441476196Z [err]      return self.pool.connect()
+2026-05-14T20:18:12.441480190Z [err]             ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.441483950Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+2026-05-14T20:18:12.441489420Z [err]      return _ConnectionFairy._checkout(self)
+2026-05-14T20:18:12.441493437Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:12.441497222Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+2026-05-14T20:18:12.441501084Z [err]      fairy = _ConnectionRecord.checkout(pool)
+2026-05-14T20:18:12.441505758Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+2026-05-14T20:18:12.441509604Z [err]      rec = pool._do_get()
+2026-05-14T20:18:12.441513681Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 306, in _do_get
+2026-05-14T20:18:12.441518417Z [err]      return self._create_connection()
+2026-05-14T20:18:12.441521949Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.441525576Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+2026-05-14T20:18:12.441529392Z [err]      return _ConnectionRecord(self)
+2026-05-14T20:18:12.442590387Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+2026-05-14T20:18:12.442599444Z [err]      self.dbapi_connection = connection = pool._invoke_creator(self)
+2026-05-14T20:18:12.442664157Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+2026-05-14T20:18:12.442671337Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+2026-05-14T20:18:12.442674471Z [err]      return dialect.connect(*cargs_tup, **cparams)
+2026-05-14T20:18:12.442678187Z [err]      self.__connect()
+2026-05-14T20:18:12.442682539Z [err]             ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:12.442685338Z [err]      ~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.442691436Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+2026-05-14T20:18:12.442693704Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+2026-05-14T20:18:12.442697396Z [err]      with util.safe_reraise():
+2026-05-14T20:18:12.442702381Z [err]      return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+2026-05-14T20:18:12.442705994Z [err]           ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.442711680Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:12.442714740Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+2026-05-14T20:18:12.442719795Z [err]    File "/app/.venv/lib/python3.13/site-packages/psycopg2/__init__.py", line 122, in connect
+2026-05-14T20:18:12.442727688Z [err]      conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+2026-05-14T20:18:12.442728599Z [err]      raise exc_value.with_traceback(exc_tb)
+2026-05-14T20:18:12.442814765Z [err]                                           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:12.445135628Z [err]  
+2026-05-14T20:18:12.445147759Z [err]  
+2026-05-14T20:18:12.445154808Z [err]  The above exception was the direct cause of the following exception:
+2026-05-14T20:18:12.445161700Z [err]  
+2026-05-14T20:18:12.445234977Z [err]  psycopg2.OperationalError: connection to server at "pgvector.railway.internal" (fd12:9599:a6ce:1:8000:102:aff1:ea9c), port 5432 failed: FATAL:  password authentication failed for user "postgres"
+2026-05-14T20:18:12.445510621Z [err]  Traceback (most recent call last):
+2026-05-14T20:18:12.445522438Z [err]    File "/app/.venv/bin/alembic", line 10, in <module>
+2026-05-14T20:18:12.445529301Z [err]      sys.exit(main())
+2026-05-14T20:18:12.445535902Z [err]               ~~~~^^
+2026-05-14T20:18:12.445541026Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/config.py", line 1047, in main
+2026-05-14T20:18:12.445585901Z [err]      CommandLine(prog=prog).main(argv=argv)
+2026-05-14T20:18:12.445591513Z [err]      ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+2026-05-14T20:18:12.445595853Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/config.py", line 1037, in main
+2026-05-14T20:18:12.445600991Z [err]      self.run_cmd(cfg, options)
+2026-05-14T20:18:12.445606952Z [err]      ~~~~~~~~~~~~^^^^^^^^^^^^^^
+2026-05-14T20:18:12.445612084Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/config.py", line 971, in run_cmd
+2026-05-14T20:18:12.445617241Z [err]      fn(
+2026-05-14T20:18:12.445623201Z [err]      ~~^
+2026-05-14T20:18:12.445628506Z [err]          config,
+2026-05-14T20:18:12.445634379Z [err]          ^^^^^^^
+2026-05-14T20:18:12.445640973Z [err]          *[getattr(options, k, None) for k in positional],
+2026-05-14T20:18:12.445647393Z [err]          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:12.445653273Z [err]          **{k: getattr(options, k, None) for k in kwarg},
+2026-05-14T20:18:12.445658145Z [err]          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:12.449487933Z [err]      )
+2026-05-14T20:18:12.449496704Z [err]      ^
+2026-05-14T20:18:12.449502907Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/command.py", line 483, in upgrade
+2026-05-14T20:18:12.449508562Z [err]      script.run_env()
+2026-05-14T20:18:12.449514608Z [err]      ~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.449519568Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/script/base.py", line 545, in run_env
+2026-05-14T20:18:12.449525076Z [err]      util.load_python_file(self.dir, "env.py")
+2026-05-14T20:18:12.449529909Z [err]      ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:12.449535663Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/util/pyfiles.py", line 116, in load_python_file
+2026-05-14T20:18:12.449541529Z [err]      module = load_module_py(module_id, path)
+2026-05-14T20:18:12.449547364Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/util/pyfiles.py", line 136, in load_module_py
+2026-05-14T20:18:12.449553458Z [err]      spec.loader.exec_module(module)  # type: ignore
+2026-05-14T20:18:12.449560147Z [err]      ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+2026-05-14T20:18:12.449566948Z [err]    File "<frozen importlib._bootstrap_external>", line 1026, in exec_module
+2026-05-14T20:18:12.449572761Z [err]    File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+2026-05-14T20:18:12.449578555Z [err]    File "/app/alembic/env.py", line 100, in <module>
+2026-05-14T20:18:12.449584726Z [err]      run_migrations_online()
+2026-05-14T20:18:12.449589636Z [err]      ~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.449594982Z [err]    File "/app/alembic/env.py", line 86, in run_migrations_online
+2026-05-14T20:18:12.449600616Z [err]      with connectable.connect() as connection:
+2026-05-14T20:18:12.449606762Z [err]           ~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.449614063Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+2026-05-14T20:18:12.452592156Z [err]      return self._connection_cls(self)
+2026-05-14T20:18:12.452600695Z [err]             ~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:12.452606605Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+2026-05-14T20:18:12.452611934Z [err]      Connection._handle_dbapi_exception_noconnection(
+2026-05-14T20:18:12.452707353Z [err]      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+2026-05-14T20:18:12.452716402Z [err]          err, dialect, engine
+2026-05-14T20:18:12.452721992Z [err]          ^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:12.452728337Z [err]      )
+2026-05-14T20:18:12.452734791Z [err]      ^
+2026-05-14T20:18:12.452740730Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2448, in _handle_dbapi_exception_noconnection
+2026-05-14T20:18:12.452746156Z [err]      raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+2026-05-14T20:18:12.452750589Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+2026-05-14T20:18:12.452754788Z [err]      self._dbapi_connection = engine.raw_connection()
+2026-05-14T20:18:12.452759201Z [err]                               ~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.452763472Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+2026-05-14T20:18:12.452768252Z [err]      return self.pool.connect()
+2026-05-14T20:18:12.452772709Z [err]             ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.452776510Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+2026-05-14T20:18:12.452781166Z [err]      return _ConnectionFairy._checkout(self)
+2026-05-14T20:18:12.452785243Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:12.452790914Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+2026-05-14T20:18:12.454719433Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 306, in _do_get
+2026-05-14T20:18:12.454731654Z [err]      return self._create_connection()
+2026-05-14T20:18:12.454739939Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.454747151Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+2026-05-14T20:18:12.454754839Z [err]      return _ConnectionRecord(self)
+2026-05-14T20:18:12.454761301Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+2026-05-14T20:18:12.454766783Z [err]      self.__connect()
+2026-05-14T20:18:12.454778445Z [err]      ~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.454786998Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+2026-05-14T20:18:12.454793937Z [err]      with util.safe_reraise():
+2026-05-14T20:18:12.454798947Z [err]           ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:12.454803495Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+2026-05-14T20:18:12.454808516Z [err]      raise exc_value.with_traceback(exc_tb)
+2026-05-14T20:18:12.454813258Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+2026-05-14T20:18:12.454818431Z [err]      self.dbapi_connection = connection = pool._invoke_creator(self)
+2026-05-14T20:18:12.454823437Z [err]                                           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:12.454839947Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+2026-05-14T20:18:12.454948726Z [err]      fairy = _ConnectionRecord.checkout(pool)
+2026-05-14T20:18:12.454953543Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+2026-05-14T20:18:12.454958134Z [err]      rec = pool._do_get()
+2026-05-14T20:18:12.457441418Z [err]      return dialect.connect(*cargs_tup, **cparams)
+2026-05-14T20:18:12.457459876Z [err]             ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:12.457467517Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+2026-05-14T20:18:12.457474253Z [err]      return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+2026-05-14T20:18:12.457479708Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:12.457486048Z [err]    File "/app/.venv/lib/python3.13/site-packages/psycopg2/__init__.py", line 122, in connect
+2026-05-14T20:18:12.457498665Z [err]      conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+2026-05-14T20:18:12.457506129Z [err]  sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) connection to server at "pgvector.railway.internal" (fd12:9599:a6ce:1:8000:102:aff1:ea9c), port 5432 failed: FATAL:  password authentication failed for user "postgres"
+2026-05-14T20:18:12.457517641Z [err]  
+2026-05-14T20:18:12.457524585Z [err]  (Background on this error at: https://sqlalche.me/e/20/e3q8)
+2026-05-14T20:18:13.895873189Z [inf]  Starting with these environment variables:
+2026-05-14T20:18:13.895879569Z [inf]  APP_ENV: production
+2026-05-14T20:18:13.895885677Z [inf]  Initial Database Host: set
+2026-05-14T20:18:13.895891912Z [inf]  Initial Database Port: set
+2026-05-14T20:18:13.895898395Z [inf]  Initial Database Name: set
+2026-05-14T20:18:13.895907578Z [inf]  Initial Database User: set
+2026-05-14T20:18:13.895914630Z [inf]  Warning: No .env file found. Using system environment variables.
+2026-05-14T20:18:13.895922071Z [inf]  
+2026-05-14T20:18:13.895929478Z [inf]  Final environment configuration:
+2026-05-14T20:18:13.895937172Z [inf]  Environment: production
+2026-05-14T20:18:13.895944857Z [inf]  Database Host: set
+2026-05-14T20:18:13.895953213Z [inf]  Database Port: set
+2026-05-14T20:18:13.895960068Z [inf]  Database Name: set
+2026-05-14T20:18:13.895968160Z [inf]  Database User: set
+2026-05-14T20:18:13.895974940Z [inf]  LLM Model: gpt-4o-mini
+2026-05-14T20:18:13.895981358Z [inf]  Debug Mode: false
+2026-05-14T20:18:13.895987574Z [inf]  Running database migrations...
+2026-05-14T20:18:14.906163793Z [inf]  Loading environment: Environment.PRODUCTION
+2026-05-14T20:18:14.906170239Z [err]  Traceback (most recent call last):
+2026-05-14T20:18:14.906176185Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+2026-05-14T20:18:14.906182023Z [err]      self._dbapi_connection = engine.raw_connection()
+2026-05-14T20:18:14.906188803Z [err]                               ~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:14.906195063Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+2026-05-14T20:18:14.906201617Z [err]      return self.pool.connect()
+2026-05-14T20:18:14.906208808Z [err]             ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:14.906215677Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+2026-05-14T20:18:14.906227894Z [err]      return _ConnectionFairy._checkout(self)
+2026-05-14T20:18:14.906235804Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:14.906273426Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+2026-05-14T20:18:14.906284168Z [err]      fairy = _ConnectionRecord.checkout(pool)
+2026-05-14T20:18:14.906290500Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+2026-05-14T20:18:14.906296669Z [err]      rec = pool._do_get()
+2026-05-14T20:18:14.906302965Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 306, in _do_get
+2026-05-14T20:18:14.906309386Z [err]      return self._create_connection()
+2026-05-14T20:18:14.906316031Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:14.906322271Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+2026-05-14T20:18:14.906328106Z [err]      return _ConnectionRecord(self)
+2026-05-14T20:18:15.696105206Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+2026-05-14T20:18:15.696114597Z [err]      return dialect.connect(*cargs_tup, **cparams)
+2026-05-14T20:18:15.696120508Z [err]             ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:15.696280564Z [err]      self.__connect()
+2026-05-14T20:18:15.696287020Z [err]      ~~~~~~~~~~~~~~^^
+2026-05-14T20:18:15.696293053Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+2026-05-14T20:18:15.696298994Z [err]      with util.safe_reraise():
+2026-05-14T20:18:15.696304539Z [err]           ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:15.696310611Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+2026-05-14T20:18:15.696317416Z [err]      raise exc_value.with_traceback(exc_tb)
+2026-05-14T20:18:15.696322999Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+2026-05-14T20:18:15.696327352Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+2026-05-14T20:18:15.696333583Z [err]      self.dbapi_connection = connection = pool._invoke_creator(self)
+2026-05-14T20:18:15.696339605Z [err]                                           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:15.696996405Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+2026-05-14T20:18:15.697004171Z [err]      return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+2026-05-14T20:18:15.697009297Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:15.697014319Z [err]    File "/app/.venv/lib/python3.13/site-packages/psycopg2/__init__.py", line 122, in connect
+2026-05-14T20:18:15.697021815Z [err]      conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+2026-05-14T20:18:15.697357012Z [err]  psycopg2.OperationalError: connection to server at "pgvector.railway.internal" (fd12:9599:a6ce:1:8000:102:aff1:ea9c), port 5432 failed: FATAL:  password authentication failed for user "postgres"
+2026-05-14T20:18:15.697361292Z [err]  
+2026-05-14T20:18:15.697365262Z [err]  
+2026-05-14T20:18:15.697369184Z [err]  The above exception was the direct cause of the following exception:
+2026-05-14T20:18:15.697373614Z [err]  
+2026-05-14T20:18:15.697378289Z [err]  Traceback (most recent call last):
+2026-05-14T20:18:15.697382471Z [err]    File "/app/.venv/bin/alembic", line 10, in <module>
+2026-05-14T20:18:15.697386345Z [err]      sys.exit(main())
+2026-05-14T20:18:15.697390310Z [err]               ~~~~^^
+2026-05-14T20:18:15.697394122Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/config.py", line 1047, in main
+2026-05-14T20:18:15.697398611Z [err]      CommandLine(prog=prog).main(argv=argv)
+2026-05-14T20:18:15.697402693Z [err]      ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+2026-05-14T20:18:15.697407028Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/config.py", line 1037, in main
+2026-05-14T20:18:15.697410783Z [err]      self.run_cmd(cfg, options)
+2026-05-14T20:18:15.697414894Z [err]      ~~~~~~~~~~~~^^^^^^^^^^^^^^
+2026-05-14T20:18:15.697419157Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/config.py", line 971, in run_cmd
+2026-05-14T20:18:15.697423662Z [err]      fn(
+2026-05-14T20:18:15.697427577Z [err]      ~~^
+2026-05-14T20:18:15.697431714Z [err]          config,
+2026-05-14T20:18:15.697435678Z [err]          ^^^^^^^
+2026-05-14T20:18:15.697439566Z [err]          *[getattr(options, k, None) for k in positional],
+2026-05-14T20:18:15.697444190Z [err]          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:15.697448157Z [err]          **{k: getattr(options, k, None) for k in kwarg},
+2026-05-14T20:18:15.697451863Z [err]          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:15.702877131Z [err]      )
+2026-05-14T20:18:15.702882875Z [err]      ^
+2026-05-14T20:18:15.702888110Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/command.py", line 483, in upgrade
+2026-05-14T20:18:15.702893428Z [err]      script.run_env()
+2026-05-14T20:18:15.702898646Z [err]      ~~~~~~~~~~~~~~^^
+2026-05-14T20:18:15.702904081Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/script/base.py", line 545, in run_env
+2026-05-14T20:18:15.702910029Z [err]      util.load_python_file(self.dir, "env.py")
+2026-05-14T20:18:15.702915416Z [err]      ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:15.702920836Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/util/pyfiles.py", line 116, in load_python_file
+2026-05-14T20:18:15.702925735Z [err]      module = load_module_py(module_id, path)
+2026-05-14T20:18:15.702930705Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/util/pyfiles.py", line 136, in load_module_py
+2026-05-14T20:18:15.702936103Z [err]      spec.loader.exec_module(module)  # type: ignore
+2026-05-14T20:18:15.702941595Z [err]      ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+2026-05-14T20:18:15.702947084Z [err]    File "<frozen importlib._bootstrap_external>", line 1026, in exec_module
+2026-05-14T20:18:15.702952230Z [err]    File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+2026-05-14T20:18:15.702956988Z [err]    File "/app/alembic/env.py", line 100, in <module>
+2026-05-14T20:18:15.702962064Z [err]      run_migrations_online()
+2026-05-14T20:18:15.702968320Z [err]      ~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:15.702975046Z [err]    File "/app/alembic/env.py", line 86, in run_migrations_online
+2026-05-14T20:18:15.702980550Z [err]      with connectable.connect() as connection:
+2026-05-14T20:18:15.702986452Z [err]           ~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:15.702992051Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+2026-05-14T20:18:15.703245530Z [err]      return self._connection_cls(self)
+2026-05-14T20:18:15.703251809Z [err]             ~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:15.703256866Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+2026-05-14T20:18:15.703263043Z [err]      Connection._handle_dbapi_exception_noconnection(
+2026-05-14T20:18:15.703267727Z [err]      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+2026-05-14T20:18:15.703273210Z [err]          err, dialect, engine
+2026-05-14T20:18:15.703279003Z [err]          ^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:15.703284333Z [err]      )
+2026-05-14T20:18:15.703290250Z [err]      ^
+2026-05-14T20:18:15.703296940Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2448, in _handle_dbapi_exception_noconnection
+2026-05-14T20:18:15.703302528Z [err]      raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+2026-05-14T20:18:15.703308833Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+2026-05-14T20:18:15.703314123Z [err]      self._dbapi_connection = engine.raw_connection()
+2026-05-14T20:18:15.703321202Z [err]                               ~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:15.703326212Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+2026-05-14T20:18:15.703331755Z [err]      return self.pool.connect()
+2026-05-14T20:18:15.703336303Z [err]             ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:15.703340308Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+2026-05-14T20:18:15.703344926Z [err]      return _ConnectionFairy._checkout(self)
+2026-05-14T20:18:15.703352276Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:15.703356763Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+2026-05-14T20:18:15.705690451Z [err]      fairy = _ConnectionRecord.checkout(pool)
+2026-05-14T20:18:15.705953017Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+2026-05-14T20:18:15.705966146Z [err]      rec = pool._do_get()
+2026-05-14T20:18:15.705973925Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 306, in _do_get
+2026-05-14T20:18:15.705983292Z [err]      return self._create_connection()
+2026-05-14T20:18:15.705991684Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:15.705999480Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+2026-05-14T20:18:15.706006085Z [err]      return _ConnectionRecord(self)
+2026-05-14T20:18:15.706012639Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+2026-05-14T20:18:15.706019414Z [err]    File "/app/.venv/lib/python3.13/site-packages/psycopg2/__init__.py", line 122, in connect
+2026-05-14T20:18:15.706020694Z [err]      self.__connect()
+2026-05-14T20:18:15.706029970Z [err]      conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+2026-05-14T20:18:15.706030074Z [err]      ~~~~~~~~~~~~~~^^
+2026-05-14T20:18:15.706038578Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+2026-05-14T20:18:15.706039790Z [err]  sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) connection to server at "pgvector.railway.internal" (fd12:9599:a6ce:1:8000:102:aff1:ea9c), port 5432 failed: FATAL:  password authentication failed for user "postgres"
+2026-05-14T20:18:15.706047190Z [err]      with util.safe_reraise():
+2026-05-14T20:18:15.706050837Z [err]  
+2026-05-14T20:18:15.706052717Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+2026-05-14T20:18:15.706057415Z [err]           ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:15.706061688Z [err]  (Background on this error at: https://sqlalche.me/e/20/e3q8)
+2026-05-14T20:18:15.706064536Z [err]      return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+2026-05-14T20:18:15.706067392Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+2026-05-14T20:18:15.706075383Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:15.706078385Z [err]      raise exc_value.with_traceback(exc_tb)
+2026-05-14T20:18:15.706089959Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+2026-05-14T20:18:15.706097125Z [err]      self.dbapi_connection = connection = pool._invoke_creator(self)
+2026-05-14T20:18:15.706104094Z [err]                                           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:15.706111566Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+2026-05-14T20:18:15.706116960Z [err]      return dialect.connect(*cargs_tup, **cparams)
+2026-05-14T20:18:15.706122939Z [err]             ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:16.700092507Z [inf]  Starting with these environment variables:
+2026-05-14T20:18:16.700097247Z [inf]  APP_ENV: production
+2026-05-14T20:18:16.700102080Z [inf]  Initial Database Host: set
+2026-05-14T20:18:16.700106168Z [inf]  Initial Database Port: set
+2026-05-14T20:18:16.700112070Z [inf]  Initial Database Name: set
+2026-05-14T20:18:16.700115984Z [inf]  Initial Database User: set
+2026-05-14T20:18:16.700120172Z [inf]  Warning: No .env file found. Using system environment variables.
+2026-05-14T20:18:16.700124575Z [inf]  
+2026-05-14T20:18:16.700129721Z [inf]  Final environment configuration:
+2026-05-14T20:18:16.700133956Z [inf]  Environment: production
+2026-05-14T20:18:16.700139141Z [inf]  Database Host: set
+2026-05-14T20:18:16.700144765Z [inf]  Database Port: set
+2026-05-14T20:18:16.700149214Z [inf]  Database Name: set
+2026-05-14T20:18:16.700153503Z [inf]  Database User: set
+2026-05-14T20:18:16.700157925Z [inf]  LLM Model: gpt-4o-mini
+2026-05-14T20:18:16.700162540Z [inf]  Debug Mode: false
+2026-05-14T20:18:16.700167227Z [inf]  Running database migrations...
+2026-05-14T20:18:16.832429810Z [inf]  Loading environment: Environment.PRODUCTION
+2026-05-14T20:18:16.901367093Z [err]  Traceback (most recent call last):
+2026-05-14T20:18:16.904107800Z [err]      rec = pool._do_get()
+2026-05-14T20:18:16.904110928Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+2026-05-14T20:18:16.904118782Z [err]      self._dbapi_connection = engine.raw_connection()
+2026-05-14T20:18:16.904121068Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 306, in _do_get
+2026-05-14T20:18:16.904126537Z [err]                               ~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.904130678Z [err]      return self._create_connection()
+2026-05-14T20:18:16.904134131Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+2026-05-14T20:18:16.904139958Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.904141710Z [err]      return self.pool.connect()
+2026-05-14T20:18:16.904148920Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+2026-05-14T20:18:16.904149895Z [err]             ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.904158335Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+2026-05-14T20:18:16.904161431Z [err]      return _ConnectionRecord(self)
+2026-05-14T20:18:16.904167388Z [err]      return _ConnectionFairy._checkout(self)
+2026-05-14T20:18:16.904169951Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+2026-05-14T20:18:16.904174271Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:16.904179897Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+2026-05-14T20:18:16.904185217Z [err]      fairy = _ConnectionRecord.checkout(pool)
+2026-05-14T20:18:16.904190859Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+2026-05-14T20:18:16.906898414Z [err]      self.__connect()
+2026-05-14T20:18:16.906909163Z [err]      ~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.906915661Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+2026-05-14T20:18:16.906921073Z [err]      with util.safe_reraise():
+2026-05-14T20:18:16.906926605Z [err]           ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.906932072Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+2026-05-14T20:18:16.906937611Z [err]      raise exc_value.with_traceback(exc_tb)
+2026-05-14T20:18:16.906942671Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+2026-05-14T20:18:16.906947718Z [err]      self.dbapi_connection = connection = pool._invoke_creator(self)
+2026-05-14T20:18:16.906953380Z [err]                                           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:16.906959464Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+2026-05-14T20:18:16.906963991Z [err]      return dialect.connect(*cargs_tup, **cparams)
+2026-05-14T20:18:16.906973605Z [err]             ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:16.906981407Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+2026-05-14T20:18:16.906986799Z [err]      return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+2026-05-14T20:18:16.906993436Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:16.906998495Z [err]    File "/app/.venv/lib/python3.13/site-packages/psycopg2/__init__.py", line 122, in connect
+2026-05-14T20:18:16.907003758Z [err]      conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+2026-05-14T20:18:16.907010303Z [err]  psycopg2.OperationalError: connection to server at "pgvector.railway.internal" (fd12:9599:a6ce:1:8000:102:aff1:ea9c), port 5432 failed: FATAL:  password authentication failed for user "postgres"
+2026-05-14T20:18:16.908951957Z [err]  
+2026-05-14T20:18:16.908954685Z [err]          **{k: getattr(options, k, None) for k in kwarg},
+2026-05-14T20:18:16.908962594Z [err]  
+2026-05-14T20:18:16.908968137Z [err]          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:16.908972076Z [err]  The above exception was the direct cause of the following exception:
+2026-05-14T20:18:16.908977605Z [err]      )
+2026-05-14T20:18:16.908980961Z [err]  
+2026-05-14T20:18:16.908985864Z [err]      ^
+2026-05-14T20:18:16.908989813Z [err]  Traceback (most recent call last):
+2026-05-14T20:18:16.908997337Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/command.py", line 483, in upgrade
+2026-05-14T20:18:16.908998230Z [err]    File "/app/.venv/bin/alembic", line 10, in <module>
+2026-05-14T20:18:16.909005746Z [err]      sys.exit(main())
+2026-05-14T20:18:16.909011575Z [err]               ~~~~^^
+2026-05-14T20:18:16.909018420Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/config.py", line 1047, in main
+2026-05-14T20:18:16.909024770Z [err]      CommandLine(prog=prog).main(argv=argv)
+2026-05-14T20:18:16.909031009Z [err]      ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+2026-05-14T20:18:16.909035174Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/config.py", line 1037, in main
+2026-05-14T20:18:16.909039383Z [err]      self.run_cmd(cfg, options)
+2026-05-14T20:18:16.909043406Z [err]      ~~~~~~~~~~~~^^^^^^^^^^^^^^
+2026-05-14T20:18:16.909049553Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/config.py", line 971, in run_cmd
+2026-05-14T20:18:16.909054819Z [err]      fn(
+2026-05-14T20:18:16.909058667Z [err]      ~~^
+2026-05-14T20:18:16.909062811Z [err]          config,
+2026-05-14T20:18:16.909066654Z [err]          ^^^^^^^
+2026-05-14T20:18:16.909071626Z [err]          *[getattr(options, k, None) for k in positional],
+2026-05-14T20:18:16.909076021Z [err]          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:16.911084811Z [err]      script.run_env()
+2026-05-14T20:18:16.911085767Z [err]    File "/app/alembic/env.py", line 100, in <module>
+2026-05-14T20:18:16.911093472Z [err]      ~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.911094842Z [err]      run_migrations_online()
+2026-05-14T20:18:16.911101034Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/script/base.py", line 545, in run_env
+2026-05-14T20:18:16.911103564Z [err]      ~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.911105896Z [err]      util.load_python_file(self.dir, "env.py")
+2026-05-14T20:18:16.911109949Z [err]    File "/app/alembic/env.py", line 86, in run_migrations_online
+2026-05-14T20:18:16.911111885Z [err]      ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:16.911117556Z [err]      with connectable.connect() as connection:
+2026-05-14T20:18:16.911118138Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/util/pyfiles.py", line 116, in load_python_file
+2026-05-14T20:18:16.911123047Z [err]      module = load_module_py(module_id, path)
+2026-05-14T20:18:16.911126407Z [err]           ~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.911128217Z [err]    File "/app/.venv/lib/python3.13/site-packages/alembic/util/pyfiles.py", line 136, in load_module_py
+2026-05-14T20:18:16.911132451Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+2026-05-14T20:18:16.911133277Z [err]      spec.loader.exec_module(module)  # type: ignore
+2026-05-14T20:18:16.911137988Z [err]      return self._connection_cls(self)
+2026-05-14T20:18:16.911139366Z [err]      ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+2026-05-14T20:18:16.911144612Z [err]             ~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:16.911145829Z [err]    File "<frozen importlib._bootstrap_external>", line 1026, in exec_module
+2026-05-14T20:18:16.911150438Z [err]    File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+2026-05-14T20:18:16.913670075Z [err]      return _ConnectionFairy._checkout(self)
+2026-05-14T20:18:16.913679482Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:16.913688682Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+2026-05-14T20:18:16.913694853Z [err]      fairy = _ConnectionRecord.checkout(pool)
+2026-05-14T20:18:16.913702114Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+2026-05-14T20:18:16.913705958Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+2026-05-14T20:18:16.913714943Z [err]      Connection._handle_dbapi_exception_noconnection(
+2026-05-14T20:18:16.913721404Z [err]      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+2026-05-14T20:18:16.913727611Z [err]          err, dialect, engine
+2026-05-14T20:18:16.913732690Z [err]          ^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:16.913738093Z [err]      )
+2026-05-14T20:18:16.913743497Z [err]      ^
+2026-05-14T20:18:16.913748502Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2448, in _handle_dbapi_exception_noconnection
+2026-05-14T20:18:16.913754773Z [err]      raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+2026-05-14T20:18:16.913761150Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+2026-05-14T20:18:16.913768620Z [err]      self._dbapi_connection = engine.raw_connection()
+2026-05-14T20:18:16.913774382Z [err]                               ~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.913780007Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+2026-05-14T20:18:16.913785458Z [err]      return self.pool.connect()
+2026-05-14T20:18:16.913790937Z [err]             ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.913796750Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+2026-05-14T20:18:16.919791653Z [err]      rec = pool._do_get()
+2026-05-14T20:18:16.919799120Z [err]           ~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.919801812Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 306, in _do_get
+2026-05-14T20:18:16.919815449Z [err]      return self._create_connection()
+2026-05-14T20:18:16.919815629Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+2026-05-14T20:18:16.919823236Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.919825586Z [err]      raise exc_value.with_traceback(exc_tb)
+2026-05-14T20:18:16.919830657Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+2026-05-14T20:18:16.919835797Z [err]      self.dbapi_connection = connection = pool._invoke_creator(self)
+2026-05-14T20:18:16.919842232Z [err]                                           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+2026-05-14T20:18:16.919845261Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+2026-05-14T20:18:16.919849875Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+2026-05-14T20:18:16.919854811Z [err]      return _ConnectionRecord(self)
+2026-05-14T20:18:16.919858014Z [err]      return dialect.connect(*cargs_tup, **cparams)
+2026-05-14T20:18:16.919862491Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+2026-05-14T20:18:16.919869426Z [err]             ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:16.919871931Z [err]      self.__connect()
+2026-05-14T20:18:16.919878068Z [err]      ~~~~~~~~~~~~~~^^
+2026-05-14T20:18:16.919883960Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+2026-05-14T20:18:16.919889697Z [err]      with util.safe_reraise():
+2026-05-14T20:18:17.676603154Z [err]    File "/app/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+2026-05-14T20:18:17.676613353Z [err]      return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+2026-05-14T20:18:17.676638101Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+2026-05-14T20:18:17.676644618Z [err]    File "/app/.venv/lib/python3.13/site-packages/psycopg2/__init__.py", line 122, in connect
+2026-05-14T20:18:17.676649477Z [err]      conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+2026-05-14T20:18:17.676655024Z [err]  sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) connection to server at "pgvector.railway.internal" (fd12:9599:a6ce:1:8000:102:aff1:ea9c), port 5432 failed: FATAL:  password authentication failed for user "postgres"
+2026-05-14T20:18:17.676663149Z [err]  
+2026-05-14T20:18:17.676669535Z [err]  (Background on this error at: https://sqlalche.me/e/20/e3q8)

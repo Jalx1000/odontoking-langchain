@@ -2,8 +2,28 @@
   "permissions": {
     "allow": [
       "Bash(APP_ENV=test uv run pytest tests/ -q)",
-      "WebFetch(domain:odontoking.sofopolis.com)",
-      "Bash(uv run *)"
+      "Bash(python3 -c ' *)",
+      "Bash(python3 *)",
+      "Bash(git checkout *)",
+      "Bash(uv run *)",
+      "Read(//home/jal/09.platzi/**)",
+      "Bash(npm --version)",
+      "Bash(pnpm add *)",
+      "Bash(pnpm dlx *)",
+      "Bash(pnpm build *)",
+      "Bash(pnpm dev *)",
+      "Bash(curl -s http://localhost:5173)",
+      "Read(//home/jal/.claude/agents/**)",
+      "Read(//home/jal/**)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh api *)",
+      "WebFetch(domain:github.com)",
+      "Bash(git show *)",
+      "Read(//tmp/**)",
+      "Bash(cp -r /home/jal/09.platzi/05.agent-template /home/jal/09.platzi/06.odontoking-agent)",
+      "Bash(rm -rf /home/jal/09.platzi/06.odontoking-agent/.git)",
+      "Bash(curl *)"
     ]
   }
 }

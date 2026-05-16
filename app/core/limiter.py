@@ -6,6 +6,8 @@ remote IP addresses.
 
 When Valkey is configured, uses it as a distributed storage backend
 so rate limits work correctly across multiple app instances.
+Falls back to in-memory storage if the redis package is not installed
+or the storage URI is invalid.
 """
 
 from slowapi import Limiter
@@ -21,17 +23,26 @@ if settings.VALKEY_HOST:
     _storage_uri = f"redis://{_password_part}{settings.VALKEY_HOST}:{settings.VALKEY_PORT}/{settings.VALKEY_DB}"
     logger.info("rate_limiter_using_valkey", host=settings.VALKEY_HOST, port=settings.VALKEY_PORT)
 
-# Initialize rate limiter — fall back to in-memory if redis package is missing
+# Initialize rate limiter — fall back to in-memory if redis package is unavailable
 try:
     limiter = Limiter(
         key_func=get_remote_address,
         default_limits=settings.RATE_LIMIT_DEFAULT,  # pyright: ignore[reportArgumentType]
         storage_uri=_storage_uri,
     )
+    if _storage_uri:
+        logger.info("rate_limiter_initialized", backend="valkey")
+    else:
+        logger.info("rate_limiter_initialized", backend="in_memory")
 except Exception as e:
-    logger.warning("rate_limiter_redis_unavailable_using_memory", error=str(e))
+    logger.warning(
+        "rate_limiter_redis_unavailable",
+        error=str(e),
+        fallback="in_memory",
+    )
     limiter = Limiter(
         key_func=get_remote_address,
         default_limits=settings.RATE_LIMIT_DEFAULT,  # pyright: ignore[reportArgumentType]
         storage_uri=None,
     )
+    logger.info("rate_limiter_initialized", backend="in_memory_fallback")

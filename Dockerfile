@@ -22,12 +22,16 @@ RUN apt-get update && apt-get install -y \
     && pip install uv \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency files first to leverage Docker cache (lock file pins exact versions)
+# Install deps first (cached if pyproject.toml/uv.lock don't change)
+# --extra cache  → installs redis + valkey Python packages (needed for limiter + broker)
+# --group test   → installs pytest-asyncio (needed for CI tests inside container)
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --extra cache
+RUN uv venv && uv sync --frozen --no-install-project --extra cache --group test
 
-# Copy the application
+# Copy the application (triggers re-sync to install the project itself)
 COPY . .
+RUN uv sync --frozen --extra cache --group test
+
 
 # Make entrypoint script executable - do this before changing user
 RUN chmod +x /app/scripts/docker-entrypoint.sh

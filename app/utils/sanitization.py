@@ -1,7 +1,9 @@
 """This file contains the sanitization utilities for the application."""
 
 import html
+import ipaddress
 import re
+import socket
 from typing import (
     Any,
     Dict,
@@ -125,3 +127,61 @@ def validate_password_strength(password: str) -> bool:
         raise ValueError("Password must contain at least one special character")
 
     return True
+
+
+# ── SSRF protection ───────────────────────────────────────────────────────────
+
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),    # loopback
+    ipaddress.ip_network("::1/128"),         # IPv6 loopback
+    ipaddress.ip_network("10.0.0.0/8"),      # RFC 1918 private
+    ipaddress.ip_network("172.16.0.0/12"),   # RFC 1918 private
+    ipaddress.ip_network("192.168.0.0/16"),  # RFC 1918 private
+    ipaddress.ip_network("169.254.0.0/16"),  # link-local
+    ipaddress.ip_network("fe80::/10"),       # IPv6 link-local
+    ipaddress.ip_network("fc00::/7"),        # IPv6 unique-local
+    ipaddress.ip_network("100.64.0.0/10"),   # carrier-grade NAT
+    ipaddress.ip_network("0.0.0.0/8"),       # unspecified
+    ipaddress.ip_network("240.0.0.0/4"),     # reserved
+]
+
+
+def validate_external_url(url: str, field_name: str = "url") -> str:
+    """Validate that a URL is safe for server-side HTTP requests (SSRF protection).
+
+    Raises ValueError if the URL uses a non-http(s) scheme or resolves to a
+    private/reserved IP address. Call this before persisting or fetching any
+    admin-supplied URL to prevent Server-Side Request Forgery attacks.
+    """
+    from urllib.parse import urlparse
+
+    if not url:
+        return url
+
+    parsed = urlparse(url)
+
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"{field_name}: only http and https schemes are allowed")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"{field_name}: URL must include a hostname")
+
+    try:
+        addr_infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as e:
+        raise ValueError(f"{field_name}: hostname could not be resolved ({e})")
+
+    for _family, _type, _proto, _canonname, sockaddr in addr_infos:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        for network in _PRIVATE_NETWORKS:
+            if ip in network:
+                raise ValueError(
+                    f"{field_name}: URL resolves to a private or reserved IP address"
+                )
+
+    return url
