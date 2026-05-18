@@ -23,7 +23,14 @@
       "Read(//tmp/**)",
       "Bash(cp -r /home/jal/09.platzi/05.agent-template /home/jal/09.platzi/06.odontoking-agent)",
       "Bash(rm -rf /home/jal/09.platzi/06.odontoking-agent/.git)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(docker exec *)",
+      "Bash(docker compose *)",
+      "Bash(git -C /home/jal/09.platzi/03.agent-production status --short)",
+      "Bash(git -C /home/jal/09.platzi/04.agent-production-front status --short)",
+      "Bash(git -C /home/jal/09.platzi/05.agent-template status --short)",
+      "Bash(git -C /home/jal/09.platzi/06.odontoking-agent status --short)",
+      "Bash(APP_ENV=development uv run python -c ' *)"
     ]
   }
 }
