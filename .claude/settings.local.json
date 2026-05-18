@@ -30,7 +30,16 @@
       "Bash(git -C /home/jal/09.platzi/04.agent-production-front status --short)",
       "Bash(git -C /home/jal/09.platzi/05.agent-template status --short)",
       "Bash(git -C /home/jal/09.platzi/06.odontoking-agent status --short)",
-      "Bash(APP_ENV=development uv run python -c ' *)"
+      "Bash(APP_ENV=development uv run python -c ' *)",
+      "Bash(export PATH=\"$HOME/.railway/bin:$PATH\")",
+      "Bash(railway whoami *)",
+      "Bash(railway list *)",
+      "Bash(railway link *)",
+      "Bash(railway status *)",
+      "Bash(git -C /home/jal/09.platzi/03.agent-production remote -v)",
+      "Bash(bash /home/jal/.claude/skills/use-railway/scripts/railway-api.sh 'mutation\\($id: String!, $input: ServiceUpdateInput!\\) { serviceUpdate\\(id: $id, input: $input\\) { id name } }' '{\"id\":\"a4577e0e-a009-4f2e-a3ef-a48a4e1bcccd\",\"input\":{\"name\":\"odontoking-db\"}}')",
+      "Bash(bash /home/jal/.claude/skills/use-railway/scripts/railway-api.sh 'mutation\\($id: String!, $input: ServiceUpdateInput!\\) { serviceUpdate\\(id: $id, input: $input\\) { id name } }' '{\"id\":\"80e2a085-dcc4-4ccb-b539-4e2ece47b91f\",\"input\":{\"name\":\"kohlberg-db\"}}')",
+      "Bash(bash /home/jal/.claude/skills/use-railway/scripts/railway-api.sh 'mutation\\($id: String!, $input: ServiceUpdateInput!\\) { serviceUpdate\\(id: $id, input: $input\\) { id name } }' '{\"id\":\"dbf0a6f8-d61d-459b-b8bd-27f192cfb85e\",\"input\":{\"name\":\"platform-db\"}}')"
     ]
   }
 }
