@@ -8,6 +8,8 @@ alias for the "odontoking" tenant while the Meta app config is migrated.
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import time
 from collections import defaultdict
@@ -258,12 +260,24 @@ async def verify_webhook_tenant(
 @limiter.limit("100 per minute")
 async def receive_message_tenant(tenant_slug: str, request: Request) -> dict:
     """Receive and process incoming WhatsApp messages for a specific tenant."""
+    raw = await request.body()
+
+    if settings.WHATSAPP_APP_SECRET:
+        sig_header = request.headers.get("X-Hub-Signature-256", "")
+        expected_sig = "sha256=" + hmac.new(
+            settings.WHATSAPP_APP_SECRET.encode(),
+            raw,
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(sig_header, expected_sig):
+            logger.warning("whatsapp_invalid_hmac_signature", tenant=tenant_slug)
+            raise HTTPException(status_code=403, detail="Invalid signature")
+
     tenant = await get_tenant_async(tenant_slug)
     if tenant is None:
         logger.warning("whatsapp_unknown_tenant_post", tenant=tenant_slug)
         return {"status": "ok"}  # 200 to prevent Meta retries on bad slug
 
-    raw = await request.body()
     logger.info("whatsapp_raw_payload", tenant=tenant_slug, body=raw.decode("utf-8", errors="replace")[:500])
     return await _handle_webhook_payload(raw, tenant, message_buffer_service)
 

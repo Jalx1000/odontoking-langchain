@@ -237,6 +237,10 @@ class Settings:
         self.WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
         self.WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
         self.WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
+        # Meta App Secret — used to verify X-Hub-Signature-256 on incoming webhooks.
+        # When empty, HMAC verification is skipped (suitable for local dev without the secret).
+        # Generate: find it in Meta Developer Console → App → Settings → Basic → App Secret.
+        self.WHATSAPP_APP_SECRET: str = os.getenv("WHATSAPP_APP_SECRET", "")
 
         # Odontoking API
         self.ODONTOKING_API_URL = os.getenv("ODONTOKING_API_URL", "https://odontoking.sofopolis.com")
