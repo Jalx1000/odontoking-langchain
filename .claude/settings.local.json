@@ -40,7 +40,11 @@
       "Bash(bash /home/jal/.claude/skills/use-railway/scripts/railway-api.sh 'mutation\\($id: String!, $input: ServiceUpdateInput!\\) { serviceUpdate\\(id: $id, input: $input\\) { id name } }' '{\"id\":\"a4577e0e-a009-4f2e-a3ef-a48a4e1bcccd\",\"input\":{\"name\":\"odontoking-db\"}}')",
       "Bash(bash /home/jal/.claude/skills/use-railway/scripts/railway-api.sh 'mutation\\($id: String!, $input: ServiceUpdateInput!\\) { serviceUpdate\\(id: $id, input: $input\\) { id name } }' '{\"id\":\"80e2a085-dcc4-4ccb-b539-4e2ece47b91f\",\"input\":{\"name\":\"kohlberg-db\"}}')",
       "Bash(bash /home/jal/.claude/skills/use-railway/scripts/railway-api.sh 'mutation\\($id: String!, $input: ServiceUpdateInput!\\) { serviceUpdate\\(id: $id, input: $input\\) { id name } }' '{\"id\":\"dbf0a6f8-d61d-459b-b8bd-27f192cfb85e\",\"input\":{\"name\":\"platform-db\"}}')",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('app/agent.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/tools/kohlberg.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/tools/crm.py'\\).read\\(\\)\\); print\\('all files parse OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/agent.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/tools/kohlberg.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/tools/crm.py'\\).read\\(\\)\\); print\\('all files parse OK'\\)\")",
+      "Bash(/home/jal/.railway/bin/railway status *)",
+      "Bash(/home/jal/.railway/bin/railway variables *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
