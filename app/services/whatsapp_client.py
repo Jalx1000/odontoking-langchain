@@ -93,7 +93,9 @@ def build_interactive_payload(mensaje: str, to: str) -> Optional[dict]:
     if len(options) < 2:
         return None
 
-    body_text = option_pattern.split(mensaje)[0].strip() or mensaje[:1024]
+    # Use only the preamble (text before first numbered option) as body.
+    # Never fall back to the full message — that would duplicate options in body+buttons.
+    body_text = option_pattern.split(mensaje)[0].strip() or "Seleccione una opción:"
 
     if len(options) <= 3:
         return {
@@ -101,8 +103,8 @@ def build_interactive_payload(mensaje: str, to: str) -> Optional[dict]:
             "body": {"text": body_text[:1024]},
             "action": {
                 "buttons": [
-                    {"type": "reply", "reply": {"id": opt[:256], "title": opt[:20]}}
-                    for opt in options[:3]
+                    {"type": "reply", "reply": {"id": f"btn_{i + 1}", "title": opt[:20]}}
+                    for i, opt in enumerate(options[:3])
                 ]
             },
         }
@@ -117,7 +119,7 @@ def build_interactive_payload(mensaje: str, to: str) -> Optional[dict]:
                 {
                     "title": "Opciones disponibles",
                     "rows": [
-                        {"id": f"opt_{i + 1}", "title": opt[:24], "description": ""}
+                        {"id": f"opt_{i + 1}", "title": opt[:24]}
                         for i, opt in enumerate(options[:10])
                     ],
                 }

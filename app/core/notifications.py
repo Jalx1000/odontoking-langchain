@@ -46,7 +46,7 @@ def _build_email(subject: str, body_html: str, body_text: str) -> MIMEMultipart:
 def _smtp_send(msg: MIMEMultipart) -> None:
     """Send email synchronously via SMTP SSL. Runs in a thread pool."""
     context = ssl.create_default_context()
-    with smtplib.SMTP_SSL(settings.MAIL_HOST, settings.MAIL_PORT, context=context) as server:
+    with smtplib.SMTP_SSL(settings.MAIL_HOST, settings.MAIL_PORT, context=context, timeout=10) as server:
         server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
         server.sendmail(settings.MAIL_FROM_ADDRESS, settings.MAIL_TO_ADDRESS, msg.as_string())
 
