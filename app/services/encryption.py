@@ -22,9 +22,9 @@ def _get_fernet() -> Optional[Fernet]:
     global _fernet
     if _fernet is None and settings.ENCRYPTION_KEY:
         try:
-            _fernet = Fernet(settings.ENCRYPTION_KEY.encode())
+            _fernet = Fernet(settings.ENCRYPTION_KEY.strip().encode())
         except Exception as e:
-            logger.error("encryption_init_failed", error=str(e))
+            logger.exception("encryption_init_failed", error=str(e))
     return _fernet
 
 
