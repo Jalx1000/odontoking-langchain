@@ -22,6 +22,11 @@ def app_client():
         patch("app.services.message_buffer.message_buffer_service.close", new_callable=AsyncMock),
         patch("app.core.cache.cache_service.initialize", new_callable=AsyncMock),
         patch("app.core.cache.cache_service.close", new_callable=AsyncMock),
+        # _db_get uses database_service.engine inside; MagicMock engine makes
+        # session.exec().first() return a MagicMock (truthy), causing _cache_set
+        # to fail serializing it. Patch at the function level so tests use the
+        # env-var registry (correct for unit tests — no real DB needed).
+        patch("app.core.tenant._db_get", new=AsyncMock(return_value=None)),
     ):
         from app.main import app
 
@@ -198,3 +203,47 @@ class TestWebhookReceiveMessage:
             assert resp.status_code == 200
             mock_enqueue.assert_called_once()
             assert mock_enqueue.call_args[0][1] == "Por la mañana"
+
+    def test_duplicate_msg_id_is_skipped(self, app_client, sample_whatsapp_text_payload):
+        """Same msg.id delivered twice (Meta retry) must only enqueue once."""
+        with patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue:
+            resp1 = self._post(app_client, sample_whatsapp_text_payload)
+            resp2 = self._post(app_client, sample_whatsapp_text_payload)
+
+            assert resp1.status_code == 200
+            assert resp2.status_code == 200
+            # Second delivery of same msg.id must be a no-op
+            mock_enqueue.assert_called_once()
+
+    def test_different_msg_ids_both_enqueued(self, app_client):
+        """Two different messages with distinct IDs must both be enqueued."""
+        def _payload(msg_id: str, text: str) -> dict:
+            return {
+                "object": "whatsapp_business_account",
+                "entry": [{"id": "e1", "changes": [{"value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {"display_phone_number": "x", "phone_number_id": "x"},
+                    "messages": [{"id": msg_id, "from": "591701234567", "timestamp": "1",
+                                  "type": "text", "text": {"body": text}}],
+                }, "field": "messages"}]}],
+            }
+
+        with patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue:
+            self._post(app_client, _payload("msg-aaa", "primer mensaje"))
+            self._post(app_client, _payload("msg-bbb", "segundo mensaje"))
+            assert mock_enqueue.call_count == 2
+
+    def test_dedup_cache_expires_after_ttl(self, app_client, sample_whatsapp_text_payload):
+        """After the TTL expires, the same msg.id should be processed again."""
+        import app.api.v1.whatsapp as wa_module
+
+        with patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue:
+            self._post(app_client, sample_whatsapp_text_payload)
+            assert mock_enqueue.call_count == 1
+
+            # Simulate TTL expiry by backdating the cache entry
+            for k in wa_module._seen_message_ids:
+                wa_module._seen_message_ids[k] = 0.0
+
+            self._post(app_client, sample_whatsapp_text_payload)
+            assert mock_enqueue.call_count == 2

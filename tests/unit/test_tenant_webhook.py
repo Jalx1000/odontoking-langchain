@@ -20,6 +20,7 @@ def app_client():
         patch("app.services.message_buffer.message_buffer_service.close", new_callable=AsyncMock),
         patch("app.core.cache.cache_service.initialize", new_callable=AsyncMock),
         patch("app.core.cache.cache_service.close", new_callable=AsyncMock),
+        patch("app.core.tenant._db_get", new=AsyncMock(return_value=None)),
     ):
         from app.main import app
         with TestClient(app, raise_server_exceptions=False) as client:
@@ -79,7 +80,7 @@ class TestTenantWebhookVerify:
 # ── Tenant receive endpoint ───────────────────────────────────────────────────
 
 class TestTenantWebhookReceive:
-    def _payload(self, wa_id: str = "591701234567", text: str = "Hola") -> dict:
+    def _payload(self, wa_id: str = "591701234567", text: str = "Hola", msg_id: str = "m1") -> dict:
         return {
             "object": "whatsapp_business_account",
             "entry": [{
@@ -89,7 +90,7 @@ class TestTenantWebhookReceive:
                         "messaging_product": "whatsapp",
                         "metadata": {"display_phone_number": "x", "phone_number_id": "pid"},
                         "messages": [{
-                            "id": "m1",
+                            "id": msg_id,
                             "from": wa_id,
                             "timestamp": "1",
                             "type": "text",
@@ -139,8 +140,8 @@ class TestTenantWebhookReceive:
             calls.append(id(process_fn))
 
         with patch("app.api.v1.whatsapp.message_buffer_service.enqueue", side_effect=capture_enqueue):
-            self._post(app_client, "odontoking", self._payload(text="msg1"))
-            self._post(app_client, "odontoking", self._payload(text="msg2"))
+            self._post(app_client, "odontoking", self._payload(text="msg1", msg_id="t-unique-1"))
+            self._post(app_client, "odontoking", self._payload(text="msg2", msg_id="t-unique-2"))
 
         # Both calls use the same tenant → same factory pattern (fn created per request)
         assert len(calls) == 2

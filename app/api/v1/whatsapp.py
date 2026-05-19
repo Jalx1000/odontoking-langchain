@@ -49,6 +49,12 @@ _wa_message_times: dict[str, list[float]] = defaultdict(list)
 _WA_RATE_WINDOW_SECONDS = 60
 _WA_RATE_MAX_MESSAGES = 20
 
+# Deduplication cache: msg_id → monotonic timestamp
+# Meta retries webhook delivery when it doesn't get a 200 fast enough,
+# which can cause the same message to be processed twice.
+_seen_message_ids: dict[str, float] = {}
+_MSG_DEDUPE_TTL = 60.0  # seconds — covers Meta's full retry window
+
 _TIMEOUT_MSG = (
     "Disculpe, la consulta está tardando más de lo esperado. "
     "Por favor intente de nuevo en un momento 🙏."
@@ -67,6 +73,18 @@ _AGENT_REGISTRY: dict[str, Any] = {
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+
+def _is_duplicate_message(msg_id: str) -> bool:
+    """Return True if this msg_id was already processed within the dedup TTL window."""
+    now = time.monotonic()
+    expired = [k for k, v in _seen_message_ids.items() if now - v > _MSG_DEDUPE_TTL]
+    for k in expired:
+        del _seen_message_ids[k]
+    if msg_id in _seen_message_ids:
+        return True
+    _seen_message_ids[msg_id] = now
+    return False
+
 
 def _is_wa_rate_limited(wa_id: str) -> bool:
     now = time.monotonic()
@@ -150,6 +168,11 @@ async def _handle_webhook_payload(
             for msg in value.messages:
                 wa_id = msg.from_number
                 msg_type = msg.type
+
+                if _is_duplicate_message(msg.id):
+                    logger.info("whatsapp_duplicate_message_skipped", tenant=tenant.slug, wa_id=wa_id, msg_id=msg.id)
+                    continue
+
                 text_content: str = ""
 
                 if msg_type == "text" and msg.text:
@@ -283,6 +306,24 @@ async def verify_webhook_legacy(
         hub_verify_token=hub_verify_token,
         hub_challenge=hub_challenge,
     )
+
+
+@router.post("/webhook")
+@limiter.limit("100 per minute")
+async def receive_message_legacy(request: Request) -> dict:
+    """Legacy POST webhook — backward-compatible alias for odontoking tenant.
+
+    Meta's webhook is still configured to POST /api/v1/whatsapp/webhook while
+    the new tenant-specific route /api/v1/whatsapp/{tenant_slug}/webhook is
+    being rolled out. Both routes use the same dedup + buffer pipeline.
+    """
+    tenant = await get_tenant_async("odontoking")
+    if tenant is None:
+        logger.warning("whatsapp_legacy_webhook_no_tenant")
+        return {"status": "ok"}
+    raw = await request.body()
+    logger.info("whatsapp_raw_payload", tenant="odontoking", body=raw.decode("utf-8", errors="replace")[:500])
+    return await _handle_webhook_payload(raw, tenant, message_buffer_service)
 
 
 

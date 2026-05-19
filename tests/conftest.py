@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -30,6 +31,18 @@ os.environ["VALKEY_HOST"] = ""  # force in-memory backend
 @pytest.fixture(scope="session")
 def event_loop_policy():
     return asyncio.DefaultEventLoopPolicy()
+
+
+@pytest.fixture(autouse=True)
+def reset_wa_seen_ids():
+    """Clear the webhook dedup cache before each test to prevent cross-test interference."""
+    mod = sys.modules.get("app.api.v1.whatsapp")
+    if mod and hasattr(mod, "_seen_message_ids"):
+        mod._seen_message_ids.clear()
+    yield
+    mod = sys.modules.get("app.api.v1.whatsapp")
+    if mod and hasattr(mod, "_seen_message_ids"):
+        mod._seen_message_ids.clear()
 
 
 @pytest.fixture
