@@ -23,7 +23,8 @@
       "Read(//tmp/**)",
       "Bash(cp -r /home/jal/09.platzi/05.agent-template /home/jal/09.platzi/06.odontoking-agent)",
       "Bash(rm -rf /home/jal/09.platzi/06.odontoking-agent/.git)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "mcp__railway__environment_status"
     ]
   }
 }
