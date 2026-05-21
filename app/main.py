@@ -80,13 +80,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("message_buffer_initialization_failed", error=str(e))
 
-    # Recover orphaned buffer messages — look up each wa_id's tenant from DB
-    # so the correct credentials are used when re-sending. Falls back to a
-    # no-op (drops the message) when the tenant can't be resolved, to avoid
-    # replying from the wrong phone number (multi-tenant safety).
+    # Recover orphaned buffer messages. The buffer now carries tenant_slug in
+    # its namespace, so the recovery callback can stay tenant-aware without an
+    # extra lookup round-trip.
     try:
-        async def _recover_fn(wa_id: str, text: str) -> None:
-            logger.warning("buffer_recovery_dropped", wa_id=wa_id, reason="tenant_unknown")
+        async def _recover_fn(tenant_slug: str, wa_id: str, text: str) -> None:
+            logger.warning("buffer_recovery_dropped", tenant=tenant_slug, wa_id=wa_id, reason="tenant_unknown")
 
         await message_buffer_service.recover(_recover_fn)
     except Exception as e:

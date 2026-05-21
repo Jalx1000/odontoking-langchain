@@ -21,7 +21,7 @@ import sys
 # Resolve env file before importing any app module
 _APP_ENV = os.getenv("APP_ENV", "development")
 
-from app.core.broker import RedisStreamBroker, create_broker
+from app.core.broker import create_broker
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.tenant import get_tenant
@@ -52,7 +52,7 @@ async def _handle_message(payload: dict, agent, tenant_slug: str) -> None:
     try:
         asyncio.create_task(send_typing_indicator(wa_id))
         response_text = await asyncio.wait_for(
-            agent.get_response(messages, wa_id=wa_id),
+            agent.get_response(messages, wa_id=wa_id, tenant_slug=tenant_slug),
             timeout=settings.LLM_TOTAL_TIMEOUT + 30,
         )
         await send_response(wa_id, response_text)
@@ -102,10 +102,6 @@ async def run_worker(tenant_slug: str) -> None:
     # Create broker and ensure consumer group exists
     the_broker = create_broker()
     await the_broker.setup(tenant_slug)
-
-    if not isinstance(the_broker, RedisStreamBroker):
-        logger.error("worker_requires_redis", tenant=tenant_slug)
-        sys.exit(1)
 
     # Handler closure captures agent and tenant_slug
     async def handler(payload: dict) -> None:

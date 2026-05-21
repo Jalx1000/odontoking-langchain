@@ -12,6 +12,7 @@ class ChatHistoryOdonto(SQLModel, table=True):
     __tablename__ = "chat_histories_odonto"  # pyright: ignore[reportAssignmentType]
 
     id: int | None = Field(default=None, primary_key=True)
+    tenant_slug: str = Field(index=True)
     session_id: str = Field(index=True)
     message: str = Field(sa_column=Column(Text))
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

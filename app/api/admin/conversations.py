@@ -19,11 +19,12 @@ _WA_SUFFIX = "@whatsapp.sofopolis.net"
 
 
 def _wa_id(session_id: str) -> str:
-    return session_id.removesuffix(_WA_SUFFIX)
+    base = session_id.removesuffix(_WA_SUFFIX)
+    return base.split(":", 1)[1] if ":" in base else base
 
 
-def _session_id(wa_id: str) -> str:
-    return f"{wa_id}{_WA_SUFFIX}"
+def _session_id(slug: str, wa_id: str) -> str:
+    return f"{slug}:{wa_id}{_WA_SUFFIX}"
 
 
 def _parse_message(raw: str) -> dict | None:
@@ -106,6 +107,7 @@ async def list_conversations(slug: str, limit: int = 50, offset: int = 0):
                 func.max(ChatHistoryOdonto.created_at).label("last_message_at"),
                 func.min(ChatHistoryOdonto.created_at).label("first_message_at"),
             )
+            .where(ChatHistoryOdonto.tenant_slug == slug)
             .group_by(ChatHistoryOdonto.session_id)
             .order_by(desc(func.max(ChatHistoryOdonto.created_at)))
             .offset(offset)
@@ -113,7 +115,7 @@ async def list_conversations(slug: str, limit: int = 50, offset: int = 0):
         ).all()
 
         total = db.exec(
-            select(func.count(distinct(ChatHistoryOdonto.session_id)))
+            select(func.count(distinct(ChatHistoryOdonto.session_id))).where(ChatHistoryOdonto.tenant_slug == slug)
         ).one()
 
     return {
@@ -137,7 +139,7 @@ async def list_conversations(slug: str, limit: int = 50, offset: int = 0):
 @router.get("/{slug}/conversations/{wa_id}", dependencies=[Depends(require_admin)])
 async def get_conversation(slug: str, wa_id: str):
     """Full message history for a WhatsApp conversation."""
-    sid = _session_id(wa_id)
+    sid = _session_id(slug, wa_id)
 
     with Session(database_service.engine) as db:
         tenant = db.exec(select(Tenant).where(Tenant.slug == slug)).first()
@@ -146,7 +148,7 @@ async def get_conversation(slug: str, wa_id: str):
 
         rows = db.exec(
             select(ChatHistoryOdonto)
-            .where(ChatHistoryOdonto.session_id == sid)
+            .where(ChatHistoryOdonto.tenant_slug == slug, ChatHistoryOdonto.session_id == sid)
             .order_by(ChatHistoryOdonto.created_at)
         ).all()
 
@@ -168,11 +170,11 @@ async def get_conversation(slug: str, wa_id: str):
 @router.delete("/{slug}/conversations/{wa_id}", dependencies=[Depends(require_admin)])
 async def clear_conversation(slug: str, wa_id: str):
     """Delete all messages in a WhatsApp conversation."""
-    sid = _session_id(wa_id)
+    sid = _session_id(slug, wa_id)
 
     with Session(database_service.engine) as db:
         rows = db.exec(
-            select(ChatHistoryOdonto).where(ChatHistoryOdonto.session_id == sid)
+            select(ChatHistoryOdonto).where(ChatHistoryOdonto.tenant_slug == slug, ChatHistoryOdonto.session_id == sid)
         ).all()
         deleted = len(rows)
         for r in rows:

@@ -44,7 +44,10 @@
       "Bash(/home/jal/.railway/bin/railway status *)",
       "Bash(/home/jal/.railway/bin/railway variables *)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(RAILWAY_CALLER=\"skill:use-railway@1.2.1\" RAILWAY_AGENT_SESSION=\"railway-skill-$\\(date +%s\\)-$$\" /home/jal/.railway/bin/railway whoami --json)",
+      "Bash(/home/jal/.railway/bin/railway list-deployments *)",
+      "Bash(/home/jal/.railway/bin/railway logs *)"
     ]
   }
 }

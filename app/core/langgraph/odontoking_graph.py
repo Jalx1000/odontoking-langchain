@@ -77,25 +77,25 @@ def _load_odontoking_prompt(wa_id: str) -> str:
     return _PROMPT_TEMPLATE.format(current_datetime=current_datetime) + f"\n\n# Contexto\nwa_id del paciente actual: {wa_id}"
 
 
-def _chat_session_id(wa_id: str) -> str:
-    return f"{wa_id}@whatsapp.sofopolis.net"
+def _chat_session_id(tenant_slug: str, wa_id: str) -> str:
+    return f"{tenant_slug}:{wa_id}@whatsapp.sofopolis.net"
 
 
 def _serialize_message(m: BaseMessage) -> str:
     return json.dumps(m.model_dump(), ensure_ascii=False, default=str)
 
 
-def _persist_messages(wa_id: str, messages: list[BaseMessage]) -> None:
-    sid = _chat_session_id(wa_id)
+def _persist_messages(tenant_slug: str, wa_id: str, messages: list[BaseMessage]) -> None:
+    sid = _chat_session_id(tenant_slug, wa_id)
     for m in messages:
         try:
-            database_service.save_chat_message(sid, _serialize_message(m))
+            database_service.save_chat_message(tenant_slug, sid, _serialize_message(m))
         except Exception as e:
             logger.warning("chat_history_save_failed", wa_id=wa_id, error=str(e))
 
 
-async def _persist_messages_async(wa_id: str, messages: list[BaseMessage]) -> None:
-    await asyncio.to_thread(_persist_messages, wa_id, messages)
+async def _persist_messages_async(tenant_slug: str, wa_id: str, messages: list[BaseMessage]) -> None:
+    await asyncio.to_thread(_persist_messages, tenant_slug, wa_id, messages)
 
 
 class OdontokingAgent:
@@ -233,6 +233,7 @@ class OdontokingAgent:
         self,
         messages: list,
         wa_id: str,
+        tenant_slug: str = "odontoking",
     ) -> str:
         """Process a WhatsApp message and return the agent's texto response.
 
@@ -241,10 +242,11 @@ class OdontokingAgent:
         """
         graph = await self._get_graph()
         callbacks: list[BaseCallbackHandler] = [langfuse_callback_handler] if settings.LANGFUSE_TRACING_ENABLED else []
+        thread_id = f"{tenant_slug}:{wa_id}"
         config: RunnableConfig = {
-            "configurable": {"thread_id": wa_id},
+            "configurable": {"thread_id": thread_id},
             "callbacks": callbacks,
-            "metadata": {"wa_id": wa_id},
+            "metadata": {"wa_id": wa_id, "tenant_slug": tenant_slug},
         }
 
         from app.services.memory import memory_service
@@ -253,7 +255,7 @@ class OdontokingAgent:
             if settings.ODONTOKING_MEMORY_ENABLED:
                 state_result, memory_result = await asyncio.gather(
                     graph.aget_state(config),
-                    memory_service.search(wa_id, messages[-1].content if messages else ""),
+                    memory_service.search(f"{tenant_slug}:{wa_id}", messages[-1].content if messages else ""),
                     return_exceptions=True,
                 )
                 state = state_result if not isinstance(state_result, BaseException) else None
@@ -278,7 +280,7 @@ class OdontokingAgent:
             # Persist new messages (human + AI + tool) to chat_histories_odonto
             new_msgs = [m for m in response.get("messages", [])[existing_count:] if isinstance(m, BaseMessage)]
             if new_msgs:
-                task = asyncio.create_task(_persist_messages_async(wa_id, new_msgs))
+                task = asyncio.create_task(_persist_messages_async(tenant_slug, wa_id, new_msgs))
                 self._persist_tasks.add(task)
                 task.add_done_callback(self._persist_tasks.discard)
 
@@ -304,7 +306,9 @@ class OdontokingAgent:
             if settings.ODONTOKING_MEMORY_ENABLED:
                 try:
                     openai_msgs = cast(list[dict], convert_to_openai_messages(response["messages"]))
-                    asyncio.create_task(memory_service.add(wa_id, openai_msgs, {"wa_id": wa_id}))
+                    asyncio.create_task(
+                        memory_service.add(f"{tenant_slug}:{wa_id}", openai_msgs, {"wa_id": wa_id, "tenant_slug": tenant_slug})
+                    )
                 except Exception as mem_err:
                     logger.warning("odontoking_memory_add_skipped", wa_id=wa_id, error=str(mem_err))
 
@@ -327,19 +331,20 @@ class OdontokingAgent:
             await self._connection_pool.close()
             logger.info("odontoking_connection_pool_closed")
 
-    async def clear_history(self, wa_id: str) -> None:
+    async def clear_history(self, wa_id: str, tenant_slug: str = "odontoking") -> None:
         """Delete all LangGraph checkpoint data for a given WhatsApp ID."""
         pool = await self._get_connection_pool()
         if pool is None:
             raise RuntimeError("connection pool unavailable")
+        thread_id = f"{tenant_slug}:{wa_id}"
         async with pool.connection() as conn:
             async with conn.pipeline():
                 for table in settings.CHECKPOINT_TABLES:
                     await conn.execute(
                         sql.SQL("DELETE FROM {} WHERE thread_id = %s").format(sql.Identifier(table)),
-                        (wa_id,),
+                        (thread_id,),
                     )
-        logger.info("odontoking_history_cleared", wa_id=wa_id)
+        logger.info("odontoking_history_cleared", wa_id=wa_id, tenant_slug=tenant_slug)
 
 
 odontoking_agent = OdontokingAgent()

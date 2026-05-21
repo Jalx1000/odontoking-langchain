@@ -91,7 +91,7 @@ def _make_process_fn(tenant: TenantConfig) -> ProcessFn:
         try:
             asyncio.create_task(send_typing_indicator(wa_id, phone_number_id=pid, token=tok))
             response_text = await asyncio.wait_for(
-                agent.get_response(messages, wa_id=wa_id),
+                agent.get_response(messages, wa_id=wa_id, tenant_slug=tenant.slug),
                 timeout=settings.LLM_TOTAL_TIMEOUT + 30,
             )
             await send_response(wa_id, response_text, phone_number_id=pid, token=tok)
@@ -224,7 +224,7 @@ async def _handle_webhook_payload(
                     continue
 
                 if settings.BUFFER_ENABLED:
-                    await buffer.enqueue(wa_id, text_content, process_fn)
+                    await buffer.enqueue(tenant.slug, wa_id, text_content, process_fn)
                 else:
                     task = asyncio.create_task(process_fn(wa_id, text_content))
                     _background_tasks.add(task)
@@ -309,6 +309,6 @@ async def clear_history(tenant_slug: str, wa_id: str, request: Request) -> dict:
     agent = _AGENT_REGISTRY.get(_tenant_cfg.agent_type) if _tenant_cfg else None
     if agent is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    await agent.clear_history(wa_id)
+    await agent.clear_history(wa_id, tenant_slug=tenant_slug)
     logger.info("whatsapp_history_cleared_via_api", tenant=tenant_slug, wa_id=wa_id)
     return {"status": "ok", "tenant": tenant_slug, "wa_id": wa_id}

@@ -76,8 +76,9 @@ async def delete_user(user_id: int):
         if not user:
             raise HTTPException(status_code=404, detail="User not found.")
 
-        db.delete(user)
-        db.commit()
+    deleted = database_service.delete_user_with_sessions(user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="User not found.")
 
     logger.info("admin_user_deleted", user_id=user_id)
     return {"status": "deleted", "user_id": user_id}

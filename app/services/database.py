@@ -127,10 +127,9 @@ class DatabaseService:
             if not user:
                 return False
 
-            session.delete(user)
-            session.commit()
-            logger.info("user_deleted", email=email)
-            return True
+            user_id = user.id
+
+        return self.delete_user_with_sessions(user_id)
 
     async def create_session(
         self, session_id: str, user_id: int, name: str = "", username: str | None = None
@@ -227,13 +226,28 @@ class DatabaseService:
             logger.info("session_name_updated", session_id=session_id, name=name)
             return chat_session
 
-    def save_chat_message(self, session_id: str, message: str) -> None:
+    def save_chat_message(self, tenant_slug: str, session_id: str, message: str) -> None:
         """Persist a single serialized LangChain message for a WhatsApp session."""
         with Session(self.engine) as db:
-            row = ChatHistoryOdonto(session_id=session_id, message=message)
+            row = ChatHistoryOdonto(tenant_slug=tenant_slug, session_id=session_id, message=message)
             db.add(row)
             db.commit()
-        logger.info("chat_history_saved", session_id=session_id)
+        logger.info("chat_history_saved", tenant_slug=tenant_slug, session_id=session_id)
+
+    def delete_user_with_sessions(self, user_id: int) -> bool:
+        """Delete a user and all related sessions explicitly."""
+        with Session(self.engine) as session:
+            user = session.get(User, user_id)
+            if not user:
+                return False
+
+            sessions = session.exec(select(ChatSession).where(ChatSession.user_id == user_id)).all()
+            for chat_session in sessions:
+                session.delete(chat_session)
+            session.delete(user)
+            session.commit()
+            logger.info("user_deleted_with_sessions", user_id=user_id, session_count=len(sessions))
+            return True
 
     def get_session_maker(self):
         """Get a session maker for creating database sessions.
