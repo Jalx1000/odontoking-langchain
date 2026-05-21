@@ -1,5 +1,6 @@
 """Sofopolis CRM tool — create/update contacts, leads, and appointment activities."""
 
+import asyncio
 import json
 import random
 from datetime import datetime, timedelta
@@ -7,9 +8,12 @@ from typing import Optional
 
 import httpx
 from langchain_core.tools import tool
+from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.logging import logger
+from app.models.chat_history_odonto import ChatHistoryOdonto
+from app.services.database import database_service
 
 _HEADERS = {
     "accept": "application/json",
@@ -370,3 +374,109 @@ async def get_citas(wa_id: str) -> str:
     except Exception as e:
         log.exception("get_citas_failed", error=str(e))
         return json.dumps({"error": str(e)})
+
+
+def _fetch_transcript(wa_id: str, max_messages: int) -> str:
+    """Read and format the last N messages from chat_histories_odonto (sync)."""
+    sid = f"{wa_id}@whatsapp.sofopolis.net"
+    with Session(database_service.engine) as db:
+        rows = db.exec(
+            select(ChatHistoryOdonto)
+            .where(ChatHistoryOdonto.session_id == sid)
+            .order_by(ChatHistoryOdonto.created_at)
+        ).all()
+
+    lines: list[str] = []
+    for r in rows[-max_messages:]:
+        try:
+            data = json.loads(r.message)
+            msg_type = data.get("type", "")
+            if msg_type == "tool":
+                continue
+            content = data.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    b.get("text", "") for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            content = str(content).strip()
+            if not content:
+                continue
+            prefix = "Paciente" if msg_type == "human" else "Agente"
+            ts = r.created_at.strftime("%d/%m/%Y %H:%M")
+            lines.append(f"[{ts}] {prefix}: {content}")
+        except (json.JSONDecodeError, AttributeError):
+            continue
+    return "\n".join(lines)
+
+
+@tool
+async def sync_transcript_to_crm(wa_id: str, max_messages: int = 50) -> str:
+    """Push the WhatsApp conversation transcript to the CRM as a note on the lead.
+
+    Reads the last N messages from the local conversation history and creates
+    a note activity on the CRM lead for this patient. Call this when the
+    conversation reaches a natural end, when an appointment is confirmed,
+    or when requested to sync the history.
+
+    Args:
+        wa_id: WhatsApp ID of the patient (e.g. '591XXXXXXXX').
+        max_messages: Maximum number of recent messages to include (default 50).
+    """
+    person_email = f"{wa_id}@whatsapp.sofopolis.net"
+    log = logger.bind(wa_id=wa_id)
+
+    transcript = await asyncio.to_thread(_fetch_transcript, wa_id, max_messages)
+    if not transcript:
+        return json.dumps({"success": False, "message": "no_messages_found"})
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            search_resp = await client.get(
+                f"{_BASE}/api/v1/contacts/persons/search",
+                params={"search": person_email, "searchFields": "emails:like"},
+                headers=_HEADERS,
+            )
+            search_resp.raise_for_status()
+            persons = search_resp.json().get("data", [])
+            if not persons:
+                return json.dumps({"success": False, "message": "person_not_found_in_crm"})
+
+            person_id = persons[0]["id"]
+            leads_resp = await client.get(
+                f"{_BASE}/api/v1/leads",
+                params={"sort": "id", "limit": 10, "person_id": str(person_id)},
+                headers=_HEADERS,
+            )
+            leads_resp.raise_for_status()
+            all_leads = leads_resp.json().get("data", [])
+            matching = [
+                ld for ld in all_leads
+                if any(
+                    (e.get("value", "")).lower() == person_email.lower()
+                    for e in (ld.get("person", {}).get("emails") or [])
+                )
+            ]
+            if not matching:
+                return json.dumps({"success": False, "message": "no_lead_found_for_patient"})
+
+            lead_id = matching[-1]["id"]
+            note_title = f"Historial WhatsApp — {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+            note_resp = await client.post(
+                f"{_BASE}/api/v1/activities",
+                json={
+                    "lead_id": lead_id,
+                    "title": note_title,
+                    "type": "note",
+                    "comment": transcript,
+                },
+                headers=_HEADERS,
+            )
+            note_resp.raise_for_status()
+            activity_id = note_resp.json().get("data", {}).get("id")
+            log.info("crm_transcript_synced", lead_id=lead_id, activity_id=activity_id)
+            return json.dumps({"success": True, "lead_id": lead_id, "activity_id": activity_id})
+
+    except Exception as e:
+        log.exception("sync_transcript_to_crm_failed", error=str(e))
+        return json.dumps({"success": False, "error": str(e)})

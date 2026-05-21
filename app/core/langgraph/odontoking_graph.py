@@ -44,7 +44,7 @@ from pydantic import SecretStr
 
 from app.core.config import settings
 from app.services.database import database_service
-from app.core.langgraph.tools.crm import get_citas, update_crm
+from app.core.langgraph.tools.crm import get_citas, sync_transcript_to_crm, update_crm
 from app.core.langgraph.tools.insurance import verify_insurance
 from app.core.langgraph.tools.odontoking import (
     get_disponibilidad,
@@ -74,6 +74,7 @@ _ODONTOKING_TOOLS = [
     verify_insurance,
     update_crm,
     get_citas,
+    sync_transcript_to_crm,
 ]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "odontoking.md")
