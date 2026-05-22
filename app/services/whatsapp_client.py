@@ -100,7 +100,7 @@ def build_interactive_payload(mensaje: str, to: str) -> Optional[dict]:
     if len(options) <= 3:
         return {
             "type": "button",
-            "body": {"text": body_text[:1024]},
+            "body": {"text": body_text[:4096]},
             "action": {
                 "buttons": [
                     {"type": "reply", "reply": {"id": f"btn_{i + 1}", "title": opt[:20]}}
@@ -112,7 +112,7 @@ def build_interactive_payload(mensaje: str, to: str) -> Optional[dict]:
     return {
         "type": "list",
         "header": {"type": "text", "text": "Seleccione una opción"},
-        "body": {"text": body_text[:1024]},
+        "body": {"text": body_text[:4096]},
         "action": {
             "button": "Ver opciones",
             "sections": [

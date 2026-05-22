@@ -8,6 +8,7 @@ from typing import (
     Optional,
     cast,
 )
+from zoneinfo import ZoneInfo
 from urllib.parse import quote_plus
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -78,15 +79,21 @@ _ODONTOKING_TOOLS = [
 ]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "odontoking.md")
+_TZ_BOLIVIA = ZoneInfo("America/La_Paz")
+_DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+_MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+             "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
 
 with open(_PROMPT_FILE, "r") as _f:
     _PROMPT_TEMPLATE = _f.read()
 
 
 def _load_odontoking_prompt(wa_id: str) -> str:
-    """Render the odontoking system prompt with current datetime and wa_id context."""
-    tz_aware = datetime.now()
-    current_datetime = tz_aware.strftime("%A %d %B %Y %H:%M")
+    """Render the odontoking system prompt with Bolivia local datetime and wa_id context."""
+    now = datetime.now(_TZ_BOLIVIA)
+    day_name = _DIAS_ES[now.weekday()]
+    month_name = _MESES_ES[now.month - 1]
+    current_datetime = f"{day_name} {now.day:02d} {month_name} {now.year} {now.strftime('%H:%M')}"
     return _PROMPT_TEMPLATE.format(current_datetime=current_datetime) + f"\n\n# Contexto\nwa_id del paciente actual: {wa_id}"
 
 
@@ -119,7 +126,7 @@ class OdontokingAgent:
         self._llm = ChatOpenAI(
             model=settings.ODONTOKING_LLM_MODEL,
             api_key=SecretStr(settings.OPENAI_API_KEY),
-            max_tokens=2000,  # pyright: ignore[reportCallIssue]
+            max_tokens=4096,  # pyright: ignore[reportCallIssue]
             temperature=0.2,
         ).bind_tools(_ODONTOKING_TOOLS)
         self.tools_by_name = {t.name: t for t in _ODONTOKING_TOOLS}

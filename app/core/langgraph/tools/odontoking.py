@@ -1,12 +1,24 @@
 """Odontoking API tools — services, specialties, doctors, schedules, availability."""
 
 import json
+from datetime import datetime as _dt
 
 import httpx
 from langchain_core.tools import tool
 
 from app.core.config import settings
 from app.core.logging import logger
+
+_DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+
+def _add_day_name(date_str: str) -> str:
+    """Return 'viernes 22/05' style label from a YYYY-MM-DD string."""
+    try:
+        d = _dt.strptime(date_str, "%Y-%m-%d")
+        return f"{_DIAS_ES[d.weekday()]} {d.day:02d}/{d.month:02d}"
+    except Exception:
+        return date_str
 
 _HEADERS = {
     "accept": "application/json",
@@ -109,7 +121,11 @@ async def get_doctor_schedule(id_doctor: int) -> str:
                     "doctor_id": d["id"],
                     "name": d["name"],
                     "availability": [
-                        {"date": slot["date"], "start_time": slot["start_time"]}
+                        {
+                            "date": slot["date"],
+                            "day_label": _add_day_name(slot["date"]),
+                            "start_time": slot["start_time"],
+                        }
                         for slot in (d.get("availability") or [])
                     ],
                 }
