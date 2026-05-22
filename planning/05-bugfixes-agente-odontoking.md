@@ -65,10 +65,26 @@ podía quedar incompleto, causando error de parseo y respuesta genérica de erro
 
 ---
 
+---
+
+### Tests corregidos (Railway CI fallaba con 3 tests)
+
+| Test | Motivo del fallo | Fix |
+|------|-----------------|-----|
+| `test_broker.py::test_publish_calls_xadd` | Esperaba campos `entry["wa_id"]` y `entry["payload"]` separados; el broker usa `{"data": json}` flat | Actualizado a `json.loads(entry["data"])["wa_id"]` |
+| `test_broker.py::test_successful_message_is_acked` | Mock de `xreadgroup` usaba formato `{"wa_id":..., "payload":...}` antiguo | Mock actualizado a `{"data": '{"wa_id":...}'}` |
+| `test_whatsapp_client.py::test_body_text_truncated_to_1024` | Nuestro cambio 1024→4096 rompió el assert | Test renombrado a `test_body_text_truncated_to_4096`, body de prueba subido a 5000 chars |
+| `test_broker.py::test_failed_message_increments_retry_counter` | Mock con formato viejo (no fallaba pero era inconsistente) | Actualizado a formato `{"data": ...}` |
+| `test_broker.py::test_message_moves_to_dlq_after_max_retries` | Ídem | Ídem |
+
+---
+
 ## Archivos modificados
 
 ```
-app/core/langgraph/odontoking_graph.py   — timezone Bolivia + formato fecha ES + max_tokens
-app/core/langgraph/tools/odontoking.py  — day_label en get_doctor_schedule
-app/services/whatsapp_client.py         — body_text limit 1024 → 4096
+app/core/langgraph/odontoking_graph.py        — timezone Bolivia + formato fecha ES + max_tokens
+app/core/langgraph/tools/odontoking.py       — day_label en get_doctor_schedule
+app/services/whatsapp_client.py              — body_text limit 1024 → 4096
+tests/unit/test_broker.py                   — mocks actualizados al wire format actual
+tests/unit/test_whatsapp_client.py          — límite actualizado a 4096
 ```

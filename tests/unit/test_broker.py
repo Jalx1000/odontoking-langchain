@@ -67,8 +67,10 @@ class TestRedisStreamBroker:
         call_args = redis.xadd.call_args
         assert call_args[0][0] == "wa:odontoking"
         entry = call_args[0][1]
-        assert entry["wa_id"] == "591700000001"
-        assert "hello" in entry["payload"]
+        # Wire format: flat JSON under "data" key
+        data = json.loads(entry["data"])
+        assert data["wa_id"] == "591700000001"
+        assert data["text"] == "hello"
 
     @pytest.mark.asyncio
     async def test_publish_raises_on_redis_failure(self):
@@ -97,9 +99,10 @@ class TestRedisStreamBroker:
     @pytest.mark.asyncio
     async def test_successful_message_is_acked(self):
         redis = self._make_redis()
+        # Wire format: single "data" field containing the full JSON payload
         redis.xreadgroup = AsyncMock(
             side_effect=[
-                [("wa:odontoking", [("1234-0", {"wa_id": "591700000001", "payload": '{"text":"hi"}'})])],
+                [("wa:odontoking", [("1234-0", {"data": '{"wa_id":"591700000001","text":"hi"}'})])],
                 [],  # second call returns empty to stop loop
             ]
         )
@@ -125,7 +128,7 @@ class TestRedisStreamBroker:
         redis.incr = AsyncMock(return_value=1)  # first failure
         redis.xreadgroup = AsyncMock(
             side_effect=[
-                [("wa:odontoking", [("1234-0", {"wa_id": "591700000001", "payload": '{"text":"fail"}'})])],
+                [("wa:odontoking", [("1234-0", {"data": '{"wa_id":"591700000001","text":"fail"}'})])],
                 [],
             ]
         )
@@ -149,7 +152,7 @@ class TestRedisStreamBroker:
         redis.incr = AsyncMock(return_value=3)  # MAX_RETRIES reached
         redis.xreadgroup = AsyncMock(
             side_effect=[
-                [("wa:odontoking", [("1234-0", {"wa_id": "591700000001", "payload": '{"text":"fail"}'})])],
+                [("wa:odontoking", [("1234-0", {"data": '{"wa_id":"591700000001","text":"fail"}'})])],
                 [],
             ]
         )

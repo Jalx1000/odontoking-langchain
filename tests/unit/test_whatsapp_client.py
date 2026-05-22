@@ -71,11 +71,11 @@ class TestBuildInteractivePayload:
         result = self._build(msg)
         assert "¿Cuál seguro tiene?" in result["body"]["text"]
 
-    def test_body_text_truncated_to_1024(self):
-        long_body = "X" * 2000
+    def test_body_text_truncated_to_4096(self):
+        long_body = "X" * 5000
         msg = f"{long_body}\n1) Option1\n2) Option2"
         result = self._build(msg)
-        assert len(result["body"]["text"]) <= 1024
+        assert len(result["body"]["text"]) <= 4096
 
 
 class TestSendTextMessage:
