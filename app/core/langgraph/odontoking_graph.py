@@ -22,7 +22,7 @@ from langchain_core.messages import (
 from langchain_core.runnables.config import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.errors import GraphInterrupt
+from langgraph.errors import GraphInterrupt, GraphRecursionError
 from langgraph.graph import (
     END,
     StateGraph,
@@ -265,6 +265,7 @@ class OdontokingAgent:
             "configurable": {"thread_id": wa_id},
             "callbacks": callbacks,
             "metadata": {"wa_id": wa_id},
+            "recursion_limit": 50,
         }
 
         from app.services.memory import memory_service
@@ -334,6 +335,14 @@ class OdontokingAgent:
             state = await graph.aget_state(config)
             interrupt_value = state.tasks[0].interrupts[0].value if state.tasks else "Aguarde un momento."
             return str(interrupt_value)
+        except GraphRecursionError:
+            logger.warning("odontoking_recursion_limit_hit", wa_id=wa_id)
+            try:
+                await self.clear_history(wa_id)
+                logger.info("odontoking_stuck_state_cleared", wa_id=wa_id)
+            except Exception as clear_err:
+                logger.warning("odontoking_clear_history_failed", wa_id=wa_id, error=str(clear_err))
+            return "Lo siento, ocurrió un error procesando su solicitud. Por favor, intente nuevamente con su consulta."
         except Exception as e:
             logger.exception("odontoking_get_response_failed", wa_id=wa_id, error=str(e))
             raise
