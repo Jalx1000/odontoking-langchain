@@ -24,7 +24,18 @@
       "Bash(cp -r /home/jal/09.platzi/05.agent-template /home/jal/09.platzi/06.odontoking-agent)",
       "Bash(rm -rf /home/jal/09.platzi/06.odontoking-agent/.git)",
       "Bash(curl *)",
-      "mcp__railway__environment_status"
+      "mcp__railway__environment_status",
+      "Bash(git -C /home/jal/09.platzi/03.agent-production status --short)",
+      "Bash(git -C /home/jal/09.platzi/03.agent-production log --oneline -3)",
+      "Bash(git -C /home/jal/09.platzi/03.agent-production log --oneline origin/master..HEAD)",
+      "Bash(git -C /home/jal/09.platzi/03.agent-production log --oneline -5)",
+      "Bash(git -C /home/jal/09.platzi/03.agent-production log prod/master..HEAD --oneline)",
+      "Bash(git -C /home/jal/09.platzi/03.agent-production fetch prod --dry-run)",
+      "mcp__railway__list_deployments",
+      "Bash(docker exec 03agent-production-db-1 *)",
+      "Skill(use-railway)",
+      "Bash(sudo apt-get install -y jq)",
+      "mcp__railway__list_services"
     ]
   }
 }

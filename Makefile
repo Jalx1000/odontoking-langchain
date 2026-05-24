@@ -33,10 +33,29 @@ install:
 	uv run pre-commit install
 
 # ---------------------------------------------------------------------------
+# Infrastructure (DB + Valkey + RabbitMQ sin la app)
+# ---------------------------------------------------------------------------
+infra-up:
+	$(call load_env_file)
+	@APP_ENV=$(ENV) $(DOCKER_COMPOSE) --env-file .env.$(ENV) up -d db-dev valkey rabbitmq
+
+infra-down:
+	$(call load_env_file)
+	@APP_ENV=$(ENV) $(DOCKER_COMPOSE) --env-file .env.$(ENV) stop db-dev valkey rabbitmq
+
+infra-logs:
+	$(call load_env_file)
+	@APP_ENV=$(ENV) $(DOCKER_COMPOSE) --env-file .env.$(ENV) logs -f db-dev valkey rabbitmq
+
+# ---------------------------------------------------------------------------
 # Server
 # ---------------------------------------------------------------------------
-dev:
-	@$(call run_with_env,uv run uvicorn app.main:app --reload --port 8000)
+dev: infra-up
+	@$(call run_with_env,uv run uvicorn app.main:app --reload --port 8000 & uv run langgraph dev --port 8123; wait)
+
+dev-logs:
+	$(call load_env_file)
+	@APP_ENV=$(ENV) $(DOCKER_COMPOSE) --env-file .env.$(ENV) logs -f db-dev valkey rabbitmq
 
 staging:
 	@$(call run_with_env,$(MAKE) _serve ENV=staging)

@@ -28,8 +28,16 @@ _BASE = settings.ODONTOKING_API_URL
 
 
 @tool
-async def get_services() -> str:
-    """Get all available dental services/products from Odontoking clinic."""
+async def get_services(keyword: str = "") -> str:
+    """Get available dental services/products from Odontoking clinic.
+
+    Args:
+        keyword: Optional word to filter services by name (e.g. "Limpieza", "Ortodoncia", "Blanqueamiento").
+                 Infer it from what the patient needs. Leave empty to get all services.
+    """
+    # Sanitize keyword: strip whitespace, cap length to avoid abuse
+    clean_keyword = keyword.strip()[:100] if isinstance(keyword, str) else ""
+
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
@@ -38,16 +46,47 @@ async def get_services() -> str:
                 headers=_HEADERS,
             )
             resp.raise_for_status()
-            data = resp.json().get("data", [])
-            filtered = [{"id": item["id"], "name": item["name"]} for item in data]
-            logger.info("odontoking_services_fetched", count=len(filtered))
-            return json.dumps({"data": filtered}, ensure_ascii=False)
+
+            payload = resp.json()
+            if not isinstance(payload, dict):
+                logger.warning("get_services_unexpected_response_type", type=type(payload).__name__)
+                return json.dumps({"data": [], "warning": "unexpected response format"}, ensure_ascii=False)
+
+            raw_data = payload.get("data", [])
+            if not isinstance(raw_data, list):
+                logger.warning("get_services_data_not_list", type=type(raw_data).__name__)
+                return json.dumps({"data": [], "warning": "unexpected data format"}, ensure_ascii=False)
+
+            all_services = [
+                {"id": item["id"], "name": item["name"]}
+                for item in raw_data
+                if isinstance(item, dict) and "id" in item and "name" in item
+            ]
+
+            if clean_keyword:
+                keyword_lower = clean_keyword.lower()
+                matched = [s for s in all_services if keyword_lower in s["name"].lower()]
+                result = matched if matched else all_services
+                if not matched:
+                    logger.warning("get_services_keyword_no_match_fallback", keyword=clean_keyword, total=len(all_services))
+            else:
+                result = all_services
+
+            logger.info("get_services_fetched", total=len(all_services), returned=len(result), keyword=clean_keyword)
+            return json.dumps({"data": result}, ensure_ascii=False)
+
+    except httpx.TimeoutException:
+        logger.exception("get_services_timeout")
+        return json.dumps({"error": "service unavailable: request timed out"})
+    except httpx.ConnectError:
+        logger.exception("get_services_connection_error")
+        return json.dumps({"error": "service unavailable: could not connect to API"})
     except httpx.HTTPStatusError as e:
-        logger.exception("get_services_http_error", status=e.response.status_code, error=str(e))
+        logger.exception("get_services_http_error", status=e.response.status_code)
         return json.dumps({"error": f"API returned {e.response.status_code}", "status": e.response.status_code})
     except Exception as e:
         logger.exception("get_services_failed", error=str(e))
-        return json.dumps({"error": str(e)})
+        return json.dumps({"error": "unexpected error fetching services"})
 
 
 @tool
