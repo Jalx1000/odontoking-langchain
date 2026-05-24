@@ -29,36 +29,18 @@ class LLMRegistry:
 
     LLMS: List[Dict[str, Any]] = [
         {
-            "name": "gpt-5-mini",
+            "name": "gpt-4o-mini",
             "llm": ChatOpenAI(
-                model="gpt-5-mini",
+                model="gpt-4o-mini",
                 api_key=_API_KEY,
                 model_kwargs=_TOKEN_LIMIT,
-                reasoning={"effort": "low"},
+                top_p=0.95 if settings.ENVIRONMENT == Environment.PRODUCTION else 0.8,
             ),
         },
         {
-            "name": "gpt-5.4",
+            "name": "gpt-4o",
             "llm": ChatOpenAI(
-                model="gpt-5",
-                api_key=_API_KEY,
-                model_kwargs=_TOKEN_LIMIT,
-                reasoning={"effort": "medium"},
-            ),
-        },
-        {
-            "name": "gpt-5.4-nano",
-            "llm": ChatOpenAI(
-                model="gpt-5.4-nano",
-                api_key=_API_KEY,
-                model_kwargs=_TOKEN_LIMIT,
-                reasoning={"effort": "low"},
-            ),
-        },
-        {
-            "name": "gpt-5",
-            "llm": ChatOpenAI(
-                model="gpt-5",
+                model="gpt-4o",
                 api_key=_API_KEY,
                 model_kwargs=_TOKEN_LIMIT,
                 top_p=0.95 if settings.ENVIRONMENT == Environment.PRODUCTION else 0.8,

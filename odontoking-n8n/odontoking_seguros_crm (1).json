@@ -81,7 +81,7 @@
             },
             {
               "name": "Authorization",
-              "value": "Bearer 4|CTkyF2jFU83aCKeKxvEkZ3VIo8uCVQHYp2Q08MABc21bbe76"
+              "value": "Bearer 5|L19DkHIgkuYn6YUV3tKDJne0JhyULwkWujrbzFALca574730"
             }
           ]
         },
@@ -115,7 +115,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const id = $input.first().json.correo\nconst response = await this.helpers.httpRequest({\n  method: 'GET',\n  url: 'https://odontoking.sofopolis.com/api/v1/contacts/persons/search',\n  qs: {\n    search: id,\n    searchFields: 'emails:like'\n  },\n  headers: {\n    accept: 'application/json',\n    Authorization: 'Bearer 4|CTkyF2jFU83aCKeKxvEkZ3VIo8uCVQHYp2Q08MABc21bbe76'\n  },\n  json: true\n});\n\nreturn [{ json: response }];"
+        "jsCode": "const id = $input.first().json.correo\nconst response = await this.helpers.httpRequest({\n  method: 'GET',\n  url: 'https://odontoking.sofopolis.com/api/v1/contacts/persons/search',\n  qs: {\n    search: id,\n    searchFields: 'emails:like'\n  },\n  headers: {\n    accept: 'application/json',\n    Authorization: 'Bearer 5|L19DkHIgkuYn6YUV3tKDJne0JhyULwkWujrbzFALca574730'\n  },\n  json: true\n});\n\nreturn [{ json: response }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,

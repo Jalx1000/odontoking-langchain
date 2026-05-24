@@ -1,7 +1,8 @@
 """Odontoking API tools — services, specialties, doctors, schedules, availability."""
 
+import asyncio
 import json
-from datetime import datetime as _dt
+from datetime import datetime as _dt, timedelta
 
 import httpx
 from langchain_core.tools import tool
@@ -58,7 +59,11 @@ async def get_services(keyword: str = "") -> str:
                 return json.dumps({"data": [], "warning": "unexpected data format"}, ensure_ascii=False)
 
             all_services = [
-                {"id": item["id"], "name": item["name"]}
+                {
+                    "id": item["id"],
+                    "name": item["name"],
+                    "duration_minutes": item.get("duration_minutes"),
+                }
                 for item in raw_data
                 if isinstance(item, dict) and "id" in item and "name" in item
             ]
@@ -139,42 +144,55 @@ async def get_doctors() -> str:
         return json.dumps({"error": str(e)})
 
 
+async def _fetch_disponibilidad_for_date(client: httpx.AsyncClient, doctor_id: int, date_str: str) -> list:
+    """Fetch available slots for one doctor on one date. Returns [] on any error."""
+    try:
+        resp = await client.get(
+            f"{_BASE}/api/disponibilidad",
+            params={"doctorId": doctor_id, "date": date_str},
+            headers=_HEADERS,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, list):
+            return []
+        return [
+            {
+                "date": date_str,
+                "day_label": _add_day_name(date_str),
+                "start_time": slot.get("startTime"),
+                "end_time": slot.get("endTime"),
+            }
+            for slot in data
+            if slot.get("startTime") and slot.get("endTime")
+        ]
+    except Exception:
+        return []
+
+
 @tool
 async def get_doctor_schedule(id_doctor: int) -> str:
-    """Get the real availability slots for a specific doctor by their ID.
+    """Get real available appointment slots for a doctor over the next 7 days.
+
+    Fetches actual free slots (already excludes reserved appointments) from
+    the CRM. Each slot includes start_time and end_time.
 
     Args:
         id_doctor: The numeric ID of the doctor from get_doctors().
     """
+    today = _dt.now().date()
+    dates = [(today + timedelta(days=i)).isoformat() for i in range(7)]
+
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{_BASE}/api/doctors",
-                params={"page": 1, "limit": 100},
-                headers={"accept": "application/json"},
+            results = await asyncio.gather(
+                *[_fetch_disponibilidad_for_date(client, id_doctor, d) for d in dates]
             )
-            resp.raise_for_status()
-            doctors = resp.json().get("data", [])
-            matches = [
-                {
-                    "doctor_id": d["id"],
-                    "name": d["name"],
-                    "availability": [
-                        {
-                            "date": slot["date"],
-                            "day_label": _add_day_name(slot["date"]),
-                            "start_time": slot["start_time"],
-                        }
-                        for slot in (d.get("availability") or [])
-                    ],
-                }
-                for d in doctors
-                if d["id"] == id_doctor
-            ]
-            if not matches:
-                return json.dumps({"error": f"doctor with id {id_doctor} not found"})
-            logger.info("odontoking_doctor_schedule_fetched", id_doctor=id_doctor)
-            return json.dumps(matches[0], ensure_ascii=False)
+
+        all_slots = [slot for day_slots in results for slot in day_slots]
+        logger.info("odontoking_doctor_schedule_fetched", id_doctor=id_doctor, total_slots=len(all_slots))
+        return json.dumps({"doctor_id": id_doctor, "availability": all_slots}, ensure_ascii=False)
+
     except Exception as e:
         logger.exception("get_doctor_schedule_failed", id_doctor=id_doctor, error=str(e))
         return json.dumps({"error": str(e)})

@@ -27,67 +27,41 @@ def _is_transient(exc: BaseException) -> bool:
     retry=retry_if_exception(_is_transient),
     reraise=True,
 )
-async def _search_person(client: httpx.AsyncClient, person_email: str) -> list:
-    """Search for a person in the CRM by email with retry on 5xx."""
-    search_resp = await client.get(
-        f"{_BASE}/api/v1/contacts/persons/search",
-        params={"search": person_email, "searchFields": "emails:like"},
+async def _call_verify(client: httpx.AsyncClient, ci_paciente: str, seguro_paciente: str) -> dict:
+    resp = await client.get(
+        f"{_BASE}/api/v1/insurance/verify",
+        params={"ci_paciente": ci_paciente, "seguro_paciente": seguro_paciente},
         headers=_HEADERS,
     )
-    search_resp.raise_for_status()
-    return search_resp.json().get("data", [])
-
-
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=8),
-    retry=retry_if_exception(_is_transient),
-    reraise=True,
-)
-async def _call_verify(client: httpx.AsyncClient, person_id: int, carnet_identidad: str, empresa_seguro: str) -> dict:
-    verify_resp = await client.post(
-        f"{_BASE}/api/insurance/verify",
-        json={"person_id": person_id, "ci": carnet_identidad, "insurance_type": empresa_seguro},
-        headers=_HEADERS,
-    )
-    verify_resp.raise_for_status()
-    return verify_resp.json()
+    resp.raise_for_status()
+    return resp.json()
 
 
 @tool
-async def verify_insurance(empresa_seguro: str, carnet_identidad: str, wa_id: str) -> str:
-    """Verify a patient's insurance coverage at Odontoking clinic.
+async def verify_insurance(ci_paciente: str, seguro_paciente: str) -> str:
+    """Verify if a patient has active dental insurance at Odontoking clinic.
+
+    Ask the patient for their cedula and insurance company name before calling this tool.
 
     Args:
-        empresa_seguro: Exact insurance company name. Must be one of:
-            'Alianza', 'Nacional Seguro', or 'Membresía Odontoking'.
-        carnet_identidad: Patient's ID card number (digits and dashes only, no spaces).
-        wa_id: WhatsApp ID of the contact (used to look up the person in CRM).
+        ci_paciente: Patient's national ID (cedula), digits only (e.g. '0912345678').
+        seguro_paciente: Insurance company name (e.g. 'Alianza', 'Nacional Vida', 'Membresía Odontoking').
     """
     try:
-        person_email = f"{wa_id}@whatsapp.sofopolis.net"
         async with httpx.AsyncClient(timeout=15) as client:
-            persons = await _search_person(client, person_email)
-
-            if not persons:
-                logger.warning("insurance_person_not_found", wa_id=wa_id)
-                return json.dumps({"verified": False, "reason": "person not found in CRM"})
-
-            person_id = persons[0]["id"]
-
-            result = await _call_verify(client, person_id, carnet_identidad, empresa_seguro)
-            logger.info("insurance_verified", wa_id=wa_id, empresa=empresa_seguro, person_id=person_id)
+            result = await _call_verify(client, ci_paciente, seguro_paciente)
+            logger.info("insurance_verified", ci_paciente=ci_paciente, seguro=seguro_paciente)
             return json.dumps(result, ensure_ascii=False)
 
     except httpx.HTTPStatusError as e:
-        logger.exception("verify_insurance_failed", wa_id=wa_id, error=str(e))
+        logger.exception("verify_insurance_http_error", status=e.response.status_code)
         if e.response.status_code >= 500:
             return json.dumps({
-                "verified": False,
+                "has_insurance": False,
                 "error": "El servicio de verificación no está disponible en este momento. Inténtelo de nuevo en unos minutos.",
                 "retry": True,
             })
-        return json.dumps({"verified": False, "error": str(e)})
+        return json.dumps({"has_insurance": False, "error": str(e)})
     except Exception as e:
-        logger.exception("verify_insurance_failed", wa_id=wa_id, error=str(e))
-        return json.dumps({"verified": False, "error": str(e)})
+        logger.exception("verify_insurance_failed", error=str(e))
+        return json.dumps({"has_insurance": False, "error": str(e)})

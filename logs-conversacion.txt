@@ -1,0 +1,69 @@
+Turn 72
+Inputs
+human
+
+
+Dr/a. Liliana Sandoval
+Outputs
+Messages
+messages
+61
+ai
+
+get_doctor_schedule call_3sLYfDlO24dwjYfpPOonAcCL
+
+id_doctor: 19
+YAML
+tool
+
+
+get_doctor_schedule call_3sLYfDlO24dwjYfpPOonAcCL
+
+doctor_id: 19
+name: Liliana Sandoval
+availability:
+  - date: 2026-05-25
+    day_label: lunes 25/05
+    start_time: 16:00:00
+  - date: 2026-05-25
+    day_label: lunes 25/05
+    start_time: 17:00:00
+  - date: 2026-05-26
+    day_label: martes 26/05
+    start_time: 14:00:00
+  - date: 2026-05-26
+    day_label: martes 26/05
+    start_time: 15:00:00
+  - date: 2026-05-26
+    day_label: martes 26/05
+    start_time: 16:00:00
+  - date: 2026-05-26
+    day_label: martes 26/05
+    start_time: 17:00:00
+  - date: 2026-05-27
+YAML
+
+RAW
+ai
+
+
+{
+  "mensaje": "Los horarios disponibles de la Dra. Liliana Sandoval son:\n\n**Lunes 25/05**\n1) 16:00 - 17:00\n2) 17:00 - 18:00\n\n**Martes 26/05**\n3) 14:00 - 15:00\n4) 15:00 - 16:00\n5) 16:00 - 17:00\n6) 17:00 - 18:00\n\n**Miércoles 27/05**\n7) 14:00 - 15:00\n8) 15:00 - 16:00\n9) 16:00 - 17:00\n10) 17:00 - 18:00\n\n**Jueves 28/05**\n11) 14:00 - 15:00\n12) 15:00 - 16:00\n13) 16:00 - 17:00\n14) 17:00 - 18:00\n\n¿A qué hora le gustaría agendar su cita?"
+}
+
+Turn 73
+Inputs
+human
+
+
+16:00 - 17:00
+Outputs
+Messages
+messages
+63
+ai
+
+
+{
+  "mensaje": "Antes de continuar, por favor confirme si los siguientes datos son correctos ✅:\n\n👤 Paciente: ADENILZA FLORES (55)\n🦷 Especialidad: General\n🛠️ Servicio: Limpieza\n📅 Fecha: 25/05/2026\n⏰ Hora: 16:00\n\nResponda con \"SI\" para confirmar o indique qué dato desea corregir ✍️"
+}

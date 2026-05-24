@@ -35,7 +35,11 @@
       "Bash(docker exec 03agent-production-db-1 *)",
       "Skill(use-railway)",
       "Bash(sudo apt-get install -y jq)",
-      "mcp__railway__list_services"
+      "mcp__railway__list_services",
+      "Bash(RAILWAY_CALLER=\"skill:use-railway@1.2.1\" RAILWAY_AGENT_SESSION=\"railway-skill-$\\(date +%s\\)-$$\" railway link --project df51b2f5-e9d7-4a31-aad1-0291a076d303 --environment dev)",
+      "Bash(railway service *)",
+      "Bash(RAILWAY_CALLER=\"skill:use-railway@1.2.1\" RAILWAY_AGENT_SESSION=\"railway-skill-$\\(date +%s\\)-$$\" railway link --project df51b2f5-e9d7-4a31-aad1-0291a076d303 --environment production)",
+      "mcp__railway__get_logs"
     ]
   }
 }
