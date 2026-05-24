@@ -173,9 +173,18 @@ class TestGetDoctorSchedule:
         raw = {
             "id": 5,
             "name": "Dra. López",
-            "availability": [
-                {"date": "2026-05-15", "start_time": "09:00", "end_time": "09:30"},
-                {"date": "2026-05-16", "start_time": "10:00", "end_time": "10:30"},
+            "schedule": [
+                {
+                    "date": "2026-05-15",
+                    "slots": [
+                        {"start_time": "09:00", "end_time": "09:30", "status": "available"},
+                        {"start_time": "09:30", "end_time": "10:00", "status": "busy"},
+                    ],
+                },
+                {
+                    "date": "2026-05-16",
+                    "slots": [{"start_time": "10:00", "end_time": "10:30", "status": "available"}],
+                },
             ],
         }
         resp = _make_response(200, raw)
@@ -216,8 +225,18 @@ class TestGetDoctorSchedule:
         raw = {
             "id": 3,
             "name": "Dr. X",
-            "availability": [
-                {"date": "2026-05-20", "startTime": "08:00", "endTime": "09:00", "internal_id": 42}
+            "schedule": [
+                {
+                    "date": "2026-05-20",
+                    "slots": [
+                        {
+                            "startTime": "08:00",
+                            "endTime": "09:00",
+                            "internal_id": 42,
+                            "status": "available",
+                        }
+                    ],
+                }
             ],
         }
         resp = _make_response(200, raw)

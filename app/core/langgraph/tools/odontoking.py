@@ -186,20 +186,35 @@ async def get_doctor_schedule(id_doctor: int) -> str:
             logger.warning("odontoking_doctor_not_found", id_doctor=id_doctor)
             return json.dumps({"error": "doctor not found"}, ensure_ascii=False)
 
-        availability = doctor.get("availability", [])
-        if not isinstance(availability, list):
-            availability = []
+        schedule = doctor.get("schedule", [])
+        if not isinstance(schedule, list):
+            schedule = []
 
-        all_slots = [
-            {
-                "date": slot.get("date"),
-                "day_label": _add_day_name(slot.get("date")) if slot.get("date") else None,
-                "start_time": slot.get("startTime") or slot.get("start_time"),
-                "end_time": slot.get("endTime") or slot.get("end_time"),
-            }
-            for slot in availability
-            if isinstance(slot, dict) and (slot.get("startTime") or slot.get("start_time"))
-        ]
+        all_slots = []
+        for day in schedule:
+            if not isinstance(day, dict):
+                continue
+            date = day.get("date")
+            slots = day.get("slots", [])
+            if not isinstance(slots, list):
+                continue
+            for slot in slots:
+                if not isinstance(slot, dict):
+                    continue
+                if slot.get("status") not in (None, "available"):
+                    continue
+                start_time = slot.get("startTime") or slot.get("start_time")
+                end_time = slot.get("endTime") or slot.get("end_time")
+                if not start_time or not end_time:
+                    continue
+                all_slots.append(
+                    {
+                        "date": date,
+                        "day_label": _add_day_name(date) if date else None,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                    }
+                )
 
         logger.info(
             "odontoking_doctor_schedule_fetched",
