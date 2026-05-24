@@ -167,21 +167,16 @@ class TestGetDoctors:
 
 class TestGetDoctorSchedule:
     @pytest.mark.asyncio
-    async def test_returns_availability_for_matching_doctor(self):
+    async def test_calls_doctor_detail_endpoint_and_returns_availability(self):
         from app.core.langgraph.tools.odontoking import get_doctor_schedule
 
         raw = {
-            "data": [
-                {
-                    "id": 5,
-                    "name": "Dra. López",
-                    "availability": [
-                        {"date": "2026-05-15", "start_time": "09:00"},
-                        {"date": "2026-05-16", "start_time": "10:00"},
-                    ],
-                },
-                {"id": 7, "name": "Dr. Otro", "availability": []},
-            ]
+            "id": 5,
+            "name": "Dra. López",
+            "availability": [
+                {"date": "2026-05-15", "start_time": "09:00", "end_time": "09:30"},
+                {"date": "2026-05-16", "start_time": "10:00", "end_time": "10:30"},
+            ],
         }
         resp = _make_response(200, raw)
 
@@ -194,12 +189,17 @@ class TestGetDoctorSchedule:
             assert result["doctor_id"] == 5
             assert result["name"] == "Dra. López"
             assert len(result["availability"]) == 2
+            call_url = client.get.call_args[0][0]
+            call_headers = client.get.call_args[1]["headers"]
+            assert call_url.endswith("/api/doctors/5")
+            assert call_headers["accept"] == "application/json"
+            assert call_headers["X-CSRF-TOKEN"] == ""
 
     @pytest.mark.asyncio
     async def test_returns_error_when_doctor_not_found(self):
         from app.core.langgraph.tools.odontoking import get_doctor_schedule
 
-        resp = _make_response(200, {"data": [{"id": 1, "name": "Dr. A", "availability": []}]})
+        resp = _make_response(404, {"message": "Not found"})
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
@@ -214,15 +214,11 @@ class TestGetDoctorSchedule:
         from app.core.langgraph.tools.odontoking import get_doctor_schedule
 
         raw = {
-            "data": [
-                {
-                    "id": 3,
-                    "name": "Dr. X",
-                    "availability": [
-                        {"date": "2026-05-20", "start_time": "08:00", "end_time": "09:00", "internal_id": 42}
-                    ],
-                }
-            ]
+            "id": 3,
+            "name": "Dr. X",
+            "availability": [
+                {"date": "2026-05-20", "startTime": "08:00", "endTime": "09:00", "internal_id": 42}
+            ],
         }
         resp = _make_response(200, raw)
 
@@ -235,7 +231,7 @@ class TestGetDoctorSchedule:
             slot = result["availability"][0]
             assert "date" in slot
             assert "start_time" in slot
-            assert "end_time" not in slot
+            assert "end_time" in slot
             assert "internal_id" not in slot
 
 

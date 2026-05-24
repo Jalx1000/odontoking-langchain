@@ -1,8 +1,7 @@
 """Odontoking API tools — services, specialties, doctors, schedules, availability."""
 
-import asyncio
 import json
-from datetime import datetime as _dt, timedelta
+from datetime import datetime as _dt
 
 import httpx
 from langchain_core.tools import tool
@@ -24,6 +23,10 @@ def _add_day_name(date_str: str) -> str:
 _HEADERS = {
     "accept": "application/json",
     "Authorization": f"Bearer {settings.ODONTOKING_API_TOKEN}",
+}
+_DOCTOR_DETAIL_HEADERS = {
+    "accept": "application/json",
+    "X-CSRF-TOKEN": "",
 }
 _BASE = settings.ODONTOKING_API_URL
 
@@ -144,54 +147,73 @@ async def get_doctors() -> str:
         return json.dumps({"error": str(e)})
 
 
-async def _fetch_disponibilidad_for_date(client: httpx.AsyncClient, doctor_id: int, date_str: str) -> list:
-    """Fetch available slots for one doctor on one date. Returns [] on any error."""
+async def _fetch_doctor_detail(client: httpx.AsyncClient, doctor_id: int) -> dict | None:
+    """Fetch one doctor's detail payload. Returns None on any error."""
     try:
         resp = await client.get(
-            f"{_BASE}/api/doctors",
-            params={"doctorId": doctor_id},
-            headers=_HEADERS,
+            f"{_BASE}/api/doctors/{doctor_id}",
+            headers=_DOCTOR_DETAIL_HEADERS,
         )
         resp.raise_for_status()
-        data = resp.json()
-        if not isinstance(data, list):
-            return []
-        return [
-            {
-                "date": date_str,
-                "day_label": _add_day_name(date_str),
-                "start_time": slot.get("startTime"),
-                "end_time": slot.get("endTime"),
-            }
-            for slot in data
-            if slot.get("startTime") and slot.get("endTime")
-        ]
+        payload = resp.json()
+        if isinstance(payload, dict):
+            if isinstance(payload.get("data"), dict):
+                return payload["data"]
+            return payload
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict) and item.get("id") == doctor_id:
+                    return item
+        return None
     except Exception:
-        return []
+        return None
 
 
 @tool
 async def get_doctor_schedule(id_doctor: int) -> str:
-    """Get real available appointment slots for a doctor over the next 7 days.
+    """Get real available appointment slots for a doctor.
 
-    Fetches actual free slots (already excludes reserved appointments) from
-    the CRM. Each slot includes start_time and end_time.
+    Fetches the doctor's detail endpoint and normalizes its availability slots.
 
     Args:
         id_doctor: The numeric ID of the doctor from get_doctors().
     """
-    today = _dt.now().date()
-    dates = [(today + timedelta(days=i)).isoformat() for i in range(7)]
-
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            results = await asyncio.gather(
-                *[_fetch_disponibilidad_for_date(client, id_doctor, d) for d in dates]
-            )
+            doctor = await _fetch_doctor_detail(client, id_doctor)
 
-        all_slots = [slot for day_slots in results for slot in day_slots]
-        logger.info("odontoking_doctor_schedule_fetched", id_doctor=id_doctor, total_slots=len(all_slots))
-        return json.dumps({"doctor_id": id_doctor, "availability": all_slots}, ensure_ascii=False)
+        if not isinstance(doctor, dict):
+            logger.warning("odontoking_doctor_not_found", id_doctor=id_doctor)
+            return json.dumps({"error": "doctor not found"}, ensure_ascii=False)
+
+        availability = doctor.get("availability", [])
+        if not isinstance(availability, list):
+            availability = []
+
+        all_slots = [
+            {
+                "date": slot.get("date"),
+                "day_label": _add_day_name(slot.get("date")) if slot.get("date") else None,
+                "start_time": slot.get("startTime") or slot.get("start_time"),
+                "end_time": slot.get("endTime") or slot.get("end_time"),
+            }
+            for slot in availability
+            if isinstance(slot, dict) and (slot.get("startTime") or slot.get("start_time"))
+        ]
+
+        logger.info(
+            "odontoking_doctor_schedule_fetched",
+            id_doctor=id_doctor,
+            total_slots=len(all_slots),
+        )
+        return json.dumps(
+            {
+                "doctor_id": doctor.get("id", id_doctor),
+                "name": doctor.get("name"),
+                "availability": all_slots,
+            },
+            ensure_ascii=False,
+        )
 
     except Exception as e:
         logger.exception("get_doctor_schedule_failed", id_doctor=id_doctor, error=str(e))
