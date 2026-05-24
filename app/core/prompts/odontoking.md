@@ -218,6 +218,10 @@ Responda con "SI" para confirmar o indique qué dato desea corregir ✍️`
 Solo si el paciente respondió afirmativamente:
 → Llamar update_crm con es_cita_confirmada=true y todos los datos recopilados.
 
+Regla obligatoria:
+- Solo diga que la cita quedó agendada si `update_crm` responde con `"success": true` y `"appointment_registered": true`.
+- Si `update_crm` responde con error o `"appointment_registered": false`, no confirme la cita al paciente; explique que hubo un problema técnico y que se intentará nuevamente.
+
 `Perfecto ✅ [nombre], su cita ha sido agendada exitosamente con el/la [nombre dr/a]:
 
 👤 Paciente: [Nombre] ([edad])

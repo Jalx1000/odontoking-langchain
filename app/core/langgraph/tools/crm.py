@@ -181,6 +181,7 @@ async def update_crm(
         edad_paciente_de_otra_persona: Age if booking for someone else.
     """
     log = logger.bind(wa_id=wa_id, person_name=person_name)
+    person_email = _person_email_from_wa_id(wa_id)
 
     try:
         async with httpx.AsyncClient(timeout=20) as client:
@@ -295,52 +296,63 @@ async def update_crm(
                 )
 
             # 7. Create appointment activity when confirmed
+            appointment_registered = False
             if es_cita_confirmada and horario_cita and doctor_id:
                 schedule_from, schedule_to = _parse_appointment_datetime(horario_cita)
-                if schedule_from:
-                    activity_body: dict = {
+                if not schedule_from:
+                    return json.dumps({
+                        "success": False,
+                        "appointment_registered": False,
+                        "error_type": "invalid_appointment_datetime",
+                        "message": "No se pudo interpretar la fecha y hora de la cita.",
+                        "person_id": person_id,
                         "lead_id": lead_id,
-                        "title": f"{person_name} - {products_name or 'Consulta'}",
-                        "type": "meeting",
-                        "schedule_from": schedule_from,
-                        "schedule_to": schedule_to,
-                        "location": "Consultorio",
-                        "comment": f"{products_name or ''} - Seguro: {seguro_de_vida or 'Ninguno'}",
-                        "participants": {
-                            "persons": [str(person_id)],
-                            "users": ["1"],
-                            "doctors": [str(doctor_id)],
-                        },
-                    }
-                    if products_product_id is not None:
-                        activity_body["product_id"] = products_product_id
-                    act_resp = await client.post(
-                        f"{_BASE}/api/v1/activities",
-                        json=activity_body,
-                        headers=_HEADERS,
-                    )
-                    if act_resp.status_code == 422:
-                        try:
-                            error_detail = act_resp.json()
-                        except Exception:
-                            error_detail = {"message": act_resp.text}
-                        log.error("crm_activity_422", body=activity_body, response=act_resp.text)
-                        return json.dumps({
-                            "success": False,
-                            "appointment_registered": False,
-                            "error_type": "appointment_conflict",
-                            "message": error_detail.get("message", "No se pudo registrar la cita."),
-                            "person_id": person_id,
-                            "lead_id": lead_id,
-                        })
-                    act_resp.raise_for_status()
-                    log.info("crm_activity_created", lead_id=lead_id, schedule=schedule_from)
+                    })
+
+                activity_body: dict = {
+                    "lead_id": lead_id,
+                    "title": f"{person_name} - {products_name or 'Consulta'}",
+                    "type": "meeting",
+                    "schedule_from": schedule_from,
+                    "schedule_to": schedule_to,
+                    "location": "Consultorio",
+                    "comment": f"{products_name or ''} - Seguro: {seguro_de_vida or 'Ninguno'}",
+                    "participants": {
+                        "persons": [str(person_id)],
+                        "users": ["1"],
+                        "doctors": [str(doctor_id)],
+                    },
+                }
+                if products_product_id is not None:
+                    activity_body["product_id"] = products_product_id
+                act_resp = await client.post(
+                    f"{_BASE}/api/v1/activities",
+                    json=activity_body,
+                    headers=_HEADERS,
+                )
+                if act_resp.status_code == 422:
+                    try:
+                        error_detail = act_resp.json()
+                    except Exception:
+                        error_detail = {"message": act_resp.text}
+                    log.error("crm_activity_422", body=activity_body, response=act_resp.text)
+                    return json.dumps({
+                        "success": False,
+                        "appointment_registered": False,
+                        "error_type": "appointment_conflict",
+                        "message": error_detail.get("message", "No se pudo registrar la cita."),
+                        "person_id": person_id,
+                        "lead_id": lead_id,
+                    })
+                act_resp.raise_for_status()
+                appointment_registered = True
+                log.info("crm_activity_created", lead_id=lead_id, schedule=schedule_from)
 
             return json.dumps({
-                "success": True,
+                "success": (not es_cita_confirmada) or appointment_registered,
                 "person_id": person_id,
                 "lead_id": lead_id,
-                "appointment_registered": es_cita_confirmada and bool(horario_cita),
+                "appointment_registered": appointment_registered,
             })
 
     except Exception as e:

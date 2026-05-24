@@ -145,6 +145,31 @@ class TestUpdateCrm:
             assert result["appointment_registered"] is False
 
     @pytest.mark.asyncio
+    async def test_confirmed_appointment_with_invalid_datetime_returns_error(self):
+        from app.core.langgraph.tools.crm import update_crm
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            client.post = AsyncMock(return_value=_make_response(201, {"data": {"id": 1}}))
+            cls.return_value = client
+
+            result = json.loads(
+                await update_crm.ainvoke(
+                    self._base_args(
+                        doctor_id=5,
+                        horario_cita="fecha-invalida",
+                        es_cita_confirmada=True,
+                    )
+                )
+            )
+
+            assert result["success"] is False
+            assert result["appointment_registered"] is False
+            assert result["error_type"] == "invalid_appointment_datetime"
+
+    @pytest.mark.asyncio
     async def test_returns_error_payload_on_exception(self):
         from app.core.langgraph.tools.crm import update_crm
 
