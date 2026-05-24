@@ -148,8 +148,8 @@ async def _fetch_disponibilidad_for_date(client: httpx.AsyncClient, doctor_id: i
     """Fetch available slots for one doctor on one date. Returns [] on any error."""
     try:
         resp = await client.get(
-            f"{_BASE}/api/disponibilidad",
-            params={"doctorId": doctor_id, "date": date_str},
+            f"{_BASE}/api/doctors",
+            params={"doctorId": doctor_id},
             headers=_HEADERS,
         )
         resp.raise_for_status()
