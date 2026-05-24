@@ -13,6 +13,7 @@ import time
 from collections import defaultdict
 from typing import Any
 
+import httpx
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -24,11 +25,12 @@ from fastapi.responses import PlainTextResponse
 from app.core.broker import broker
 from app.core.config import settings
 from app.core.langgraph.odontoking_graph import odontoking_agent
+from app.core.langgraph.tools.crm import ensure_person_registered
 from app.core.limiter import limiter
 from app.core.logging import logger
 from app.core.tenant import TenantConfig, get_tenant, get_tenant_async
 from app.schemas import Message
-from app.schemas.whatsapp import WhatsAppWebhookPayload
+from app.schemas.whatsapp import WhatsAppValue, WhatsAppWebhookPayload
 from app.services.message_buffer import MessageBufferService, ProcessFn, message_buffer_service
 from app.services.whatsapp_client import (
     download_media,
@@ -96,6 +98,20 @@ def _is_wa_rate_limited(wa_id: str) -> bool:
     return False
 
 
+def _extract_profile_name(value: WhatsAppValue) -> str:
+    """Return the sender profile name from the webhook payload, if present."""
+    contacts = value.contacts or []
+    if not contacts:
+        return ""
+    profile = contacts[0].profile or {}
+    if not isinstance(profile, dict):
+        return ""
+    name = profile.get("name")
+    if not isinstance(name, str):
+        return ""
+    return name.strip()
+
+
 def _make_process_fn(tenant: TenantConfig) -> ProcessFn:
     """Return a ProcessFn closure bound to the given tenant's agent and WA credentials."""
     agent = _AGENT_REGISTRY.get(tenant.agent_type, odontoking_agent)
@@ -155,6 +171,7 @@ async def _handle_webhook_payload(
         return {"status": "ignored"}
 
     process_fn = _make_process_fn(tenant)
+    registered_wa_ids: set[str] = set()
 
     for entry in payload.entry:
         for change in entry.changes:
@@ -172,6 +189,32 @@ async def _handle_webhook_payload(
                 if _is_duplicate_message(msg.id):
                     logger.info("whatsapp_duplicate_message_skipped", tenant=tenant.slug, wa_id=wa_id, msg_id=msg.id)
                     continue
+
+                if wa_id not in registered_wa_ids:
+                    registered_wa_ids.add(wa_id)
+                    try:
+                        profile_name = _extract_profile_name(value)
+                        async with httpx.AsyncClient(timeout=20) as client:
+                            await ensure_person_registered(
+                                client,
+                                wa_id=wa_id,
+                                person_name=profile_name,
+                                person_phone=wa_id,
+                                update_existing_name=False,
+                            )
+                        logger.info(
+                            "whatsapp_patient_registered",
+                            tenant=tenant.slug,
+                            wa_id=wa_id,
+                            name=profile_name or "Paciente WhatsApp",
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            "whatsapp_patient_registration_failed",
+                            tenant=tenant.slug,
+                            wa_id=wa_id,
+                            error=str(e),
+                        )
 
                 text_content: str = ""
 

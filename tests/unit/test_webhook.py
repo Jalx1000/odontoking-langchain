@@ -16,6 +16,7 @@ def app_client():
         patch("app.core.observability.langfuse_callback_handler", new=MagicMock()),
         patch("app.services.database.database_service"),
         patch("app.services.memory.memory_service"),
+        patch("app.core.langgraph.tools.crm.ensure_person_registered", new_callable=AsyncMock),
         patch("app.core.langgraph.odontoking_graph.OdontokingAgent.create_graph", new_callable=AsyncMock),
         patch("app.core.langgraph.graph.LangGraphAgent.create_graph", new_callable=AsyncMock),
         patch("app.services.message_buffer.message_buffer_service.initialize", new_callable=AsyncMock),
@@ -86,9 +87,15 @@ class TestWebhookReceiveMessage:
             mock_enqueue.assert_not_called()
 
     def test_text_message_is_enqueued(self, app_client, sample_whatsapp_text_payload):
-        with patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue:
+        with (
+            patch("app.api.v1.whatsapp.ensure_person_registered", new_callable=AsyncMock) as mock_register,
+            patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue,
+        ):
             resp = self._post(app_client, sample_whatsapp_text_payload)
             assert resp.status_code == 200
+            mock_register.assert_called_once()
+            assert mock_register.call_args.kwargs["wa_id"] == "591701234567"
+            assert mock_register.call_args.kwargs["person_name"] == "Test User"
             mock_enqueue.assert_called_once()
             call_args = mock_enqueue.call_args
             assert call_args[0][0] == "591701234567"
@@ -96,17 +103,20 @@ class TestWebhookReceiveMessage:
 
     def test_audio_message_triggers_transcription_and_enqueue(self, app_client, sample_whatsapp_audio_payload):
         with (
+            patch("app.api.v1.whatsapp.ensure_person_registered", new_callable=AsyncMock) as mock_register,
             patch("app.api.v1.whatsapp.download_media", new_callable=AsyncMock, return_value=b"fake-bytes"),
             patch("app.api.v1.whatsapp.transcribe_audio", new_callable=AsyncMock, return_value="quiero un turno"),
             patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue,
         ):
             resp = self._post(app_client, sample_whatsapp_audio_payload)
             assert resp.status_code == 200
+            mock_register.assert_called_once()
             mock_enqueue.assert_called_once()
             assert mock_enqueue.call_args[0][1] == "quiero un turno"
 
     def test_empty_audio_transcription_sends_error_reply(self, app_client, sample_whatsapp_audio_payload):
         with (
+            patch("app.api.v1.whatsapp.ensure_person_registered", new_callable=AsyncMock) as mock_register,
             patch("app.api.v1.whatsapp.download_media", new_callable=AsyncMock, return_value=b"bytes"),
             patch("app.api.v1.whatsapp.transcribe_audio", new_callable=AsyncMock, return_value=""),
             patch("app.api.v1.whatsapp.send_text_message", new_callable=AsyncMock) as mock_send,
@@ -114,6 +124,7 @@ class TestWebhookReceiveMessage:
         ):
             resp = self._post(app_client, sample_whatsapp_audio_payload)
             assert resp.status_code == 200
+            mock_register.assert_called_once()
             mock_enqueue.assert_not_called()
             mock_send.assert_called_once()
 
@@ -145,11 +156,13 @@ class TestWebhookReceiveMessage:
             ],
         }
         with (
+            patch("app.api.v1.whatsapp.ensure_person_registered", new_callable=AsyncMock) as mock_register,
             patch("app.api.v1.whatsapp.send_text_message", new_callable=AsyncMock) as mock_send,
             patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue,
         ):
             resp = self._post(app_client, payload)
             assert resp.status_code == 200
+            mock_register.assert_called_once()
             mock_send.assert_called_once()
             mock_enqueue.assert_not_called()
 
@@ -206,7 +219,10 @@ class TestWebhookReceiveMessage:
 
     def test_duplicate_msg_id_is_skipped(self, app_client, sample_whatsapp_text_payload):
         """Same msg.id delivered twice (Meta retry) must only enqueue once."""
-        with patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue:
+        with (
+            patch("app.api.v1.whatsapp.ensure_person_registered", new_callable=AsyncMock) as mock_register,
+            patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue,
+        ):
             resp1 = self._post(app_client, sample_whatsapp_text_payload)
             resp2 = self._post(app_client, sample_whatsapp_text_payload)
 
@@ -214,6 +230,7 @@ class TestWebhookReceiveMessage:
             assert resp2.status_code == 200
             # Second delivery of same msg.id must be a no-op
             mock_enqueue.assert_called_once()
+            mock_register.assert_called_once()
 
     def test_different_msg_ids_both_enqueued(self, app_client):
         """Two different messages with distinct IDs must both be enqueued."""
@@ -228,18 +245,26 @@ class TestWebhookReceiveMessage:
                 }, "field": "messages"}]}],
             }
 
-        with patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue:
+        with (
+            patch("app.api.v1.whatsapp.ensure_person_registered", new_callable=AsyncMock) as mock_register,
+            patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue,
+        ):
             self._post(app_client, _payload("msg-aaa", "primer mensaje"))
             self._post(app_client, _payload("msg-bbb", "segundo mensaje"))
             assert mock_enqueue.call_count == 2
+            assert mock_register.call_count == 2
 
     def test_dedup_cache_expires_after_ttl(self, app_client, sample_whatsapp_text_payload):
         """After the TTL expires, the same msg.id should be processed again."""
         import app.api.v1.whatsapp as wa_module
 
-        with patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue:
+        with (
+            patch("app.api.v1.whatsapp.ensure_person_registered", new_callable=AsyncMock) as mock_register,
+            patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue,
+        ):
             self._post(app_client, sample_whatsapp_text_payload)
             assert mock_enqueue.call_count == 1
+            assert mock_register.call_count == 1
 
             # Simulate TTL expiry by backdating the cache entry
             for k in wa_module._seen_message_ids:

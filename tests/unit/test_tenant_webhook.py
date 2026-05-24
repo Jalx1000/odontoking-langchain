@@ -14,6 +14,7 @@ def app_client():
         patch("app.core.observability.langfuse_callback_handler", new=MagicMock()),
         patch("app.services.database.database_service"),
         patch("app.services.memory.memory_service"),
+        patch("app.core.langgraph.tools.crm.ensure_person_registered", new_callable=AsyncMock),
         patch("app.core.langgraph.odontoking_graph.OdontokingAgent.create_graph", new_callable=AsyncMock),
         patch("app.core.langgraph.graph.LangGraphAgent.create_graph", new_callable=AsyncMock),
         patch("app.services.message_buffer.message_buffer_service.initialize", new_callable=AsyncMock),
@@ -89,6 +90,7 @@ class TestTenantWebhookReceive:
                     "value": {
                         "messaging_product": "whatsapp",
                         "metadata": {"display_phone_number": "x", "phone_number_id": "pid"},
+                        "contacts": [{"wa_id": wa_id, "profile": {"name": "Test User"}}],
                         "messages": [{
                             "id": msg_id,
                             "from": wa_id,
@@ -110,9 +112,13 @@ class TestTenantWebhookReceive:
         )
 
     def test_known_tenant_enqueues_message(self, app_client):
-        with patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue:
+        with (
+            patch("app.api.v1.whatsapp.ensure_person_registered", new_callable=AsyncMock) as mock_register,
+            patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue,
+        ):
             resp = self._post(app_client, "odontoking", self._payload())
             assert resp.status_code == 200
+            mock_register.assert_called_once()
             mock_enqueue.assert_called_once()
             assert mock_enqueue.call_args[0][0] == "591701234567"
 
@@ -123,13 +129,17 @@ class TestTenantWebhookReceive:
         assert resp.json()["status"] == "ok"
 
     def test_legacy_route_routes_to_odontoking(self, app_client):
-        with patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue:
+        with (
+            patch("app.api.v1.whatsapp.ensure_person_registered", new_callable=AsyncMock) as mock_register,
+            patch("app.api.v1.whatsapp.message_buffer_service.enqueue", new_callable=AsyncMock) as mock_enqueue,
+        ):
             resp = app_client.post(
                 "/api/v1/whatsapp/webhook",
                 content=json.dumps(self._payload()),
                 headers={"Content-Type": "application/json"},
             )
             assert resp.status_code == 200
+            mock_register.assert_called_once()
             mock_enqueue.assert_called_once()
 
     def test_different_tenants_use_independent_process_fns(self, app_client):
@@ -139,12 +149,16 @@ class TestTenantWebhookReceive:
         async def capture_enqueue(wa_id, text, process_fn):
             calls.append(id(process_fn))
 
-        with patch("app.api.v1.whatsapp.message_buffer_service.enqueue", side_effect=capture_enqueue):
+        with (
+            patch("app.api.v1.whatsapp.ensure_person_registered", new_callable=AsyncMock) as mock_register,
+            patch("app.api.v1.whatsapp.message_buffer_service.enqueue", side_effect=capture_enqueue),
+        ):
             self._post(app_client, "odontoking", self._payload(text="msg1", msg_id="t-unique-1"))
             self._post(app_client, "odontoking", self._payload(text="msg2", msg_id="t-unique-2"))
 
         # Both calls use the same tenant → same factory pattern (fn created per request)
         assert len(calls) == 2
+        assert mock_register.call_count == 2
 
 
 # ── Tenant registry ───────────────────────────────────────────────────────────

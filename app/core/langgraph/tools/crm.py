@@ -4,7 +4,7 @@ import asyncio
 import json
 import random
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from langchain_core.tools import tool
@@ -56,6 +56,87 @@ def _parse_appointment_datetime(horario_cita: str) -> tuple[str, str]:
         return "", ""
 
 
+def _person_email_from_wa_id(wa_id: str) -> str:
+    return f"{wa_id}@whatsapp.sofopolis.net"
+
+
+def _person_payload(wa_id: str, person_name: str, person_phone: str) -> dict[str, Any]:
+    clean_name = person_name.strip() if isinstance(person_name, str) and person_name.strip() else "Paciente WhatsApp"
+    clean_phone = person_phone.strip() if isinstance(person_phone, str) and person_phone.strip() else wa_id
+    person_email = _person_email_from_wa_id(wa_id)
+    return {
+        "name": clean_name,
+        "emails": [{"value": person_email, "label": "work"}],
+        "contact_numbers": [{"value": clean_phone, "label": "work"}],
+        "entity_type": "persons",
+    }
+
+
+async def ensure_person_registered(
+    client: httpx.AsyncClient,
+    wa_id: str,
+    person_name: str,
+    person_phone: str | None = None,
+    *,
+    update_existing_name: bool = False,
+) -> dict[str, Any]:
+    """Find or create a CRM person from a WhatsApp number.
+
+    The person is keyed by the generated WhatsApp email derived from wa_id.
+    If update_existing_name is True, an existing person is updated with the
+    provided name and contact fields when the CRM record already exists.
+    """
+    person_email = _person_email_from_wa_id(wa_id)
+    clean_name = person_name.strip() if isinstance(person_name, str) and person_name.strip() else "Paciente WhatsApp"
+    clean_phone = person_phone.strip() if isinstance(person_phone, str) and person_phone.strip() else wa_id
+    log = logger.bind(wa_id=wa_id, person_name=clean_name)
+
+    search_resp = await client.get(
+        f"{_BASE}/api/v1/contacts/persons/search",
+        params={"search": person_email, "searchFields": "emails:like"},
+        headers=_HEADERS,
+    )
+    search_resp.raise_for_status()
+    persons = search_resp.json().get("data", [])
+
+    if persons:
+        person = persons[0] if isinstance(persons[0], dict) else {}
+        person_id = person.get("id")
+        if not person_id:
+            return {"person_id": None, "created": False, "updated": False}
+
+        existing_name = (person.get("name") or "").strip()
+        should_update = (
+            update_existing_name
+            and isinstance(person_name, str)
+            and person_name.strip()
+            and clean_name != existing_name
+            and clean_name != "Paciente WhatsApp"
+        )
+        if should_update:
+            update_resp = await client.put(
+                f"{_BASE}/api/v1/contacts/persons/{person_id}",
+                json=_person_payload(wa_id, clean_name, clean_phone),
+                headers=_HEADERS,
+            )
+            update_resp.raise_for_status()
+            log.info("crm_person_updated", person_id=person_id)
+            return {"person_id": person_id, "created": False, "updated": True}
+
+        log.info("crm_person_found", person_id=person_id)
+        return {"person_id": person_id, "created": False, "updated": False}
+
+    create_resp = await client.post(
+        f"{_BASE}/api/v1/contacts/persons",
+        json=_person_payload(wa_id, clean_name, clean_phone),
+        headers=_HEADERS,
+    )
+    create_resp.raise_for_status()
+    person_id = create_resp.json().get("data", {}).get("id")
+    log.info("crm_person_created", person_id=person_id)
+    return {"person_id": person_id, "created": True, "updated": False}
+
+
 @tool
 async def update_crm(
     wa_id: str,
@@ -99,38 +180,19 @@ async def update_crm(
         nombre_paciente_de_otra_persona: Name if booking for someone else.
         edad_paciente_de_otra_persona: Age if booking for someone else.
     """
-    person_email = f"{wa_id}@whatsapp.sofopolis.net"
     log = logger.bind(wa_id=wa_id, person_name=person_name)
 
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            # 1. Find or create person
-            search_resp = await client.get(
-                f"{_BASE}/api/v1/contacts/persons/search",
-                params={"search": person_email, "searchFields": "emails:like"},
-                headers=_HEADERS,
+            # 1. Find or create person, updating the name if this call knows a better one
+            person_result = await ensure_person_registered(
+                client,
+                wa_id,
+                person_name,
+                person_phone,
+                update_existing_name=True,
             )
-            search_resp.raise_for_status()
-            persons = search_resp.json().get("data", [])
-
-            if persons:
-                person_id = persons[0]["id"]
-                log.info("crm_person_found", person_id=person_id)
-            else:
-                create_resp = await client.post(
-                    f"{_BASE}/api/v1/contacts/persons",
-                    json={
-                        "name": person_name,
-                        "emails": [{"value": person_email, "label": "work"}],
-                        "contact_numbers": [{"value": person_phone, "label": "work"}],
-                        "entity_type": "persons",
-                    },
-                    headers=_HEADERS,
-                )
-                create_resp.raise_for_status()
-                person_id = create_resp.json().get("data", {}).get("id")
-                log.info("crm_person_created", person_id=person_id)
-
+            person_id = person_result["person_id"]
             if not person_id:
                 return json.dumps({"error": "could not obtain person_id"})
 

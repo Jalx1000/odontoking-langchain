@@ -93,6 +93,7 @@ def sample_whatsapp_audio_payload() -> dict:
                         "value": {
                             "messaging_product": "whatsapp",
                             "metadata": {"display_phone_number": "1234", "phone_number_id": "pid"},
+                            "contacts": [{"wa_id": "591701234567", "profile": {"name": "Test User"}}],
                             "messages": [
                                 {
                                     "id": "msg-id-2",
