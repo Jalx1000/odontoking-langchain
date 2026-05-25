@@ -60,6 +60,23 @@ def _person_email_from_wa_id(wa_id: str) -> str:
     return f"{wa_id}@whatsapp.sofopolis.net"
 
 
+async def find_person_by_wa_id(client: httpx.AsyncClient, wa_id: str) -> dict[str, Any] | None:
+    """Look up a CRM person by WhatsApp ID. Returns the person dict or None."""
+    try:
+        resp = await client.get(
+            f"{_BASE}/api/v1/persons",
+            params={"wa_id": wa_id},
+            headers=_HEADERS,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        return data[0] if data and isinstance(data[0], dict) else None
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return None
+        raise
+
+
 def _person_payload(wa_id: str, person_name: str, person_phone: str) -> dict[str, Any]:
     clean_name = person_name.strip() if isinstance(person_name, str) and person_name.strip() else "Paciente WhatsApp"
     clean_phone = person_phone.strip() if isinstance(person_phone, str) and person_phone.strip() else wa_id
@@ -82,28 +99,20 @@ async def ensure_person_registered(
 ) -> dict[str, Any]:
     """Find or create a CRM person from a WhatsApp number.
 
-    The person is keyed by the generated WhatsApp email derived from wa_id.
-    If update_existing_name is True, an existing person is updated with the
-    provided name and contact fields when the CRM record already exists.
+    Uses GET /api/v1/persons?wa_id=X as the primary lookup. Returns person_id,
+    creation/update flags, and any stored custom attributes (ci_paciente,
+    seguro_paciente) so the agent can skip asking for them again.
     """
-    person_email = _person_email_from_wa_id(wa_id)
     clean_name = person_name.strip() if isinstance(person_name, str) and person_name.strip() else "Paciente WhatsApp"
     clean_phone = person_phone.strip() if isinstance(person_phone, str) and person_phone.strip() else wa_id
     log = logger.bind(wa_id=wa_id, person_name=clean_name)
 
-    search_resp = await client.get(
-        f"{_BASE}/api/v1/contacts/persons/search",
-        params={"search": person_email, "searchFields": "emails:like"},
-        headers=_HEADERS,
-    )
-    search_resp.raise_for_status()
-    persons = search_resp.json().get("data", [])
+    person = await find_person_by_wa_id(client, wa_id)
 
-    if persons:
-        person = persons[0] if isinstance(persons[0], dict) else {}
+    if person:
         person_id = person.get("id")
         if not person_id:
-            return {"person_id": None, "created": False, "updated": False}
+            return {"person_id": None, "created": False, "updated": False, "is_new_patient": False}
 
         existing_name = (person.get("name") or "").strip()
         should_update = (
@@ -121,10 +130,16 @@ async def ensure_person_registered(
             )
             update_resp.raise_for_status()
             log.info("crm_person_updated", person_id=person_id)
-            return {"person_id": person_id, "created": False, "updated": True}
 
         log.info("crm_person_found", person_id=person_id)
-        return {"person_id": person_id, "created": False, "updated": False}
+        return {
+            "person_id": person_id,
+            "created": False,
+            "updated": should_update,
+            "is_new_patient": False,
+            "ci_paciente": person.get("ci_paciente"),
+            "seguro_paciente": person.get("seguro_paciente"),
+        }
 
     create_resp = await client.post(
         f"{_BASE}/api/v1/contacts/persons",
@@ -134,7 +149,14 @@ async def ensure_person_registered(
     create_resp.raise_for_status()
     person_id = create_resp.json().get("data", {}).get("id")
     log.info("crm_person_created", person_id=person_id)
-    return {"person_id": person_id, "created": True, "updated": False}
+    return {
+        "person_id": person_id,
+        "created": True,
+        "updated": False,
+        "is_new_patient": True,
+        "ci_paciente": None,
+        "seguro_paciente": None,
+    }
 
 
 @tool
@@ -376,19 +398,13 @@ async def get_citas(wa_id: str) -> str:
 
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            # Step 1: find person by email
-            search_resp = await client.get(
-                f"{_BASE}/api/v1/contacts/persons/search",
-                params={"search": person_email, "searchFields": "emails:like"},
-                headers=_HEADERS,
-            )
-            search_resp.raise_for_status()
-            persons = search_resp.json().get("data", [])
-            if not persons:
-                log.info("get_citas_person_not_found", email=person_email)
+            # Step 1: find person by wa_id
+            person = await find_person_by_wa_id(client, wa_id)
+            if not person:
+                log.info("get_citas_person_not_found", wa_id=wa_id)
                 return json.dumps({"citas": [], "message": "patient_not_found_in_crm"})
 
-            person_id = persons[0]["id"]
+            person_id = person["id"]
             # Step 2: find lead filtered by person_id — avoids full-table scan
             leads_resp = await client.get(
                 f"{_BASE}/api/v1/leads",
@@ -506,17 +522,11 @@ async def sync_transcript_to_crm(wa_id: str, max_messages: int = 50) -> str:
 
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            search_resp = await client.get(
-                f"{_BASE}/api/v1/contacts/persons/search",
-                params={"search": person_email, "searchFields": "emails:like"},
-                headers=_HEADERS,
-            )
-            search_resp.raise_for_status()
-            persons = search_resp.json().get("data", [])
-            if not persons:
+            person = await find_person_by_wa_id(client, wa_id)
+            if not person:
                 return json.dumps({"success": False, "message": "person_not_found_in_crm"})
 
-            person_id = persons[0]["id"]
+            person_id = person["id"]
             leads_resp = await client.get(
                 f"{_BASE}/api/v1/leads",
                 params={"sort": "id", "limit": 10, "person_id": str(person_id)},

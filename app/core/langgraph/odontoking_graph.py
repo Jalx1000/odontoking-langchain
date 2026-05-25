@@ -88,13 +88,35 @@ with open(_PROMPT_FILE, "r") as _f:
     _PROMPT_TEMPLATE = _f.read()
 
 
-def _load_odontoking_prompt(wa_id: str) -> str:
-    """Render the odontoking system prompt with Bolivia local datetime and wa_id context."""
+def _load_odontoking_prompt(
+    wa_id: str,
+    *,
+    is_new_patient: bool = True,
+    ci_paciente: str | None = None,
+    seguro_paciente: str | None = None,
+) -> str:
+    """Render the odontoking system prompt with Bolivia local datetime and patient context."""
     now = datetime.now(_TZ_BOLIVIA)
     day_name = _DIAS_ES[now.weekday()]
     month_name = _MESES_ES[now.month - 1]
     current_datetime = f"{day_name} {now.day:02d} {month_name} {now.year} {now.strftime('%H:%M')}"
-    return _PROMPT_TEMPLATE.format(current_datetime=current_datetime) + f"\n\n# Contexto\nwa_id del paciente actual: {wa_id}"
+
+    context_lines = [
+        "# Contexto del paciente",
+        f"wa_id: {wa_id}",
+        f"paciente_nuevo: {'true' if is_new_patient else 'false'}",
+    ]
+    if ci_paciente:
+        context_lines.append(f"ci_paciente_registrada: {ci_paciente}")
+    if seguro_paciente:
+        context_lines.append(f"seguro_registrado: {seguro_paciente}")
+    if not is_new_patient and not ci_paciente:
+        context_lines.append("ci_paciente_registrada: null  # solicitar al paciente si necesita verificar seguro")
+    if not is_new_patient and not seguro_paciente:
+        context_lines.append("seguro_registrado: null  # preguntar si tiene seguro")
+
+    context = "\n".join(context_lines)
+    return _PROMPT_TEMPLATE.format(current_datetime=current_datetime) + f"\n\n{context}"
 
 
 def _chat_session_id(wa_id: str) -> str:
@@ -170,9 +192,15 @@ class OdontokingAgent:
         return self._connection_pool
 
     async def _chat(self, state: GraphState, config: RunnableConfig) -> Command:
-        wa_id = config.get("metadata", {}).get("wa_id", "unknown")
+        metadata = config.get("metadata", {})
+        wa_id = metadata.get("wa_id", "unknown")
         thread_id = config.get("configurable", {}).get("thread_id")
-        system_prompt = _load_odontoking_prompt(wa_id)
+        system_prompt = _load_odontoking_prompt(
+            wa_id,
+            is_new_patient=metadata.get("is_new_patient", True),
+            ci_paciente=metadata.get("ci_paciente"),
+            seguro_paciente=metadata.get("seguro_paciente"),
+        )
 
         # Build messages with LangChain types directly — bypasses Message max_length validation
         langchain_messages = [SystemMessage(content=system_prompt)] + list(state.messages)
@@ -253,6 +281,10 @@ class OdontokingAgent:
         self,
         messages: list,
         wa_id: str,
+        *,
+        is_new_patient: bool = True,
+        ci_paciente: str | None = None,
+        seguro_paciente: str | None = None,
     ) -> str:
         """Process a WhatsApp message and return the agent's texto response.
 
@@ -264,7 +296,12 @@ class OdontokingAgent:
         config: RunnableConfig = {
             "configurable": {"thread_id": wa_id},
             "callbacks": callbacks,
-            "metadata": {"wa_id": wa_id},
+            "metadata": {
+                "wa_id": wa_id,
+                "is_new_patient": is_new_patient,
+                "ci_paciente": ci_paciente,
+                "seguro_paciente": seguro_paciente,
+            },
             "recursion_limit": 50,
         }
 

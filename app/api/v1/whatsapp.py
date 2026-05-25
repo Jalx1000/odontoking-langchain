@@ -112,7 +112,13 @@ def _extract_profile_name(value: WhatsAppValue) -> str:
     return name.strip()
 
 
-def _make_process_fn(tenant: TenantConfig) -> ProcessFn:
+def _make_process_fn(
+    tenant: TenantConfig,
+    *,
+    is_new_patient: bool = True,
+    ci_paciente: str | None = None,
+    seguro_paciente: str | None = None,
+) -> ProcessFn:
     """Return a ProcessFn closure bound to the given tenant's agent and WA credentials."""
     agent = _AGENT_REGISTRY.get(tenant.agent_type, odontoking_agent)
     pid = tenant.phone_number_id
@@ -123,7 +129,13 @@ def _make_process_fn(tenant: TenantConfig) -> ProcessFn:
         try:
             asyncio.create_task(send_typing_indicator(wa_id, phone_number_id=pid, token=tok))
             response_text = await asyncio.wait_for(
-                agent.get_response(messages, wa_id=wa_id),
+                agent.get_response(
+                    messages,
+                    wa_id=wa_id,
+                    is_new_patient=is_new_patient,
+                    ci_paciente=ci_paciente,
+                    seguro_paciente=seguro_paciente,
+                ),
                 timeout=settings.LLM_TOTAL_TIMEOUT + 30,
             )
             await send_response(wa_id, response_text, phone_number_id=pid, token=tok)
@@ -170,8 +182,8 @@ async def _handle_webhook_payload(
     if payload.object != "whatsapp_business_account":
         return {"status": "ignored"}
 
-    process_fn = _make_process_fn(tenant)
-    registered_wa_ids: set[str] = set()
+    # wa_id → patient context captured from ensure_person_registered
+    registered_wa_ids: dict[str, dict] = {}
 
     for entry in payload.entry:
         for change in entry.changes:
@@ -191,24 +203,30 @@ async def _handle_webhook_payload(
                     continue
 
                 if wa_id not in registered_wa_ids:
-                    registered_wa_ids.add(wa_id)
                     try:
                         profile_name = _extract_profile_name(value)
                         async with httpx.AsyncClient(timeout=20) as client:
-                            await ensure_person_registered(
+                            reg = await ensure_person_registered(
                                 client,
                                 wa_id=wa_id,
                                 person_name=profile_name,
                                 person_phone=wa_id,
                                 update_existing_name=False,
                             )
+                        registered_wa_ids[wa_id] = {
+                            "is_new_patient": reg.get("is_new_patient", True),
+                            "ci_paciente": reg.get("ci_paciente"),
+                            "seguro_paciente": reg.get("seguro_paciente"),
+                        }
                         logger.info(
                             "whatsapp_patient_registered",
                             tenant=tenant.slug,
                             wa_id=wa_id,
                             name=profile_name or "Paciente WhatsApp",
+                            is_new_patient=registered_wa_ids[wa_id]["is_new_patient"],
                         )
                     except Exception as e:
+                        registered_wa_ids[wa_id] = {}
                         logger.exception(
                             "whatsapp_patient_registration_failed",
                             tenant=tenant.slug,
@@ -287,6 +305,8 @@ async def _handle_webhook_payload(
                         )
                     continue
 
+                patient_ctx = registered_wa_ids.get(wa_id, {})
+                process_fn = _make_process_fn(tenant, **patient_ctx)
                 if settings.BUFFER_ENABLED:
                     await buffer.enqueue(wa_id, text_content, process_fn)
                 else:

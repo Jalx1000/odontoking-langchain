@@ -452,8 +452,8 @@ class TestExtraFields:
             result = invoke()
 
         for item in result["data"]:
-            assert set(item.keys()) == {"id", "name"}, (
-                f"Expected only {{id, name}}, got {set(item.keys())}"
+            assert set(item.keys()) == {"id", "name", "duration_minutes"}, (
+                f"Expected {{id, name, duration_minutes}}, got {set(item.keys())}"
             )
 
 
