@@ -5,6 +5,7 @@ from datetime import datetime as _dt
 
 import httpx
 from langchain_core.tools import tool
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
 from app.core.logging import logger
@@ -24,11 +25,15 @@ _HEADERS = {
     "accept": "application/json",
     "Authorization": f"Bearer {settings.ODONTOKING_API_TOKEN}",
 }
-_DOCTOR_DETAIL_HEADERS = {
-    "accept": "application/json",
-    "X-CSRF-TOKEN": "",
-}
 _BASE = settings.ODONTOKING_API_URL
+
+
+def _is_retryable_slots_error(exc: BaseException) -> bool:
+    """Retry only on 429 (rate limit) and 5xx server errors, not other 4xx."""
+    return (
+        isinstance(exc, httpx.HTTPStatusError)
+        and (exc.response.status_code == 429 or exc.response.status_code >= 500)
+    )
 
 
 @tool
@@ -147,92 +152,80 @@ async def get_doctors() -> str:
         return json.dumps({"error": str(e)})
 
 
-async def _fetch_doctor_detail(client: httpx.AsyncClient, doctor_id: int) -> dict | None:
-    """Fetch one doctor's detail payload. Returns None on any error."""
-    try:
-        resp = await client.get(
-            f"{_BASE}/api/doctors/{doctor_id}",
-            headers=_DOCTOR_DETAIL_HEADERS,
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        if isinstance(payload, dict):
-            if isinstance(payload.get("data"), dict):
-                return payload["data"]
-            return payload
-        if isinstance(payload, list):
-            for item in payload:
-                if isinstance(item, dict) and item.get("id") == doctor_id:
-                    return item
-        return None
-    except Exception:
-        return None
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=3, max=10),
+    retry=retry_if_exception(_is_retryable_slots_error),
+    reraise=True,
+)
+async def _fetch_doctor_slots(
+    client: httpx.AsyncClient,
+    id_doctor: int,
+    date: str,
+    days: int,
+    duration_minutes: int,
+) -> httpx.Response:
+    """Call the public slots endpoint. Retries on 429/5xx, re-raises on the final attempt."""
+    resp = await client.get(
+        f"{_BASE}/api/doctors/{id_doctor}/slots",
+        params={"date": date, "days": days, "duration_minutes": duration_minutes},
+    )
+    resp.raise_for_status()
+    return resp
 
 
 @tool
-async def get_doctor_schedule(id_doctor: int) -> str:
+async def get_doctor_schedule(id_doctor: int, duration_minutes: int = 60, days: int = 7) -> str:
     """Get real available appointment slots for a doctor.
 
-    Fetches the doctor's detail endpoint and normalizes its availability slots.
-
     Args:
-        id_doctor: The numeric ID of the doctor from get_doctors().
+        id_doctor: Numeric ID of the doctor from get_doctors().
+        duration_minutes: Appointment duration in minutes. Use the value from get_services() for the chosen service. Defaults to 60.
+        days: Number of days ahead to query (1–30). Default is 7.
     """
+    today = _dt.now().date().isoformat()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            doctor = await _fetch_doctor_detail(client, id_doctor)
+            resp = await _fetch_doctor_slots(client, id_doctor, today, days, duration_minutes)
 
-        if not isinstance(doctor, dict):
-            logger.warning("odontoking_doctor_not_found", id_doctor=id_doctor)
-            return json.dumps({"error": "doctor not found"}, ensure_ascii=False)
-
-        schedule = doctor.get("schedule", [])
-        if not isinstance(schedule, list):
-            schedule = []
-
-        all_slots = []
-        for day in schedule:
-            if not isinstance(day, dict):
-                continue
-            date = day.get("date")
-            slots = day.get("slots", [])
-            if not isinstance(slots, list):
-                continue
-            for slot in slots:
-                if not isinstance(slot, dict):
-                    continue
-                if slot.get("status") not in (None, "available"):
-                    continue
-                start_time = slot.get("startTime") or slot.get("start_time")
-                end_time = slot.get("endTime") or slot.get("end_time")
-                if not start_time or not end_time:
-                    continue
-                all_slots.append(
-                    {
-                        "date": date,
-                        "day_label": _add_day_name(date) if date else None,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                    }
-                )
+        payload = resp.json()
+        slots = payload.get("slots", payload) if isinstance(payload, dict) else payload
+        if not isinstance(slots, list):
+            slots = []
 
         logger.info(
             "odontoking_doctor_schedule_fetched",
             id_doctor=id_doctor,
-            total_slots=len(all_slots),
+            days=days,
+            duration_minutes=duration_minutes,
+            total_slots=len(slots),
         )
         return json.dumps(
-            {
-                "doctor_id": doctor.get("id", id_doctor),
-                "name": doctor.get("name"),
-                "availability": all_slots,
-            },
+            {"doctor_id": id_doctor, "slots": slots, "days_queried": days},
             ensure_ascii=False,
         )
 
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        if status == 404:
+            logger.warning("odontoking_doctor_not_found", id_doctor=id_doctor)
+            return json.dumps(
+                {"error": "doctor_not_found", "message": "Doctor no encontrado en el sistema"},
+                ensure_ascii=False,
+            )
+        if status == 422:
+            logger.warning(
+                "get_doctor_schedule_invalid_parameters",
+                id_doctor=id_doctor,
+                days=days,
+                duration_minutes=duration_minutes,
+            )
+            return json.dumps({"error": "invalid_parameters", "slots": []}, ensure_ascii=False)
+        logger.exception("get_doctor_schedule_http_error", id_doctor=id_doctor, status=status)
+        return json.dumps({"error": f"API returned {status}", "slots": []}, ensure_ascii=False)
     except Exception as e:
         logger.exception("get_doctor_schedule_failed", id_doctor=id_doctor, error=str(e))
-        return json.dumps({"error": str(e)})
+        return json.dumps({"error": str(e), "slots": []}, ensure_ascii=False)
 
 
 @tool
