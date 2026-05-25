@@ -77,16 +77,40 @@ async def find_person_by_wa_id(client: httpx.AsyncClient, wa_id: str) -> dict[st
         raise
 
 
-def _person_payload(wa_id: str, person_name: str, person_phone: str) -> dict[str, Any]:
+def _person_payload(
+    wa_id: str,
+    person_name: str,
+    person_phone: str,
+    *,
+    age: int | None = None,
+) -> dict[str, Any]:
     clean_name = person_name.strip() if isinstance(person_name, str) and person_name.strip() else "Paciente WhatsApp"
     clean_phone = person_phone.strip() if isinstance(person_phone, str) and person_phone.strip() else wa_id
     person_email = _person_email_from_wa_id(wa_id)
-    return {
+    payload: dict[str, Any] = {
         "name": clean_name,
         "emails": [{"value": person_email, "label": "work"}],
         "contact_numbers": [{"value": clean_phone, "label": "work"}],
         "entity_type": "persons",
     }
+    if age is not None:
+        # "job_title" column is labeled "Edad" in OdontoCRM persons entity
+        payload["job_title"] = str(age)
+    return payload
+
+
+async def _update_person_attributes(
+    client: httpx.AsyncClient,
+    person_id: int,
+    attrs: dict[str, Any],
+) -> None:
+    """Write custom attribute values onto a CRM person record (mirrors lead attributes endpoint)."""
+    resp = await client.put(
+        f"{_BASE}/api/v1/contacts/persons/attributes/edit/{person_id}",
+        json=attrs,
+        headers=_HEADERS,
+    )
+    resp.raise_for_status()
 
 
 async def ensure_person_registered(
@@ -177,6 +201,10 @@ async def update_crm(
     nombre_paciente_agente: Optional[str] = None,
     nombre_paciente_de_otra_persona: Optional[str] = None,
     edad_paciente_de_otra_persona: Optional[int] = None,
+    edad_paciente: Optional[int] = None,
+    is_for_self: bool = True,
+    motivo_consulta: Optional[str] = None,
+    estado_seguro: Optional[str] = None,
 ) -> str:
     """Create or update a patient lead and appointment in Sofopolis CRM.
 
@@ -201,6 +229,10 @@ async def update_crm(
         nombre_paciente_agente: Display name for the agent.
         nombre_paciente_de_otra_persona: Name if booking for someone else.
         edad_paciente_de_otra_persona: Age if booking for someone else.
+        edad_paciente: Age of the person writing (primary patient).
+        is_for_self: True if the appointment is for the WhatsApp sender; False if for another person.
+        motivo_consulta: Patient's reason for visit or main complaint.
+        estado_seguro: Insurance status after verification (e.g. 'VIGENTE', 'VENCIDO').
     """
     log = logger.bind(wa_id=wa_id, person_name=person_name)
     person_email = _person_email_from_wa_id(wa_id)
@@ -218,6 +250,23 @@ async def update_crm(
             person_id = person_result["person_id"]
             if not person_id:
                 return json.dumps({"error": "could not obtain person_id"})
+
+            # 1b. Persist collected patient attributes onto the person record
+            person_attrs: dict[str, Any] = {}
+            if edad_paciente is not None:
+                person_attrs["job_title"] = str(edad_paciente)
+            if numero_carnet:
+                person_attrs["ci_paciente"] = numero_carnet
+            if seguro_de_vida:
+                person_attrs["seguro_paciente"] = seguro_de_vida
+            if estado_seguro:
+                person_attrs["estado_seguro_paciente"] = estado_seguro
+            if person_attrs:
+                try:
+                    await _update_person_attributes(client, person_id, person_attrs)
+                    log.info("crm_person_attributes_updated", person_id=person_id, attrs=list(person_attrs.keys()))
+                except Exception as attr_err:
+                    log.warning("crm_person_attributes_failed", person_id=person_id, error=str(attr_err))
 
             # 2. Find existing leads for this person — filter by person_id server-side
             leads_resp = await client.get(
@@ -298,7 +347,7 @@ async def update_crm(
                 )
                 log.info("crm_lead_stage_cancelled", lead_id=lead_id)
 
-            # 5. Register insurance
+            # 5. Register insurance on lead
             if seguro_de_vida:
                 insurance_id = _INSURANCE_ID_MAP.get(seguro_de_vida.lower().strip())
                 if insurance_id:
@@ -309,13 +358,24 @@ async def update_crm(
                     )
                     log.info("crm_insurance_registered", lead_id=lead_id, insurance_id=insurance_id)
 
-            # 6. Register CI
+            # 6. Register CI + age + third-party name + insurance status on lead
+            lead_attrs: dict[str, Any] = {}
             if numero_carnet:
+                lead_attrs["ci"] = numero_carnet
+            patient_age = edad_paciente_de_otra_persona if not is_for_self else edad_paciente
+            if patient_age is not None:
+                lead_attrs["edad_lead"] = str(patient_age)
+            if not is_for_self and nombre_paciente_de_otra_persona:
+                lead_attrs["nombre_paciente_de_otra_persona"] = nombre_paciente_de_otra_persona
+            if estado_seguro:
+                lead_attrs["estado_seguro_paciente_cita"] = estado_seguro
+            if lead_attrs:
                 await client.put(
                     f"{_BASE}/api/v1/leads/attributes/edit/{lead_id}",
-                    json={"ci": numero_carnet},
+                    json=lead_attrs,
                     headers=_HEADERS,
                 )
+                log.info("crm_lead_attributes_updated", lead_id=lead_id, attrs=list(lead_attrs.keys()))
 
             # 7. Create appointment activity when confirmed
             appointment_registered = False
@@ -331,14 +391,27 @@ async def update_crm(
                         "lead_id": lead_id,
                     })
 
+                appointment_patient = nombre_paciente_de_otra_persona if not is_for_self else person_name
+                patient_type_label = "Tercero" if not is_for_self else "Mismo paciente"
+                comment_lines = [
+                    f"Paciente: {appointment_patient} ({patient_type_label})",
+                    f"Servicio: {products_name or 'Por definir'}",
+                    f"Motivo: {motivo_consulta or 'No especificado'}",
+                    f"Seguro: {seguro_de_vida or 'Ninguno'}",
+                    f"Estado seguro: {estado_seguro or 'No verificado'}",
+                    f"Doctor: {nombre_doctor or str(doctor_id)}",
+                ]
+                if not is_for_self and nombre_paciente_de_otra_persona:
+                    comment_lines.append(f"Solicitado por: {person_name}")
+
                 activity_body: dict = {
                     "lead_id": lead_id,
-                    "title": f"{person_name} - {products_name or 'Consulta'}",
+                    "title": f"{appointment_patient} - {products_name or 'Consulta'}",
                     "type": "meeting",
                     "schedule_from": schedule_from,
                     "schedule_to": schedule_to,
                     "location": "Consultorio",
-                    "comment": f"{products_name or ''} - Seguro: {seguro_de_vida or 'Ninguno'}",
+                    "comment": "\n".join(comment_lines),
                     "participants": {
                         "persons": [str(person_id)],
                         "users": ["1"],
