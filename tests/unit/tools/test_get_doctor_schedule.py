@@ -57,13 +57,20 @@ def _async_client_ctx(mock_client: AsyncMock) -> AsyncMock:
 
 
 def _slots_payload(doctor_id: int = 5, slots: list | None = None, days: int = 7) -> dict:
-    """Build a realistic /slots API response."""
+    """Build a realistic /slots API response matching the real CRM endpoint shape."""
     if slots is None:
         slots = [
-            {"start": "2026-05-26T09:00:00", "end": "2026-05-26T10:00:00"},
-            {"start": "2026-05-27T10:00:00", "end": "2026-05-27T11:00:00"},
+            {"start_time": "08:30", "end_time": "09:30", "status": "available"},
+            {"start_time": "09:30", "end_time": "10:30", "status": "available"},
         ]
-    return {"doctor_id": doctor_id, "slots": slots, "days_queried": days}
+    schedule = [{"date": "2026-05-26", "slots": slots}] if slots else []
+    return {
+        "doctor_id": doctor_id,
+        "from": "2026-05-25",
+        "days": days,
+        "duration_minutes": 60,
+        "schedule": schedule,
+    }
 
 
 def _today() -> str:
@@ -107,8 +114,8 @@ class TestHappyPath:
             result = invoke(5)
 
         assert result["doctor_id"] == 5
-        assert isinstance(result["slots"], list)
-        assert len(result["slots"]) == 2
+        assert isinstance(result["schedule"], list)
+        assert len(result["schedule"]) == 1  # one day with slots
 
     def test_duration_minutes_forwarded_as_query_param(self):
         """duration_minutes must appear in the request's query params."""
@@ -171,7 +178,7 @@ class TestHappyPath:
             assert call_kwargs["params"]["date"] == _today()
 
     def test_response_structure_matches_contract(self):
-        """Result must have doctor_id (int), slots (list), days_queried (int)."""
+        """Result must have doctor_id (int), schedule (list), days_queried (int)."""
         payload = _slots_payload(doctor_id=7, days=7)
 
         with patch("httpx.AsyncClient") as cls:
@@ -182,10 +189,10 @@ class TestHappyPath:
             result = invoke(7)
 
         assert "doctor_id" in result
-        assert "slots" in result
+        assert "schedule" in result
         assert "days_queried" in result
         assert isinstance(result["doctor_id"], int)
-        assert isinstance(result["slots"], list)
+        assert isinstance(result["schedule"], list)
         assert isinstance(result["days_queried"], int)
 
     def test_duration_minutes_30_forwarded(self):
@@ -208,7 +215,7 @@ class TestHappyPath:
 
 class TestEdgeCases:
     def test_empty_slots_list_returned_gracefully(self):
-        """API returns slots=[] — tool must forward an empty list, not error."""
+        """API returns all days with slots=[] — tool must return empty schedule, not error."""
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
             client.get = AsyncMock(return_value=_make_response(200, _slots_payload(slots=[])))
@@ -217,11 +224,11 @@ class TestEdgeCases:
             result = invoke(5)
 
         assert "error" not in result
-        assert result["slots"] == []
+        assert result["schedule"] == []
 
     def test_days_1_returns_single_day_result(self):
         """days=1 sends correct param and propagates days_queried=1 in result."""
-        single_day_slots = [{"start": "2026-05-26T09:00:00", "end": "2026-05-26T10:00:00"}]
+        single_day_slots = [{"start_time": "09:00", "end_time": "10:00", "status": "available"}]
         payload = _slots_payload(slots=single_day_slots, days=1)
 
         with patch("httpx.AsyncClient") as cls:
@@ -234,7 +241,7 @@ class TestEdgeCases:
         call_kwargs = client.get.call_args[1]
         assert call_kwargs["params"]["days"] == 1
         assert result["days_queried"] == 1
-        assert len(result["slots"]) == 1
+        assert len(result["schedule"]) == 1
 
     def test_duration_minutes_default_is_60(self):
         """When duration_minutes is not provided, defaults to 60."""
@@ -338,7 +345,7 @@ class TestErrorHandling:
             result = invoke(5)
 
         assert "error" not in result
-        assert "slots" in result
+        assert "schedule" in result
 
     def test_network_exception_returns_error(self):
         """Unexpected network failures must return an error dict, not raise."""

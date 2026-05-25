@@ -1,5 +1,6 @@
 """Unit tests for Odontoking API tools (services, specialties, doctors, schedules, availability)."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -166,75 +167,31 @@ class TestGetDoctors:
 
 
 class TestGetDoctorSchedule:
-    @pytest.mark.asyncio
-    async def test_calls_doctor_detail_endpoint_and_returns_availability(self):
+    """Tests for the /api/doctors/{id}/slots endpoint contract.
+
+    New response shape: {"schedule": [{"date", "slots": [{start_time, end_time, status}]}]}.
+    Tool returns {"doctor_id", "schedule": [{date, day_label, slots}], "days_queried"}.
+
+    Run synchronously via asyncio.run() — pytest-asyncio is not installed, so
+    @pytest.mark.asyncio tests are silently skipped (see test_get_doctor_schedule.py).
+    """
+
+    @staticmethod
+    def _invoke(payload: dict):
         from app.core.langgraph.tools.odontoking import get_doctor_schedule
 
+        return json.loads(asyncio.run(get_doctor_schedule.ainvoke(payload)))
+
+    def test_calls_slots_endpoint_and_returns_schedule(self):
+        """Calls /api/doctors/{id}/slots with CSRF header and returns day objects."""
         raw = {
-            "id": 5,
-            "name": "Dra. López",
+            "doctor_id": 5,
             "schedule": [
                 {
-                    "date": "2026-05-15",
+                    "date": "2026-05-26",
                     "slots": [
-                        {"start_time": "09:00", "end_time": "09:30", "status": "available"},
-                        {"start_time": "09:30", "end_time": "10:00", "status": "busy"},
-                    ],
-                },
-                {
-                    "date": "2026-05-16",
-                    "slots": [{"start_time": "10:00", "end_time": "10:30", "status": "available"}],
-                },
-            ],
-        }
-        resp = _make_response(200, raw)
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(return_value=resp)
-            cls.return_value = client
-
-            result = json.loads(await get_doctor_schedule.ainvoke({"id_doctor": 5}))
-            assert result["doctor_id"] == 5
-            assert result["name"] == "Dra. López"
-            assert len(result["availability"]) == 2
-            call_url = client.get.call_args[0][0]
-            call_headers = client.get.call_args[1]["headers"]
-            assert call_url.endswith("/api/doctors/5")
-            assert call_headers["accept"] == "application/json"
-            assert call_headers["X-CSRF-TOKEN"] == ""
-
-    @pytest.mark.asyncio
-    async def test_returns_error_when_doctor_not_found(self):
-        from app.core.langgraph.tools.odontoking import get_doctor_schedule
-
-        resp = _make_response(404, {"message": "Not found"})
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(return_value=resp)
-            cls.return_value = client
-
-            result = json.loads(await get_doctor_schedule.ainvoke({"id_doctor": 999}))
-            assert "error" in result
-
-    @pytest.mark.asyncio
-    async def test_availability_strips_extra_fields(self):
-        from app.core.langgraph.tools.odontoking import get_doctor_schedule
-
-        raw = {
-            "id": 3,
-            "name": "Dr. X",
-            "schedule": [
-                {
-                    "date": "2026-05-20",
-                    "slots": [
-                        {
-                            "startTime": "08:00",
-                            "endTime": "09:00",
-                            "internal_id": 42,
-                            "status": "available",
-                        }
+                        {"start_time": "08:30", "end_time": "09:30", "status": "available"},
+                        {"start_time": "09:30", "end_time": "10:30", "status": "available"},
                     ],
                 }
             ],
@@ -246,12 +203,72 @@ class TestGetDoctorSchedule:
             client.get = AsyncMock(return_value=resp)
             cls.return_value = client
 
-            result = json.loads(await get_doctor_schedule.ainvoke({"id_doctor": 3}))
-            slot = result["availability"][0]
-            assert "date" in slot
-            assert "start_time" in slot
-            assert "end_time" in slot
-            assert "internal_id" not in slot
+            result = self._invoke({"id_doctor": 5})
+
+        assert result["doctor_id"] == 5
+        assert result["days_queried"] == 7
+        assert len(result["schedule"]) == 1
+        day = result["schedule"][0]
+        assert day["date"] == "2026-05-26"
+        assert "day_label" in day
+        assert len(day["slots"]) == 2
+        assert day["slots"][0]["start_time"] == "08:30"
+
+        call_url = client.get.call_args[0][0]
+        call_headers = client.get.call_args[1]["headers"]
+        assert call_url.endswith("/api/doctors/5/slots")
+        assert call_headers["accept"] == "application/json"
+        assert call_headers["X-CSRF-TOKEN"] == ""
+
+    def test_returns_error_when_doctor_not_found(self):
+        """404 yields {"error": "doctor_not_found"} without raising."""
+        resp = _make_response(404, {"message": "Not found"})
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=resp)
+            cls.return_value = client
+
+            result = self._invoke({"id_doctor": 999})
+
+        assert result["error"] == "doctor_not_found"
+
+    def test_schedule_strips_extra_fields_and_filters_unavailable(self):
+        """Slots are reduced to start_time/end_time; busy slots are filtered out."""
+        raw = {
+            "doctor_id": 3,
+            "schedule": [
+                {
+                    "date": "2026-05-26",
+                    "slots": [
+                        {
+                            "start_time": "08:00",
+                            "end_time": "09:00",
+                            "internal_id": 42,
+                            "status": "available",
+                        },
+                        {"start_time": "09:00", "end_time": "10:00", "status": "busy"},
+                    ],
+                }
+            ],
+        }
+        resp = _make_response(200, raw)
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=resp)
+            cls.return_value = client
+
+            result = self._invoke({"id_doctor": 3})
+
+        slots = result["schedule"][0]["slots"]
+        # Only the available slot survives; busy is filtered out.
+        assert len(slots) == 1
+        slot = slots[0]
+        assert slot["start_time"] == "08:00"
+        assert slot["end_time"] == "09:00"
+        assert "internal_id" not in slot
+        assert "status" not in slot
 
 
 class TestGetHorarios:

@@ -163,12 +163,13 @@ async def _fetch_doctor_slots(
     id_doctor: int,
     date: str,
     days: int,
-    duration_minutes: int,
+    duration_minutes: int = 60,
 ) -> httpx.Response:
     """Call the public slots endpoint. Retries on 429/5xx, re-raises on the final attempt."""
     resp = await client.get(
         f"{_BASE}/api/doctors/{id_doctor}/slots",
         params={"date": date, "days": days, "duration_minutes": duration_minutes},
+        headers={"accept": "application/json", "X-CSRF-TOKEN": ""},
     )
     resp.raise_for_status()
     return resp
@@ -183,25 +184,44 @@ async def get_doctor_schedule(id_doctor: int, duration_minutes: int = 60, days: 
         duration_minutes: Appointment duration in minutes. Use the value from get_services() for the chosen service. Defaults to 60.
         days: Number of days ahead to query (1–30). Default is 7.
     """
+    if id_doctor < 1 or id_doctor > 9999:
+        return json.dumps({"error": "invalid_doctor_id", "slots": []}, ensure_ascii=False)
+    days = max(1, min(days, 30))
+    duration_minutes = max(15, min(duration_minutes, 480))
+
     today = _dt.now().date().isoformat()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await _fetch_doctor_slots(client, id_doctor, today, days, duration_minutes)
 
         payload = resp.json()
-        slots = payload.get("slots", payload) if isinstance(payload, dict) else payload
-        if not isinstance(slots, list):
-            slots = []
+        # API returns {"schedule": [{"date": "YYYY-MM-DD", "slots": [{start_time, end_time, status}]}]}
+        raw_schedule = payload.get("schedule", []) if isinstance(payload, dict) else []
 
+        schedule = [
+            {
+                "date": day["date"],
+                "day_label": _add_day_name(day["date"]),
+                "slots": [
+                    {"start_time": s["start_time"], "end_time": s["end_time"]}
+                    for s in day.get("slots", [])
+                    if s.get("status") == "available"
+                ],
+            }
+            for day in raw_schedule
+            if isinstance(day, dict) and day.get("date") and day.get("slots")
+        ]
+
+        total_slots = sum(len(d["slots"]) for d in schedule)
         logger.info(
             "odontoking_doctor_schedule_fetched",
             id_doctor=id_doctor,
             days=days,
             duration_minutes=duration_minutes,
-            total_slots=len(slots),
+            total_slots=total_slots,
         )
         return json.dumps(
-            {"doctor_id": id_doctor, "slots": slots, "days_queried": days},
+            {"doctor_id": id_doctor, "schedule": schedule, "days_queried": days},
             ensure_ascii=False,
         )
 

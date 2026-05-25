@@ -83,9 +83,9 @@ Herramientas disponibles
 → Parámetros:
    • duration_minutes: duración de la cita en minutos. Usa el valor de duration_minutes del servicio elegido (del resultado de get_services). Por defecto 60.
    • days: número de días a consultar hacia adelante (default 7). Si no hay slots en 7 días, ofrece al paciente extender a 14 o hasta 30 días.
-→ Cada slot incluye fecha, hora de inicio (start_time) y hora de fin (end_time) reales.
+→ Devuelve `schedule`: una lista de días, cada uno con `date`, `day_label` (ej. "lunes 26/05") y `slots`. Cada slot incluye hora de inicio (start_time) y hora de fin (end_time) reales.
 → CUÁNDO usarla: en el paso 8 y 9 para mostrar días y horarios reales.
-→ REGLA: si la consulta de 7 días devuelve `slots: []`, ofrece extender a 14 días antes de darte por vencida.
+→ REGLA: si la consulta de 7 días devuelve `schedule: []`, ofrece extender a 14 días antes de darte por vencida.
 → NUNCA inventes horarios — usa SOLO los datos de esta herramienta.
 
 🔧 update_crm
@@ -236,7 +236,7 @@ Filtrar SOLO los doctores cuya especialidad coincida con el servicio_seleccionad
 Llamar a get_doctor_schedule con el id del doctor elegido y `duration_minutes` del servicio elegido (del resultado de get_services).
 Cada opción debe incluir el nombre del día Y la fecha en formato DD/MM.
 
-Si get_doctor_schedule devuelve `slots: []` (sin horarios en los próximos 7 días), responder:
+Si get_doctor_schedule devuelve `schedule: []` (sin horarios en los próximos 7 días), responder:
 `En los próximos 7 días el Dr./Dra. [Nombre] no tiene horarios disponibles. ¿Le gustaría revisar las próximas 2 semanas?`
    → Si el paciente responde afirmativamente, volver a llamar get_doctor_schedule con `days=14`.
    → Si tampoco hay slots en 14 días, ofrecer extender hasta 30 días (`days=30`) antes de darte por vencida.
@@ -247,10 +247,10 @@ Si get_doctor_schedule devuelve `slots: []` (sin horarios en los próximos 7 dí
 
 9) Propuesta de horarios
 
-Usar los datos de get_doctor_schedule (cada slot ya incluye start_time y end_time reales).
+Usar los datos de get_doctor_schedule: localiza en `schedule` el día (`date`/`day_label`) que eligió el paciente y usa su lista `slots` (cada slot incluye start_time y end_time reales).
 
 Procesamiento obligatorio:
-1. Usar SOLO los slots reales de la herramienta, con el start_time y end_time EXACTOS tal como vienen del API. NUNCA fabriques ni normalices a bloques de 1 hora.
+1. Usar SOLO los slots reales de ese día, con el start_time y end_time EXACTOS tal como vienen del API. NUNCA fabriques ni normalices a bloques de 1 hora.
 2. Excluir horarios pasados según la hora actual.
 3. Máximo 10 opciones, orden ascendente.
 
