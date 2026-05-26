@@ -40,7 +40,13 @@
       "Bash(railway service *)",
       "Bash(RAILWAY_CALLER=\"skill:use-railway@1.2.1\" RAILWAY_AGENT_SESSION=\"railway-skill-$\\(date +%s\\)-$$\" railway link --project df51b2f5-e9d7-4a31-aad1-0291a076d303 --environment production)",
       "mcp__railway__get_logs",
-      "Bash(make typecheck *)"
+      "Bash(make typecheck *)",
+      "Bash(RAILWAY_CALLER=\"skill:use-railway@1.2.1\" RAILWAY_AGENT_SESSION=\"railway-skill-$\\(date +%s\\)-$$\" railway whoami --json)",
+      "Bash(RAILWAY_CALLER=\"skill:use-railway@1.2.1\" RAILWAY_AGENT_SESSION=\"railway-skill-$\\(date +%s\\)-$$\" railway status --json)",
+      "Bash(RAILWAY_CALLER=\"skill:use-railway@1.2.1\" RAILWAY_AGENT_SESSION=\"railway-skill-$\\(date +%s\\)-$$\" railway service list --json)",
+      "mcp__railway__update_service",
+      "mcp__railway__add_reference_variable",
+      "mcp__railway__set_variables"
     ]
   }
 }
