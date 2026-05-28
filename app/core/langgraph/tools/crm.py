@@ -186,8 +186,8 @@ async def ensure_person_registered(
 @tool
 async def update_crm(
     wa_id: str,
-    person_name: str,
-    person_phone: str,
+    person_name: Optional[str] = None,
+    person_phone: Optional[str] = None,
     products_name: Optional[str] = None,
     products_product_id: Optional[int] = None,
     doctor_id: Optional[int] = None,
@@ -214,8 +214,12 @@ async def update_crm(
 
     Args:
         wa_id: WhatsApp ID of the contact (e.g. '591XXXXXXXX').
-        person_name: Full name of the person writing.
-        person_phone: Phone number digits only.
+        person_name: Full name of the person writing. ALWAYS pass it when known
+            (from earlier turns, verify_insurance.patient_name, or the user's
+            self-introduction). If omitted, falls back to "Paciente WhatsApp",
+            which degrades CRM data quality.
+        person_phone: Phone number digits only. ALWAYS pass it when known.
+            If omitted, falls back to wa_id.
         products_name: Service/product name chosen by patient.
         products_product_id: Numeric ID of the product from get_services().
         doctor_id: Numeric ID of the chosen doctor from get_doctors().
@@ -234,6 +238,14 @@ async def update_crm(
         motivo_consulta: Patient's reason for visit or main complaint.
         estado_seguro: Insurance status after verification (e.g. 'VIGENTE', 'VENCIDO').
     """
+    # Resolve fallbacks locally so downstream uses (lead title, person payload,
+    # comment lines) always have a non-None string. ensure_person_registered has
+    # the same defaults internally — we mirror them here to keep CRM records
+    # consistent when the LLM omits these fields after a prior tool already
+    # established the patient's identity (e.g. verify_insurance).
+    person_name = person_name.strip() if isinstance(person_name, str) and person_name.strip() else "Paciente WhatsApp"
+    person_phone = person_phone.strip() if isinstance(person_phone, str) and person_phone.strip() else wa_id
+
     log = logger.bind(wa_id=wa_id, person_name=person_name)
     person_email = _person_email_from_wa_id(wa_id)
 

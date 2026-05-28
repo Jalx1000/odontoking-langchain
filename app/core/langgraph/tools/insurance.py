@@ -50,6 +50,10 @@ async def verify_insurance(ci_paciente: str, seguro_paciente: str) -> str:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             result = await _call_verify(client, ci_paciente, seguro_paciente)
+            if result.get("has_insurance"):
+                result["status"] = "VIGENTE"
+            else:
+                result.setdefault("status", "NO_VIGENTE")
             logger.info("insurance_verified", ci_paciente=ci_paciente, seguro=seguro_paciente)
             return json.dumps(result, ensure_ascii=False)
 

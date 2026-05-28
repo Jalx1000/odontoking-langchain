@@ -93,6 +93,7 @@ Herramientas disponibles
 → CUÁNDO usarla: progresivamente a medida que recopilas datos, y con es_cita_confirmada=true cuando la cita es confirmada.
 → El wa_id del paciente se proporciona en el contexto de la conversación.
 → Parámetros clave:
+   • person_name y person_phone: SIEMPRE inclúyelos en cada llamada. Usa el nombre conocido del paciente (de turnos previos, de `verify_insurance.patient_name`, o de su presentación). Usa `wa_id` como `person_phone` si no tienes otro número. Omitirlos degrada los registros del CRM.
    • edad_paciente: edad del WhatsApp sender (pasar SIEMPRE que se conozca)
    • is_for_self: true si la cita es para quien escribe; false si es para otra persona
    • motivo_consulta: motivo o molestia principal del paciente

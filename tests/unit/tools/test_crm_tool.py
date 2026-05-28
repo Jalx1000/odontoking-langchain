@@ -414,3 +414,122 @@ class TestGetCitas:
 
             result = json.loads(await get_citas.ainvoke({"wa_id": "591700000000"}))
             assert "error" in result
+
+
+class TestUpdateCrmMissingPersonFields:
+    """Regression: update_crm must not raise ValidationError when person_name/person_phone are omitted.
+
+    Root cause: LLM called update_crm after verify_insurance with only insurance fields,
+    omitting the required person_name and person_phone, causing a Pydantic ValidationError
+    that silently dropped the entire CRM write.
+    """
+
+    def _insurance_only_args(self, **overrides) -> dict:
+        args = {
+            "wa_id": "59176616013",
+            "numero_carnet": "12387735",
+            "seguro_de_vida": "Membresía Odontoking",
+            "estado_seguro": "VIGENTE",
+        }
+        args.update(overrides)
+        return args
+
+    @pytest.mark.asyncio
+    async def test_omitting_person_name_and_phone_does_not_raise(self):
+        from app.core.langgraph.tools.crm import update_crm
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_NEW, LEADS_EMPTY])
+            client.post = AsyncMock(side_effect=[PERSON_CREATED, LEAD_CREATED])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            cls.return_value = client
+
+            result = json.loads(await update_crm.ainvoke(self._insurance_only_args()))
+            assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_person_name_none_does_not_raise(self):
+        from app.core.langgraph.tools.crm import update_crm
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_NEW, LEADS_EMPTY])
+            client.post = AsyncMock(side_effect=[PERSON_CREATED, LEAD_CREATED])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            cls.return_value = client
+
+            result = json.loads(
+                await update_crm.ainvoke(self._insurance_only_args(person_name=None, person_phone=None))
+            )
+            assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_fallback_name_paciente_whatsapp_used_in_crm_post(self):
+        from app.core.langgraph.tools.crm import update_crm
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_NEW, LEADS_EMPTY])
+            client.post = AsyncMock(side_effect=[PERSON_CREATED, LEAD_CREATED])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            cls.return_value = client
+
+            await update_crm.ainvoke(self._insurance_only_args())
+
+            person_post_body = client.post.call_args_list[0][1]["json"]
+            assert person_post_body["name"] == "Paciente WhatsApp"
+
+    @pytest.mark.asyncio
+    async def test_fallback_phone_uses_wa_id_when_phone_absent(self):
+        from app.core.langgraph.tools.crm import update_crm
+
+        wa_id = "59176616013"
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_NEW, LEADS_EMPTY])
+            client.post = AsyncMock(side_effect=[PERSON_CREATED, LEAD_CREATED])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            cls.return_value = client
+
+            await update_crm.ainvoke(self._insurance_only_args(wa_id=wa_id))
+
+            person_post_body = client.post.call_args_list[0][1]["json"]
+            assert person_post_body["contact_numbers"][0]["value"] == wa_id
+
+    @pytest.mark.asyncio
+    async def test_empty_string_person_name_uses_fallback(self):
+        from app.core.langgraph.tools.crm import update_crm
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_NEW, LEADS_EMPTY])
+            client.post = AsyncMock(side_effect=[PERSON_CREATED, LEAD_CREATED])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            cls.return_value = client
+
+            await update_crm.ainvoke(self._insurance_only_args(person_name="", person_phone=""))
+
+            person_post_body = client.post.call_args_list[0][1]["json"]
+            assert person_post_body["name"] == "Paciente WhatsApp"
+
+    @pytest.mark.asyncio
+    async def test_no_regression_with_valid_name_and_phone(self):
+        from app.core.langgraph.tools.crm import update_crm
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_NEW, LEADS_EMPTY])
+            client.post = AsyncMock(side_effect=[PERSON_CREATED, LEAD_CREATED])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            cls.return_value = client
+
+            await update_crm.ainvoke(
+                self._insurance_only_args(
+                    person_name="Javier Alejandro Mogro Peñafiel",
+                    person_phone="59176616013",
+                )
+            )
+
+            person_post_body = client.post.call_args_list[0][1]["json"]
+            assert person_post_body["name"] == "Javier Alejandro Mogro Peñafiel"
