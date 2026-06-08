@@ -46,7 +46,11 @@
       "Bash(RAILWAY_CALLER=\"skill:use-railway@1.2.1\" RAILWAY_AGENT_SESSION=\"railway-skill-$\\(date +%s\\)-$$\" railway service list --json)",
       "mcp__railway__update_service",
       "mcp__railway__add_reference_variable",
-      "mcp__railway__set_variables"
+      "mcp__railway__set_variables",
+      "Bash(railway list *)",
+      "Bash(railway link *)",
+      "Bash(railway status *)",
+      "Bash(railway variables *)"
     ]
   }
 }

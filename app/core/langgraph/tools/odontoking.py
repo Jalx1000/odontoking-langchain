@@ -221,7 +221,7 @@ async def get_doctor_schedule(id_doctor: int, duration_minutes: int = 60, days: 
             total_slots=total_slots,
         )
         return json.dumps(
-            {"doctor_id": id_doctor, "schedule": schedule, "days_queried": days},
+            {"doctor_id": id_doctor, "schedule": schedule if total_slots > 0 else "Sin disponibilidad", "days_queried": days},
             ensure_ascii=False,
         )
 
