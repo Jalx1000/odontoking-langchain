@@ -126,7 +126,7 @@ async def get_doctors() -> str:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
                 f"{_BASE}/api/doctors",
-                params={"page": 1, "limit": 100},
+                params={"page": 1, "limit": 150},
                 headers={"accept": "application/json"},
             )
             resp.raise_for_status()
@@ -136,6 +136,7 @@ async def get_doctors() -> str:
                     "id": d["id"],
                     "name": d["name"],
                     "status": d.get("is_active"),
+                    "has_availability": d.get("has_availability"),
                     "minimum_patient_age": d.get("age_range_min"),
                     "maximum_patient_age": d.get("age_range_max"),
                     "specialties": [
