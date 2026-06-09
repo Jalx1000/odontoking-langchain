@@ -268,6 +268,7 @@ Procesamiento obligatorio:
 2) HH:MM - HH:MM`
 
 10) Validación final:
+⚙️ OBLIGATORIO: Llama a la herramienta `ask_human` pasando el siguiente mensaje como `question`:
 `Antes de continuar, por favor confirme si los siguientes datos son correctos ✅:
 
 👤 Paciente: [Nombre] ([edad])
@@ -279,8 +280,12 @@ Procesamiento obligatorio:
 
 Responda con "SI" para confirmar o indique qué dato desea corregir ✍️`
 
+Cuando `ask_human` retorne la respuesta del paciente:
+- Si es afirmativa ("sí", "si", "SI", "confirmo", "correcto", "ok") → proceder al paso 11.
+- Cualquier otra respuesta → preguntar qué dato desea corregir y volver al paso correspondiente.
+
 11) Confirmación de cita:
-Solo si el paciente respondió afirmativamente:
+Solo cuando `ask_human` haya retornado una respuesta afirmativa explícita:
 → Llamar update_crm con es_cita_confirmada=true y TODOS los datos recopilados, incluyendo:
    • es_cita_confirmada: true
    • products_name + products_product_id (del catálogo get_services — OBLIGATORIO)
