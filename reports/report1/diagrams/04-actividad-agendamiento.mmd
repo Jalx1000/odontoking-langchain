@@ -1,0 +1,27 @@
+%% Diagrama de actividad — agendamiento de cita (flujo de negocio)
+%% Render: VSCode (Markdown Preview Mermaid Support) o https://mermaid.live
+flowchart TD
+    START([Paciente escribe]) --> REG{¿Existe en CRM?}
+    REG -->|No| CREATE[Crear persona en CRM\nis_new_patient=true]
+    REG -->|Sí| LOAD[Cargar ci/seguro previos\nis_new_patient=false]
+    CREATE --> INTENT
+    LOAD --> INTENT[Detectar intención / motivo]
+
+    INTENT --> SVC[get_services / get_specialties]
+    SVC --> INS{¿Tiene seguro?}
+    INS -->|Sí| VERIFY[verify_insurance\nci + aseguradora]
+    INS -->|No| DOC
+    VERIFY --> VSTATE{¿VIGENTE?}
+    VSTATE -->|Sí| DOC[get_doctors]
+    VSTATE -->|No / vencido| INFORM[Informar al paciente\ncosto particular]
+    INFORM --> DOC
+
+    DOC --> SLOTS[get_doctor_schedule /\nget_disponibilidad]
+    SLOTS --> OFFER[Ofrecer horarios disponibles]
+    OFFER --> PICK{¿Paciente elige horario?}
+    PICK -->|No| OFFER
+    PICK -->|Sí| CONFIRM[update_crm\nes_cita_confirmada=true]
+    CONFIRM --> ACT{¿Cita registrada?}
+    ACT -->|422 conflicto| OFFER
+    ACT -->|OK| SYNC[sync_transcript_to_crm\nnota con historial]
+    SYNC --> END([Cita agendada ✅])

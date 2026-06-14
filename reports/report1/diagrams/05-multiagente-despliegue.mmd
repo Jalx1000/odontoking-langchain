@@ -1,0 +1,33 @@
+%% Topología multi-agente / despliegue (estado actual vs objetivo "Plan B")
+%% Render: VSCode (Markdown Preview Mermaid Support) o https://mermaid.live
+flowchart LR
+    subgraph META["Meta — 1 App por tenant"]
+        APP1["App Odontoking\n/odontoking/webhook"]
+        APP2["App Kohlberg\n/kohlberg/webhook (futuro)"]
+    end
+
+    subgraph PLATFORM["Plataforma FastAPI (1 servicio)"]
+        ROUTER["Webhook multi-tenant\nget_tenant_async: cache->DB->env"]
+        REG["_AGENT_REGISTRY\n{ odontoking } ← solo 1 hoy"]
+    end
+
+    subgraph DELIVERY["Entrega de mensajes"]
+        INPROC["Ruta A: in-process\nbuffer -> agente embebido"]
+        BROKERR["Ruta B: broker\nRedis Streams / RabbitMQ"]
+    end
+
+    subgraph WORKERS["Workers (1 servicio por tenant)"]
+        WK1["worker-odontoking\nWORKER_TENANT=odontoking"]
+        WK2["worker-kohlberg\nreplicas=2 (futuro)"]
+    end
+
+    APP1 --> ROUTER
+    APP2 -.futuro.-> ROUTER
+    ROUTER --> REG
+    REG -->|agent_endpoint_url vacío| INPROC
+    ROUTER -->|agent_endpoint_url set| BROKERR
+    BROKERR --> WK1
+    BROKERR -.futuro.-> WK2
+
+    classDef future stroke-dasharray: 5 5,color:#888;
+    class APP2,WK2 future;

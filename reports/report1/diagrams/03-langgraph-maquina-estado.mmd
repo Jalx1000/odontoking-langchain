@@ -1,0 +1,25 @@
+%% Máquina de estados del grafo LangGraph (OdontokingAgent)
+%% Render: VSCode (Markdown Preview Mermaid Support) o https://mermaid.live
+stateDiagram-v2
+    [*] --> chat: entry_point
+    chat --> tool_call: AIMessage con tool_calls
+    chat --> [*]: respuesta final (END)
+    tool_call --> chat: ToolMessages (retry_policy=3)
+
+    note right of chat
+        Carga system prompt (odontoking.md)
+        + contexto paciente + fecha Bolivia.
+        Llama OpenAI directamente
+        (NO usa llm_service: sin fallback)
+    end note
+
+    note right of tool_call
+        Ejecuta tools en paralelo (gather).
+        10 tools: services, doctors, slots,
+        horarios, disponibilidad, insurance,
+        update_crm, get_citas, transcript...
+    end note
+
+    state "GraphRecursionError" as ERR
+    chat --> ERR: recursion_limit=50
+    ERR --> [*]: ⚠ clear_history (borra checkpoint)

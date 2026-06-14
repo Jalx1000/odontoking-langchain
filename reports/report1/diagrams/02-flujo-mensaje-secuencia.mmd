@@ -1,0 +1,39 @@
+%% Diagrama de secuencia — flujo de un mensaje de WhatsApp (ruta in-process)
+%% Render: VSCode (Markdown Preview Mermaid Support) o https://mermaid.live
+sequenceDiagram
+    autonumber
+    actor P as Paciente (WhatsApp)
+    participant M as Meta Cloud API
+    participant W as Webhook (whatsapp.py)
+    participant C as CRM Sofopolis
+    participant B as MessageBuffer (Redis)
+    participant A as OdontokingAgent
+    participant L as OpenAI (LLM)
+    participant T as Tools (clinic/CRM/insurance)
+    participant D as PostgreSQL (checkpoint+historial)
+
+    P->>M: Envía mensaje (texto / audio)
+    M->>W: POST /{tenant}/webhook
+    W->>W: dedup msg_id + rate-limit por wa_id
+    alt audio
+        W->>M: download_media
+        W->>L: transcribe_audio (Whisper)
+    end
+    W->>C: ensure_person_registered (is_new_patient, ci, seguro)
+    W-->>M: 200 OK (rápido)
+    W->>B: enqueue(wa_id, texto)
+    Note over B: espera BUFFER_WINDOW_SECONDS (debounce)<br/>1 worker por wa_id (lock Redis)
+    B->>A: process_fn(wa_id, texto combinado)
+    A->>D: aget_state(thread_id=wa_id)
+    A->>L: ainvoke(system_prompt + historial)
+    loop mientras haya tool_calls
+        L-->>A: tool_calls
+        A->>T: ejecuta tool(s) (gather si varias)
+        T-->>A: resultado JSON
+        A->>L: ainvoke con ToolMessages
+    end
+    L-->>A: AIMessage final (JSON con "mensaje")
+    A->>D: persiste mensajes (async)
+    A-->>B: texto respuesta
+    B->>M: send_response (texto o botones)
+    M->>P: Entrega respuesta

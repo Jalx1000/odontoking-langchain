@@ -1,0 +1,55 @@
+%% Diagrama de arquitectura de componentes — 01.odontoking
+%% Render: VSCode (Markdown Preview Mermaid Support) o https://mermaid.live
+flowchart TB
+    subgraph EXT["Servicios externos"]
+        META["WhatsApp Cloud API\n(Meta graph v25.0)"]
+        OPENAI["OpenAI\nChatOpenAI gpt-4o-mini + Whisper-1"]
+        CRM["Sofopolis / OdontoCRM\npersons · leads · activities"]
+        CLINIC["Odontoking API\nproducts · doctors · slots · horarios"]
+        INS["Insurance Verify API\n/api/v1/insurance/verify"]
+        LF["Langfuse\ntracing"]
+    end
+
+    subgraph APP["FastAPI (app.main)"]
+        WH["Webhook router\napp/api/v1/whatsapp.py"]
+        ADMIN["Admin API\napp/api/admin/*"]
+        AUTHAPI["Auth/Chatbot API\n(web, sin uso en prod WA)"]
+        HEALTH["/health · /metrics"]
+        BUF["MessageBufferService\n(debounce por wa_id)"]
+        AGENT["OdontokingAgent\nLangGraph chat<->tool_call"]
+        BROKER["Broker (publish)\nRedis Streams / RabbitMQ"]
+    end
+
+    subgraph WORKER["Worker (app.worker) — 1 por tenant"]
+        WCONS["Consumer Redis Streams"]
+        WAGENT["OdontokingAgent"]
+    end
+
+    subgraph DATA["Estado / Datos"]
+        PG[("PostgreSQL\ncheckpoints · chat_histories_odonto\ntenants · users · sessions · usage_logs")]
+        VEC[("pgvector + mem0\nmemoria largo plazo")]
+        REDIS[("Redis / Valkey\nbuffer · locks · cache · streams")]
+    end
+
+    META -->|POST webhook| WH
+    WH -->|registra paciente| CRM
+    WH --> BUF
+    BUF --> AGENT
+    WH -.->|si agent_endpoint_url| BROKER
+    BROKER --> WCONS --> WAGENT
+
+    AGENT --> OPENAI
+    AGENT --> CRM
+    AGENT --> CLINIC
+    AGENT --> INS
+    AGENT --> PG
+    AGENT --> VEC
+    AGENT -->|respuesta| META
+    WAGENT --> OPENAI
+    WAGENT --> PG
+    WAGENT -->|respuesta| META
+
+    AGENT -.trazas.-> LF
+    BUF --> REDIS
+    BROKER --> REDIS
+    ADMIN --> PG

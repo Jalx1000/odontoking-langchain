@@ -145,7 +145,7 @@ async def get_doctors() -> str:
                     ],
                 }
                 for d in data
-                if d.get("is_active") and d.get("has_availability")
+                if d.get("is_active") and d.get("has_availability") and d.get("has_availability" != true)
             ]
             logger.info("odontoking_doctors_fetched", count=len(filtered))
             return json.dumps({"data": filtered}, ensure_ascii=False)
