@@ -55,6 +55,13 @@ from app.core.langgraph.tools.odontoking import (
     get_services,
     get_specialties,
 )
+from app.core.langgraph.intake import (
+    advance_intake,
+    handoff_context,
+    intake_store,
+    is_booking_intent,
+    new_state,
+)
 from app.core.logging import logger
 from app.core.observability import langfuse_callback_handler
 from app.schemas import GraphState
@@ -229,6 +236,11 @@ class OdontokingAgent:
             nombre_registrado=metadata.get("nombre_registrado"),
             nombre_whatsapp=metadata.get("nombre_whatsapp"),
         )
+        # When the deterministic intake already collected steps 1-6, inject that data so the
+        # LLM continues from step 7 and never re-asks.
+        intake_handoff = metadata.get("intake_handoff")
+        if intake_handoff:
+            system_prompt = f"{system_prompt}\n\n{intake_handoff}"
 
         # Build messages with LangChain types directly — bypasses Message max_length validation
         langchain_messages = [SystemMessage(content=system_prompt)] + list(state.messages)
@@ -305,6 +317,76 @@ class OdontokingAgent:
             raise RuntimeError("odontoking graph initialization failed")
         return self._graph
 
+    async def _intake_turn(
+        self,
+        wa_id: str,
+        text: str,
+        seed_name: Optional[str],
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Drive the deterministic intake for one turn.
+
+        Returns (reply, handoff):
+          - reply not None  → send this question/message and end the turn (intake in progress).
+          - reply None      → fall through to the LLM (Phase 2). handoff carries the collected
+                              data when the intake is complete, else None (general chat).
+        """
+        state = await intake_store.get(wa_id)
+
+        async def _start() -> tuple[Optional[str], Optional[str]]:
+            fresh = new_state(seed_name)
+            result = await advance_intake(fresh, None)
+            await intake_store.set(wa_id, result.state)
+            reply = f"Con gusto le ayudo a agendar su cita. {result.reply}" if result.reply else result.reply
+            return reply, None
+
+        if state is None:
+            if not is_booking_intent(text):
+                return None, None  # greeting / general question → let the LLM handle it
+            return await _start()
+
+        if state.get("completo"):
+            if is_booking_intent(text):
+                return await _start()  # a new booking → re-run the 12 steps
+            return None, handoff_context(state)  # continue Phase 2 of the current booking
+
+        result = await advance_intake(state, text)
+        await intake_store.set(wa_id, result.state)
+        if not result.completed:
+            return result.reply, None
+
+        # Intake just completed this turn → best-effort CRM capture + handoff to the LLM.
+        self._persist_intake_crm(wa_id, result.state)
+        logger.info("intake_completed", wa_id=wa_id)
+        return None, handoff_context(result.state)
+
+    def _persist_intake_crm(self, wa_id: str, state: dict) -> None:
+        """Fire-and-forget CRM capture of the intake data (lead + person + insurance)."""
+
+        async def _do() -> None:
+            try:
+                payload: dict = {
+                    "wa_id": wa_id,
+                    "person_name": state.get("nombre"),
+                    "edad_paciente": state.get("edad"),
+                    "is_for_self": bool(state.get("is_for_self")),
+                    "paciente_antiguo": bool(state.get("es_antiguo")),
+                    "motivo_consulta": state.get("motivo"),
+                }
+                if state.get("is_for_self") is False:
+                    payload["nombre_paciente_de_otra_persona"] = state.get("tercero_nombre")
+                    payload["edad_paciente_de_otra_persona"] = state.get("tercero_edad")
+                if state.get("seguro") and state.get("seguro") != "No tengo seguro":
+                    payload["seguro_de_vida"] = state.get("seguro")
+                    payload["numero_carnet"] = state.get("ci")
+                    payload["estado_seguro"] = state.get("seguro_estado")
+                await update_crm.ainvoke(payload)
+            except Exception as e:
+                logger.warning("intake_crm_persist_failed", wa_id=wa_id, error=str(e))
+
+        task = asyncio.create_task(_do())
+        self._persist_tasks.add(task)
+        task.add_done_callback(self._persist_tasks.discard)
+
     async def get_response(
         self,
         messages: list,
@@ -321,6 +403,19 @@ class OdontokingAgent:
         Returns the content of the 'mensaje' JSON field from the LLM response,
         or the raw text if the response is not a valid JSON.
         """
+        last_user_text = messages[-1].content if messages else ""
+
+        # ── Deterministic intake (steps 1-6) — guarantees the flow order ──
+        # When active it asks one canonical question per turn and returns early; when the
+        # intake completes it hands off to the LLM (steps 7-12) with all data injected.
+        intake_handoff: Optional[str] = None
+        if settings.INTAKE_ENABLED:
+            intake_reply, intake_handoff = await self._intake_turn(
+                wa_id, last_user_text, nombre_registrado or nombre_whatsapp
+            )
+            if intake_reply is not None:
+                return intake_reply
+
         graph = await self._get_graph()
         callbacks: list[BaseCallbackHandler] = [langfuse_callback_handler] if settings.LANGFUSE_TRACING_ENABLED else []
         config: RunnableConfig = {
@@ -333,6 +428,7 @@ class OdontokingAgent:
                 "seguro_paciente": seguro_paciente,
                 "nombre_registrado": nombre_registrado,
                 "nombre_whatsapp": nombre_whatsapp,
+                "intake_handoff": intake_handoff,
             },
             "recursion_limit": 50,
         }

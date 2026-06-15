@@ -243,6 +243,8 @@ class Settings:
         self.ODONTOKING_API_TOKEN = os.getenv("ODONTOKING_API_TOKEN", "")
         self.ODONTOKING_MEMORY_ENABLED = os.getenv("ODONTOKING_MEMORY_ENABLED", "false").lower() in ("true", "1", "yes")
         self.ODONTOKING_LLM_MODEL = os.getenv("ODONTOKING_LLM_MODEL", "gpt-4o-mini")
+        # Deterministic intake (steps 1-6 forced by code). Disable to fall back to LLM-only flow.
+        self.INTAKE_ENABLED = os.getenv("INTAKE_ENABLED", "true").lower() in ("true", "1", "yes")
 
         # WhatsApp message buffer
         self.BUFFER_ENABLED = os.getenv("BUFFER_ENABLED", "true").lower() in ("true", "1", "yes")
