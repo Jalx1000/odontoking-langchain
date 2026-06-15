@@ -125,12 +125,21 @@ def _load_odontoking_prompt(
         context_lines.append("nombre_registrado: null  # pedir el nombre completo al paciente")
     if ci_paciente:
         context_lines.append(f"ci_paciente_registrada: {ci_paciente}")
+    else:
+        context_lines.append("ci_paciente_registrada: null")
     if seguro_paciente:
         context_lines.append(f"seguro_registrado: {seguro_paciente}")
-    if not is_new_patient and not ci_paciente:
-        context_lines.append("ci_paciente_registrada: null  # solicitar al paciente si necesita verificar seguro")
-    if not is_new_patient and not seguro_paciente:
-        context_lines.append("seguro_registrado: null  # preguntar si tiene seguro")
+    else:
+        context_lines.append("seguro_registrado: null")
+    # Insurance is a hard gate before booking. If it is not already verified in context,
+    # the agent MUST run the insurance flow (ask + carnet + verify_insurance) before
+    # proposing slots or confirming — even for returning patients.
+    if not (ci_paciente and seguro_paciente):
+        context_lines.append(
+            "# ⚠️ SEGURO NO VERIFICADO — OBLIGATORIO antes de agendar (también pacientes recurrentes): "
+            "pregunta por el seguro; si elige una aseguradora pide el carnet y llama verify_insurance. "
+            "Si la verificación NO da VIGENTE, NO agendes. Solo 'No tengo seguro' puede agendar como particular."
+        )
 
     context = "\n".join(context_lines)
     return _PROMPT_TEMPLATE.format(current_datetime=current_datetime) + f"\n\n{context}"

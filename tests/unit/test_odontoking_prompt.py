@@ -43,3 +43,39 @@ class TestPatientContextRendering:
         prompt = _load_odontoking_prompt("591700", is_new_patient=False)
         assert "paciente_nuevo: true" in prompt
         assert "pedir el nombre completo" in prompt
+
+
+class TestInsuranceGate:
+    """Insurance must be a hard gate before booking, including returning patients."""
+
+    def test_gate_present_when_insurance_missing(self):
+        """Returning patient with name but no insurance/ci → insurance gate is injected."""
+        prompt = _load_odontoking_prompt(
+            "591700",
+            is_new_patient=False,
+            nombre_registrado="Javier Mogro",
+        )
+        assert "SEGURO NO VERIFICADO" in prompt
+
+    def test_gate_present_when_only_ci_missing(self):
+        """Having only the insurance company (no ci) still triggers the gate."""
+        prompt = _load_odontoking_prompt(
+            "591700",
+            is_new_patient=False,
+            nombre_registrado="Javier Mogro",
+            seguro_paciente="Membresía Odontoking",
+        )
+        assert "SEGURO NO VERIFICADO" in prompt
+
+    def test_gate_absent_when_insurance_fully_registered(self):
+        """Both ci and insurance in context → no gate, values are shown."""
+        prompt = _load_odontoking_prompt(
+            "591700",
+            is_new_patient=False,
+            nombre_registrado="Javier Mogro",
+            ci_paciente="12387735",
+            seguro_paciente="Membresía Odontoking",
+        )
+        assert "SEGURO NO VERIFICADO" not in prompt
+        assert "ci_paciente_registrada: 12387735" in prompt
+        assert "seguro_registrado: Membresía Odontoking" in prompt

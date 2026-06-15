@@ -52,16 +52,31 @@ La prioridad "nombre desde el seguro" asume que `verify_insurance` retorna `pati
 `insurance.py` devuelve el payload crudo, así que si la API lo incluye, fluye; si no, el
 fallback al nombre del evento WhatsApp cubre el caso. **Confirmar con la API real.**
 
+## Update — Error 02: el seguro no se verifica en pacientes recurrentes (2026-06-14, noche)
+**Síntoma:** paciente recurrente CON nombre (`nombre_registrado=Javier Mogro`) pero sin
+`ci`/`seguro` en contexto → el agente agendó **sin pasar por verificación de seguro**.
+**Causa:** la regla 2 (`paciente_nuevo: false`) enrutaba directo al paso 6 (Motivo), saltando
+los pasos 4-5 (seguro). El fix anterior solo forzaba onboarding cuando faltaba el NOMBRE.
+**Regla de negocio (confirmada):** verificación de seguro **obligatoria antes de agendar**,
+también recurrentes. Aseguradora + `verify_insurance` NO vigente → **no se agenda** (regularizar).
+"No tengo seguro" → **sí agenda** (particular).
+**Cambios:**
+- `odontoking_graph.py` `_load_odontoking_prompt`: inyecta gate dinámico `# ⚠️ SEGURO NO
+  VERIFICADO ...` cuando falta `ci` o `seguro` (cualquier paciente).
+- `odontoking.md`: regla 2 refuerza seguro obligatorio para recurrentes; paso 4 marcado
+  obligatorio + rama "No tengo seguro"=particular; paso 11 añade condición (c) seguro resuelto;
+  REGLA FINAL DE ORO con "SEGURO = BARRERA OBLIGATORIA".
+- `tests/unit/test_odontoking_prompt.py`: +3 tests del gate (`TestInsuranceGate`).
+**Verificación:** `uv run pytest` → **275 passed**.
+
 ## Deploy
 - **Proyecto Railway:** `Odontoking` (ID `df51b2f5-e9d7-4a31-aad1-0291a076d303`), env `production`.
   Servicio backend: **`odontoking-langchain`** (agente in-process). Otros: pgvector, Redis,
   RabbitMQ(+UI/prod), DbGate, `04.agent-production-front`, `odontoking-evals`.
-- **Estado actual de prod:** corre `origin/master` = `23eb7da` (deploy 2026-06-10). `get_doctors`
-  funciona (logs `count=12` el 2026-06-14). El error reportado se debe a #2/#3/#4 (onboarding/nombre).
-- **Estado de git:** `origin/master` = `23eb7da`. Local `master` = `b253092` (regresión `true`,
-  sin pushear). Mis fixes están en el working tree **sin commitear**.
-- **Para desplegar el fix:** commit de los fixes (deja `get_doctors` correcto, anula `b253092`) →
-  push a `origin/master` → Railway auto-reconstruye (`railway.toml` builder=dockerfile). **Sin
-  migraciones de DB.** Es deploy a producción → requiere OK explícito del usuario.
+- **Fix #1 (Error 01) DESPLEGADO:** commit `ae35f4d` → push a `origin/master` → deployment
+  `96a4d608` SUCCESS (2026-06-14 21:23), instance arrancó `2026-06-15T01:25:38Z`. En vivo.
+- **Fix #2 (Error 02, gate de seguro): PENDIENTE de deploy** — en working tree, sin commitear.
+- **Deploy:** commit + push a `origin/master` → Railway auto-reconstruye. **Sin migraciones de DB.**
+  Es deploy a producción → requiere OK explícito del usuario.
 - Nota: `.github/workflows/deploy.yaml` está roto (`make docker-build-env` no existe); Railway
   construye directo del repo, así que no bloquea, pero conviene arreglarlo aparte.
