@@ -69,6 +69,21 @@ también recurrentes. Aseguradora + `verify_insurance` NO vigente → **no se ag
 - `tests/unit/test_odontoking_prompt.py`: +3 tests del gate (`TestInsuranceGate`).
 **Verificación:** `uv run pytest` → **275 passed**.
 
+## Update — Error 03: no respeta el flujo ordenado + inventa la edad (2026-06-14, noche)
+**Síntoma:** el agente improvisa el orden del flujo (arranca por seguro o motivo, omite "para
+quién" y "paciente antiguo") y en una validación **inventó la edad ("38")**.
+**Causa:** la bifurcación "nuevo vs recurrente" (regla 2) enrutaba al recurrente directo al
+paso 6, y los pasos 1/2/3 estaban marcados "SOLO para paciente_nuevo: true".
+**Decisiones (confirmadas):** flujo **único 1→12 en orden** para nuevo Y recurrente; se piden
+SOLO los datos que faltan (nombre conocido no se re-pregunta; edad se pregunta si falta);
+pasos 2 y 3 SIEMPRE en cada agendamiento; NUNCA inventar nombre ni edad.
+**Cambios (solo prompt `odontoking.md`):**
+- Regla de contexto: "FLUJO DE AGENDAMIENTO ÚNICO" 1→12; eliminado el atajo de recurrente.
+- Pasos 1/2/3: quitado "SOLO para paciente_nuevo: true" → aplican a todo agendamiento.
+- Paso 10/11 + REGLA DE ORO: exigen nombre y **edad reales** (guard contra "[edad]"/inventar);
+  "FLUJO EN ORDEN" como regla de oro.
+**Verificación:** `uv run pytest` → **275 passed** (cambio solo de prompt, sin código).
+
 ## Deploy
 - **Proyecto Railway:** `Odontoking` (ID `df51b2f5-e9d7-4a31-aad1-0291a076d303`), env `production`.
   Servicio backend: **`odontoking-langchain`** (agente in-process). Otros: pgvector, Redis,
