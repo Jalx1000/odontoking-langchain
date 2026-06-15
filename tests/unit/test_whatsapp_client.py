@@ -71,11 +71,28 @@ class TestBuildInteractivePayload:
         result = self._build(msg)
         assert "¿Cuál seguro tiene?" in result["body"]["text"]
 
-    def test_body_text_truncated_to_4096(self):
+    def test_body_text_truncated_to_whatsapp_limit(self):
         long_body = "X" * 5000
         msg = f"{long_body}\n1) Option1\n2) Option2"
         result = self._build(msg)
-        assert len(result["body"]["text"]) <= 4096
+        # WhatsApp interactive body limit is 1024 chars.
+        assert len(result["body"]["text"]) <= 1024
+
+    def test_markdown_stripped_from_button_titles(self):
+        """WhatsApp rejects Markdown in button titles (#131009) — must be stripped."""
+        msg = "¿Horario?\n1) **09:00 - 10:00**\n2) _10:00 - 11:00_"
+        result = self._build(msg)
+        titles = [b["reply"]["title"] for b in result["action"]["buttons"]]
+        assert titles == ["09:00 - 10:00", "10:00 - 11:00"]
+        assert all("*" not in t and "_" not in t for t in titles)
+
+    def test_markdown_stripped_from_list_titles(self):
+        """List row titles must also be free of Markdown markers."""
+        msg = "Doctores:\n1) **Dra. Adriana Soria**\n2) Dr. B\n3) Dr. C\n4) Dr. D"
+        result = self._build(msg)
+        rows = result["action"]["sections"][0]["rows"]
+        assert rows[0]["title"] == "Dra. Adriana Soria"
+        assert all("*" not in r["title"] for r in rows)
 
 
 class TestSendTextMessage:

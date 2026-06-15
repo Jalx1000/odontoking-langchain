@@ -84,6 +84,21 @@ pasos 2 y 3 SIEMPRE en cada agendamiento; NUNCA inventar nombre ni edad.
   "FLUJO EN ORDEN" como regla de oro.
 **Verificación:** `uv run pytest` → **275 passed** (cambio solo de prompt, sin código).
 
+## Update — Error 04: WhatsApp 400 al enviar botones/listas (2026-06-15)
+**Síntoma (logs prod):** `httpx.HTTPStatusError: 400` en `send_interactive_message`. Detalle de
+Meta: `(#131009) Parameter value is not valid — "Markdown is not allowed for button title"`.
+El mensaje del agente NO se entregaba al paciente.
+**Causa:** el LLM usa Markdown (`**negrita**`) y `build_interactive_payload` ponía ese texto
+con markdown en los títulos de botones/filas. WhatsApp prohíbe markdown en títulos → 400.
+(Además el límite del body estaba en 4096; el real de interactive es 1024.)
+**Cambios:**
+- `whatsapp_client.py`: nuevo `_clean_title()` que quita `* _ ~ \`` y colapsa espacios en los
+  títulos de botones/listas; títulos nunca vacíos; body de interactive capado a 1024; si un
+  título queda vacío tras limpiar → fallback a texto plano.
+- `odontoking.md`: regla de estilo "NO uses Markdown" (texto plano).
+- `tests/unit/test_whatsapp_client.py`: +2 tests (markdown stripped de botones y listas).
+**Verificación:** `uv run pytest` → **277 passed**.
+
 ## Deploy
 - **Proyecto Railway:** `Odontoking` (ID `df51b2f5-e9d7-4a31-aad1-0291a076d303`), env `production`.
   Servicio backend: **`odontoking-langchain`** (agente in-process). Otros: pgvector, Redis,

@@ -82,6 +82,21 @@ async def send_interactive_message(
         return resp.json()
 
 
+_MD_MARKERS = re.compile(r"[*_~`]")
+
+
+def _clean_title(text: str, limit: int) -> str:
+    """Sanitize an interactive button/row title.
+
+    WhatsApp rejects Markdown in button/row titles ('Markdown is not allowed for
+    button title', error #131009). Strip formatting markers (*, _, ~, `) and
+    collapse whitespace, then truncate to the WhatsApp limit.
+    """
+    cleaned = _MD_MARKERS.sub("", text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:limit]
+
+
 def build_interactive_payload(mensaje: str, to: str) -> Optional[dict]:
     """Detect numbered options in mensaje and return an interactive payload dict.
 
@@ -93,18 +108,25 @@ def build_interactive_payload(mensaje: str, to: str) -> Optional[dict]:
     if len(options) < 2:
         return None
 
+    # Build sanitized, non-empty titles. WhatsApp forbids Markdown and empty titles.
+    button_titles = [(t, _clean_title(t, 20)) for t in options]
+    list_titles = [_clean_title(t, 24) for t in options]
+    if any(not t for _, t in button_titles[:3]) and len(options) <= 3:
+        return None  # a title became empty after cleaning — fall back to plain text
+
     # Use only the preamble (text before first numbered option) as body.
     # Never fall back to the full message — that would duplicate options in body+buttons.
-    body_text = option_pattern.split(mensaje)[0].strip() or "Seleccione una opción:"
+    # WhatsApp interactive body limit is 1024 chars.
+    body_text = (option_pattern.split(mensaje)[0].strip() or "Seleccione una opción:")[:1024]
 
     if len(options) <= 3:
         return {
             "type": "button",
-            "body": {"text": body_text[:4096]},
+            "body": {"text": body_text},
             "action": {
                 "buttons": [
-                    {"type": "reply", "reply": {"id": f"btn_{i + 1}", "title": opt[:20]}}
-                    for i, opt in enumerate(options[:3])
+                    {"type": "reply", "reply": {"id": f"btn_{i + 1}", "title": title}}
+                    for i, (_, title) in enumerate(button_titles[:3])
                 ]
             },
         }
@@ -112,15 +134,15 @@ def build_interactive_payload(mensaje: str, to: str) -> Optional[dict]:
     return {
         "type": "list",
         "header": {"type": "text", "text": "Seleccione una opción"},
-        "body": {"text": body_text[:4096]},
+        "body": {"text": body_text},
         "action": {
             "button": "Ver opciones",
             "sections": [
                 {
                     "title": "Opciones disponibles",
                     "rows": [
-                        {"id": f"opt_{i + 1}", "title": opt[:24]}
-                        for i, opt in enumerate(options[:10])
+                        {"id": f"opt_{i + 1}", "title": (title or f"Opción {i + 1}")}
+                        for i, title in enumerate(list_titles[:10])
                     ],
                 }
             ],
