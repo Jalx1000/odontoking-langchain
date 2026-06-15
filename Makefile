@@ -152,6 +152,40 @@ stack-logs:
 	@APP_ENV=$(ENV) $(DOCKER_COMPOSE) --env-file .env.$(ENV) logs -f
 
 # ---------------------------------------------------------------------------
+# Railway — borrado de historial conversacional (Postgres + Redis)
+# ---------------------------------------------------------------------------
+# Usa los endpoints PÚBLICOS de Railway. Las URLs se leen de los servicios y se
+# pasan por env al script SIN imprimirse (no quedan en pantalla ni en el shell).
+RAILWAY       ?= railway
+PG_SERVICE    ?= pgvector
+REDIS_SERVICE ?= Redis
+PYTHON_BIN    ?= ./.venv/bin/python
+
+# Recupera las URLs públicas; falla con mensaje claro si no están disponibles.
+define fetch_railway_urls
+	DBURL="$$($(RAILWAY) variables --service $(PG_SERVICE) --kv 2>/dev/null | sed -n 's/^DATABASE_URL=//p')"; \
+	RDURL="$$($(RAILWAY) variables --service $(REDIS_SERVICE) --kv 2>/dev/null | sed -n 's/^REDIS_PUBLIC_URL=//p')"; \
+	if [ -z "$$DBURL" ] || [ -z "$$RDURL" ]; then \
+		echo "No pude obtener las URLs públicas de Railway."; \
+		echo "  Verifica: 'railway login', el proyecto enlazado, y los servicios '$(PG_SERVICE)' / '$(REDIS_SERVICE)'."; \
+		exit 1; \
+	fi
+endef
+
+# Solo cuenta lo que se borraría (no borra nada).
+history-check:
+	@$(fetch_railway_urls); \
+	WIPE_DATABASE_URL="$$DBURL" WIPE_REDIS_URL="$$RDURL" $(PYTHON_BIN) scripts/wipe_history.py --dry-run
+
+# Respalda y borra. CONFIRM=yes salta la pregunta. NO_BACKUP=1 omite el respaldo.
+history-wipe:
+	@$(fetch_railway_urls); \
+	YES=""; [ "$(CONFIRM)" = "yes" ] && YES="--yes"; \
+	NOBK=""; [ "$(NO_BACKUP)" = "1" ] && NOBK="--no-backup"; \
+	WIPE_DATABASE_URL="$$DBURL" WIPE_REDIS_URL="$$RDURL" \
+		$(PYTHON_BIN) scripts/wipe_history.py --apply $$YES $$NOBK $(if $(BACKUP_DIR),--backup-dir $(BACKUP_DIR),)
+
+# ---------------------------------------------------------------------------
 # Misc
 # ---------------------------------------------------------------------------
 clean:
@@ -201,6 +235,10 @@ help:
 	@echo "  stack-down           Stop entire stack"
 	@echo "  stack-logs           Tail all service logs"
 	@echo ""
+	@echo "Railway — borrar historial del agente (Postgres + Redis):"
+	@echo "  history-check        Cuenta qué se borraría (no borra nada)"
+	@echo "  history-wipe         Respalda y borra (CONFIRM=yes salta la pregunta; NO_BACKUP=1 omite respaldo)"
+	@echo ""
 	@echo "Misc:"
 	@echo "  clean                Remove .venv, __pycache__, .pytest_cache"
 
@@ -210,4 +248,5 @@ help:
         lint format typecheck check pre-commit pre-commit-update \
         docker-build docker-up docker-down docker-logs \
         stack-up stack-down stack-logs \
+        history-check history-wipe \
         clean help
