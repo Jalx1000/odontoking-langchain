@@ -145,7 +145,7 @@ async def get_doctors() -> str:
                     ],
                 }
                 for d in data
-                if d.get("is_active") and d.get("has_availability") and d.get("has_availability" != true)
+                if d.get("is_active")
             ]
             logger.info("odontoking_doctors_fetched", count=len(filtered))
             return json.dumps({"data": filtered}, ensure_ascii=False)
@@ -223,7 +223,7 @@ async def get_doctor_schedule(id_doctor: int, duration_minutes: int = 60, days: 
             total_slots=total_slots,
         )
         return json.dumps(
-            {"doctor_id": id_doctor, "schedule": schedule if total_slots > 0 else "Sin disponibilidad", "days_queried": days},
+            {"doctor_id": id_doctor, "schedule": schedule, "days_queried": days},
             ensure_ascii=False,
         )
 

@@ -94,6 +94,8 @@ def _load_odontoking_prompt(
     is_new_patient: bool = True,
     ci_paciente: str | None = None,
     seguro_paciente: str | None = None,
+    nombre_registrado: str | None = None,
+    nombre_whatsapp: str | None = None,
 ) -> str:
     """Render the odontoking system prompt with Bolivia local datetime and patient context."""
     now = datetime.now(_TZ_BOLIVIA)
@@ -101,11 +103,26 @@ def _load_odontoking_prompt(
     month_name = _MESES_ES[now.month - 1]
     current_datetime = f"{day_name} {now.day:02d} {month_name} {now.year} {now.strftime('%H:%M')}"
 
+    # A patient without a real registered name is treated as new so the onboarding
+    # flow (name, age, insurance) runs even if they already exist in the CRM.
+    if not nombre_registrado:
+        is_new_patient = True
+
     context_lines = [
         "# Contexto del paciente",
         f"wa_id: {wa_id}",
         f"paciente_nuevo: {'true' if is_new_patient else 'false'}",
     ]
+    # Name resolution: registered CRM name → WhatsApp profile name → ask the patient.
+    # (verify_insurance.patient_name takes priority during the flow, per the prompt.)
+    if nombre_registrado:
+        context_lines.append(f"nombre_registrado: {nombre_registrado}")
+    elif nombre_whatsapp:
+        context_lines.append(
+            f"nombre_whatsapp: {nombre_whatsapp}  # nombre del perfil de WhatsApp; úsalo si no hay nombre del seguro, sin volver a preguntarlo"
+        )
+    else:
+        context_lines.append("nombre_registrado: null  # pedir el nombre completo al paciente")
     if ci_paciente:
         context_lines.append(f"ci_paciente_registrada: {ci_paciente}")
     if seguro_paciente:
@@ -200,6 +217,8 @@ class OdontokingAgent:
             is_new_patient=metadata.get("is_new_patient", True),
             ci_paciente=metadata.get("ci_paciente"),
             seguro_paciente=metadata.get("seguro_paciente"),
+            nombre_registrado=metadata.get("nombre_registrado"),
+            nombre_whatsapp=metadata.get("nombre_whatsapp"),
         )
 
         # Build messages with LangChain types directly — bypasses Message max_length validation
@@ -285,6 +304,8 @@ class OdontokingAgent:
         is_new_patient: bool = True,
         ci_paciente: str | None = None,
         seguro_paciente: str | None = None,
+        nombre_registrado: str | None = None,
+        nombre_whatsapp: str | None = None,
     ) -> str:
         """Process a WhatsApp message and return the agent's texto response.
 
@@ -301,6 +322,8 @@ class OdontokingAgent:
                 "is_new_patient": is_new_patient,
                 "ci_paciente": ci_paciente,
                 "seguro_paciente": seguro_paciente,
+                "nombre_registrado": nombre_registrado,
+                "nombre_whatsapp": nombre_whatsapp,
             },
             "recursion_limit": 50,
         }

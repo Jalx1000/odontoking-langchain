@@ -118,6 +118,8 @@ def _make_process_fn(
     is_new_patient: bool = True,
     ci_paciente: str | None = None,
     seguro_paciente: str | None = None,
+    nombre_registrado: str | None = None,
+    nombre_whatsapp: str | None = None,
 ) -> ProcessFn:
     """Return a ProcessFn closure bound to the given tenant's agent and WA credentials."""
     agent = _AGENT_REGISTRY.get(tenant.agent_type, odontoking_agent)
@@ -135,6 +137,8 @@ def _make_process_fn(
                     is_new_patient=is_new_patient,
                     ci_paciente=ci_paciente,
                     seguro_paciente=seguro_paciente,
+                    nombre_registrado=nombre_registrado,
+                    nombre_whatsapp=nombre_whatsapp,
                 ),
                 timeout=settings.LLM_TOTAL_TIMEOUT + 30,
             )
@@ -217,6 +221,8 @@ async def _handle_webhook_payload(
                             "is_new_patient": reg.get("is_new_patient", True),
                             "ci_paciente": reg.get("ci_paciente"),
                             "seguro_paciente": reg.get("seguro_paciente"),
+                            "nombre_registrado": reg.get("nombre_registrado"),
+                            "nombre_whatsapp": profile_name or None,
                         }
                         logger.info(
                             "whatsapp_patient_registered",

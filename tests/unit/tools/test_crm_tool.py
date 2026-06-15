@@ -533,3 +533,32 @@ class TestUpdateCrmMissingPersonFields:
 
             person_post_body = client.post.call_args_list[0][1]["json"]
             assert person_post_body["name"] == "Javier Alejandro Mogro Peñafiel"
+
+
+class TestRealNameOrNone:
+    """The placeholder name must be treated as 'no name' so onboarding still runs."""
+
+    def test_placeholder_returns_none(self):
+        """The auto-created placeholder name is treated as no name."""
+        from app.core.langgraph.tools.crm import _real_name_or_none
+
+        assert _real_name_or_none("Paciente WhatsApp") is None
+
+    def test_empty_and_whitespace_return_none(self):
+        """Empty or whitespace-only names are treated as no name."""
+        from app.core.langgraph.tools.crm import _real_name_or_none
+
+        assert _real_name_or_none("") is None
+        assert _real_name_or_none("   ") is None
+
+    def test_none_returns_none(self):
+        """A None name stays None."""
+        from app.core.langgraph.tools.crm import _real_name_or_none
+
+        assert _real_name_or_none(None) is None
+
+    def test_real_name_is_kept_and_stripped(self):
+        """A real name is preserved and stripped of surrounding whitespace."""
+        from app.core.langgraph.tools.crm import _real_name_or_none
+
+        assert _real_name_or_none("  Javier Mogro  ") == "Javier Mogro"

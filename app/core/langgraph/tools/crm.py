@@ -60,6 +60,21 @@ def _person_email_from_wa_id(wa_id: str) -> str:
     return f"{wa_id}@whatsapp.sofopolis.net"
 
 
+def _real_name_or_none(name: str | None) -> str | None:
+    """Return the name only if it's a real one — not empty and not the placeholder.
+
+    A CRM person is auto-created on first contact with the fallback name
+    "Paciente WhatsApp" before we know who they are. That placeholder must be
+    treated as "no name" so the agent still asks for / resolves the real name.
+    """
+    if not isinstance(name, str):
+        return None
+    clean = name.strip()
+    if not clean or clean == "Paciente WhatsApp":
+        return None
+    return clean
+
+
 async def find_person_by_wa_id(client: httpx.AsyncClient, wa_id: str) -> dict[str, Any] | None:
     """Look up a CRM person by WhatsApp ID. Returns the person dict or None."""
     try:
@@ -136,7 +151,7 @@ async def ensure_person_registered(
     if person:
         person_id = person.get("id")
         if not person_id:
-            return {"person_id": None, "created": False, "updated": False, "is_new_patient": False}
+            return {"person_id": None, "created": False, "updated": False, "is_new_patient": False, "nombre_registrado": None}
 
         existing_name = (person.get("name") or "").strip()
         should_update = (
@@ -161,6 +176,7 @@ async def ensure_person_registered(
             "created": False,
             "updated": should_update,
             "is_new_patient": False,
+            "nombre_registrado": _real_name_or_none(clean_name if should_update else existing_name),
             "ci_paciente": person.get("ci_paciente"),
             "seguro_paciente": person.get("seguro_paciente"),
         }
@@ -178,6 +194,7 @@ async def ensure_person_registered(
         "created": True,
         "updated": False,
         "is_new_patient": True,
+        "nombre_registrado": _real_name_or_none(clean_name),
         "ci_paciente": None,
         "seguro_paciente": None,
     }
