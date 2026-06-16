@@ -83,16 +83,20 @@ async def send_interactive_message(
 
 
 _MD_MARKERS = re.compile(r"[*_~`]")
+# Zero-width / formatting characters the LLM sometimes inserts between the number and the
+# option text (e.g. "1.⁠ ⁠14:00"); not matched by \s, so strip them explicitly.
+_INVISIBLE = re.compile(r"[\u200b-\u200f\u2060\u2066-\u2069\ufeff]")
 
 
 def _clean_title(text: str, limit: int) -> str:
     """Sanitize an interactive button/row title.
 
     WhatsApp rejects Markdown in button/row titles ('Markdown is not allowed for
-    button title', error #131009). Strip formatting markers (*, _, ~, `) and
-    collapse whitespace, then truncate to the WhatsApp limit.
+    button title', error #131009). Strip formatting markers (*, _, ~, `), remove
+    zero-width characters and collapse whitespace, then truncate to the WhatsApp limit.
     """
-    cleaned = _MD_MARKERS.sub("", text)
+    cleaned = _INVISIBLE.sub("", text)
+    cleaned = _MD_MARKERS.sub("", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned[:limit]
 
@@ -102,7 +106,10 @@ def build_interactive_payload(mensaje: str, to: str) -> Optional[dict]:
 
     Returns None when the message has no numbered options (plain text).
     """
-    option_pattern = re.compile(r"\d+\)\s*([^\n]+)")
+    # Match numbered options at the start of a line, accepting both "N)" (used by the
+    # deterministic intake) and "N." (emitted by the LLM in phase 2). Anchoring to line start
+    # avoids false matches like prices ("50.00") mid-sentence.
+    option_pattern = re.compile(r"(?m)^[ \t]*\d+[.)][ \t]*([^\n]+)")
     options = option_pattern.findall(mensaje)
 
     if len(options) < 2:

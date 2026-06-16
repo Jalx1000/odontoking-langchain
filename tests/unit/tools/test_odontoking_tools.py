@@ -132,7 +132,8 @@ class TestGetDoctors:
                     "age_range_max": 80,
                     "salary": 5000,  # must be stripped
                     "specialties": [{"id": 1, "name": "Ortodoncia"}],
-                    "availability": [],
+                    "has_availability": True,
+                    "availability": [{"date": "2026-06-18", "start_time": "09:00:00"}],
                 }
             ]
         }
@@ -154,7 +155,7 @@ class TestGetDoctors:
     async def test_doctor_with_no_specialties(self):
         from app.core.langgraph.tools.odontoking import get_doctors
 
-        raw = {"data": [{"id": 1, "name": "Dr. Sin Esp.", "is_active": True, "age_range_min": 0, "age_range_max": 99, "specialties": None}]}
+        raw = {"data": [{"id": 1, "name": "Dr. Sin Esp.", "is_active": True, "age_range_min": 0, "age_range_max": 99, "specialties": None, "has_availability": True, "availability": [{"date": "2026-06-18"}]}]}
         resp = _make_response(200, raw)
 
         with patch("httpx.AsyncClient") as cls:
@@ -164,6 +165,32 @@ class TestGetDoctors:
 
             result = json.loads(await get_doctors.ainvoke({}))
             assert result["data"][0]["specialties"] == []
+
+    @pytest.mark.asyncio
+    async def test_excludes_doctors_without_availability(self):
+        from app.core.langgraph.tools.odontoking import get_doctors
+
+        raw = {
+            "data": [
+                # kept: active, flagged available, non-empty availability list
+                {"id": 1, "name": "Dr. Disponible", "is_active": True, "has_availability": True, "availability": [{"date": "2026-06-18"}], "specialties": []},
+                # dropped: flag False + empty availability
+                {"id": 2, "name": "Dr. Sin Cupo", "is_active": True, "has_availability": False, "availability": [], "specialties": []},
+                # dropped: flag True but empty availability list (inconsistent backend data)
+                {"id": 3, "name": "Dr. Bandera Mentirosa", "is_active": True, "has_availability": True, "availability": [], "specialties": []},
+                # dropped: fields missing entirely
+                {"id": 4, "name": "Dr. Sin Datos", "is_active": True, "specialties": []},
+            ]
+        }
+        resp = _make_response(200, raw)
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=resp)
+            cls.return_value = client
+
+            result = json.loads(await get_doctors.ainvoke({}))
+            assert [d["id"] for d in result["data"]] == [1]
 
 
 class TestGetDoctorSchedule:
