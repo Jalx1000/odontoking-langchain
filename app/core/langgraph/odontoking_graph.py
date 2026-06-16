@@ -184,6 +184,8 @@ class OdontokingAgent:
             api_key=SecretStr(settings.OPENAI_API_KEY),
             max_tokens=4096,  # pyright: ignore[reportCallIssue]
             temperature=0.2,
+            timeout=settings.LLM_REQUEST_TIMEOUT,
+            max_retries=2,
         ).bind_tools(_ODONTOKING_TOOLS)
         self.tools_by_name = {t.name: t for t in _ODONTOKING_TOOLS}
         self._connection_pool: Optional[PostgresConnPool] = None
