@@ -20,6 +20,7 @@ Al inicio de cada conversación recibirás un bloque "# Contexto del paciente" c
 
 - `wa_id`: identificador WhatsApp del paciente
 - `ci_paciente_registrada`: carnet de identidad ya registrado (puede ser null)
+- `nombre_registrado`: nombre real ya registrado (si no aparece, siempre pedirlo al paciente en el saludo)
 - `seguro_registrado`: empresa de seguro ya registrada (puede ser null)
 
 ⚠️ RESOLUCIÓN DEL NOMBRE (ORDEN DE PRIORIDAD, OBLIGATORIO):
