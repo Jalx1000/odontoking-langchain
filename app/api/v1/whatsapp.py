@@ -209,15 +209,14 @@ async def _handle_webhook_payload(
                 if wa_id not in registered_wa_ids:
                     try:
                         profile_name = _extract_profile_name(value)
-                        # Do NOT seed the CRM name from the WhatsApp profile name: it is often
-                        # wrong, and storing it would make it come back as `nombre_registrado`
-                        # and skip the name question. Auto-create with the placeholder so the
-                        # intake asks for the real name; it is saved via update_crm afterwards.
+                        # Seed the CRM with the WhatsApp profile name on first contact so the
+                        # record is never empty. The intake still asks for the real name and the
+                        # CRM name becomes "<perfil WhatsApp> - <nombre solicitado>" afterwards.
                         async with httpx.AsyncClient(timeout=20) as client:
                             reg = await ensure_person_registered(
                                 client,
                                 wa_id=wa_id,
-                                person_name="",
+                                person_name=profile_name,
                                 person_phone=wa_id,
                                 update_existing_name=False,
                             )

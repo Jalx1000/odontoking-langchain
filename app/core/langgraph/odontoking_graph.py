@@ -57,6 +57,7 @@ from app.core.langgraph.tools.odontoking import (
 )
 from app.core.langgraph.intake import (
     advance_intake,
+    crm_display_name,
     handoff_context,
     intake_store,
     is_booking_intent,
@@ -321,7 +322,7 @@ class OdontokingAgent:
         self,
         wa_id: str,
         text: str,
-        seed_name: Optional[str],
+        nombre_whatsapp: Optional[str],
     ) -> tuple[Optional[str], Optional[str]]:
         """Drive the deterministic intake for one turn.
 
@@ -333,7 +334,9 @@ class OdontokingAgent:
         state = await intake_store.get(wa_id)
 
         async def _start() -> tuple[Optional[str], Optional[str]]:
-            fresh = new_state(seed_name)
+            # nombre is left unset so the intake always asks for the real name; the WhatsApp
+            # profile name is stored only to build the combined CRM name later.
+            fresh = new_state(nombre_whatsapp=nombre_whatsapp)
             result = await advance_intake(fresh, None)
             await intake_store.set(wa_id, result.state)
             reply = f"¡Hola! Gracias por escribir a Odontoking 🦷✨, Con gusto le ayudo a agendar su cita. {result.reply}" if result.reply else result.reply
@@ -366,7 +369,7 @@ class OdontokingAgent:
             try:
                 payload: dict = {
                     "wa_id": wa_id,
-                    "person_name": state.get("nombre"),
+                    "person_name": crm_display_name(state.get("nombre_whatsapp"), state.get("nombre")),
                     "edad_paciente": state.get("edad"),
                     "is_for_self": bool(state.get("is_for_self")),
                     "paciente_antiguo": bool(state.get("es_antiguo")),
@@ -410,10 +413,10 @@ class OdontokingAgent:
         # intake completes it hands off to the LLM (steps 7-12) with all data injected.
         intake_handoff: Optional[str] = None
         if settings.INTAKE_ENABLED:
-            # Seed the name only from the CRM-registered name. The WhatsApp profile name is
-            # often wrong, so the intake must ask for the real name when it is not registered.
+            # The intake always asks for the real name (the WhatsApp profile name is often
+            # wrong). nombre_whatsapp is only used to build the CRM name afterwards.
             intake_reply, intake_handoff = await self._intake_turn(
-                wa_id, last_user_text, nombre_registrado
+                wa_id, last_user_text, nombre_whatsapp
             )
             if intake_reply is not None:
                 return intake_reply

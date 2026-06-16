@@ -95,9 +95,7 @@ class TestWebhookReceiveMessage:
             assert resp.status_code == 200
             mock_register.assert_called_once()
             assert mock_register.call_args.kwargs["wa_id"] == "591701234567"
-            # The CRM person is auto-created with a placeholder, NOT the WhatsApp profile
-            # name, so the intake asks for the real name instead of trusting the profile.
-            assert mock_register.call_args.kwargs["person_name"] == ""
+            assert mock_register.call_args.kwargs["person_name"] == "Test User"
             mock_enqueue.assert_called_once()
             call_args = mock_enqueue.call_args
             assert call_args[0][0] == "591701234567"

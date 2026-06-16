@@ -160,6 +160,9 @@ async def ensure_person_registered(
             and person_name.strip()
             and clean_name != existing_name
             and clean_name != "Paciente WhatsApp"
+            # Never downgrade a combined "<perfil WhatsApp> - <nombre solicitado>" name back to
+            # a plain name (e.g. a later update_crm call that only knows the real name).
+            and not (" - " in existing_name and " - " not in clean_name)
         )
         if should_update:
             update_resp = await client.put(

@@ -39,10 +39,16 @@ def is_booking_intent(text: str) -> bool:
 
 # ── State helpers ─────────────────────────────────────────────────────────────
 
-def new_state(nombre: Optional[str] = None) -> dict:
-    """Create a fresh intake state, seeding the name if we already know it."""
+def new_state(nombre: Optional[str] = None, nombre_whatsapp: Optional[str] = None) -> dict:
+    """Create a fresh intake state.
+
+    `nombre` is the real name the patient confirms (asked during intake — left None so it is
+    always requested). `nombre_whatsapp` is the WhatsApp profile name, kept only to build the
+    CRM display name "<perfil> - <nombre solicitado>" once the real name is collected.
+    """
     return {
         "nombre": (nombre or None),
+        "nombre_whatsapp": (nombre_whatsapp or None),
         "edad": None,
         "is_for_self": None,
         "tercero_nombre": None,
@@ -270,6 +276,21 @@ async def advance_intake(
 
     state["pending"] = nxt
     return IntakeResult(state, question_for(nxt), False)
+
+
+def crm_display_name(nombre_whatsapp: Optional[str], nombre_solicitado: Optional[str]) -> Optional[str]:
+    """Build the CRM person name as "<perfil WhatsApp> - <nombre solicitado>".
+
+    Falls back to whichever part is available. "Paciente WhatsApp" is the placeholder used
+    before a profile name is known, so it is treated as no profile name.
+    """
+    wa = (nombre_whatsapp or "").strip()
+    real = (nombre_solicitado or "").strip()
+    if wa == "Paciente WhatsApp":
+        wa = ""
+    if wa and real:
+        return f"{wa} - {real}"
+    return real or wa or None
 
 
 def handoff_context(state: dict) -> str:
