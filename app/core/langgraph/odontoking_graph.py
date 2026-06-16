@@ -336,7 +336,7 @@ class OdontokingAgent:
             fresh = new_state(seed_name)
             result = await advance_intake(fresh, None)
             await intake_store.set(wa_id, result.state)
-            reply = f"Con gusto le ayudo a agendar su cita. {result.reply}" if result.reply else result.reply
+            reply = f"¡Hola! Gracias por escribir a Odontoking 🦷✨, Con gusto le ayudo a agendar su cita. {result.reply}" if result.reply else result.reply
             return reply, None
 
         if state is None:
