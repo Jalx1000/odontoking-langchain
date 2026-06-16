@@ -22,7 +22,7 @@ from langchain_core.messages import (
 from langchain_core.runnables.config import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.errors import GraphInterrupt, GraphRecursionError
+from langgraph.errors import GraphBubbleUp, GraphInterrupt, GraphRecursionError
 from langgraph.graph import (
     END,
     StateGraph,
@@ -45,6 +45,7 @@ from pydantic import SecretStr
 
 from app.core.config import settings
 from app.services.database import database_service
+from app.core.langgraph.tools.ask_human import ask_human
 from app.core.langgraph.tools.crm import get_citas, sync_transcript_to_crm, update_crm
 from app.core.langgraph.tools.insurance import verify_insurance
 from app.core.langgraph.tools.odontoking import (
@@ -84,6 +85,7 @@ _ODONTOKING_TOOLS = [
     update_crm,
     get_citas,
     sync_transcript_to_crm,
+    ask_human,
 ]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "odontoking.md")
@@ -272,6 +274,10 @@ class OdontokingAgent:
         async def _execute(tc: dict) -> ToolMessage:
             try:
                 result = await self.tools_by_name[tc["name"]].ainvoke(tc["args"])
+            except GraphBubbleUp:
+                # ask_human's interrupt() raises GraphInterrupt (a GraphBubbleUp / Exception
+                # subclass). It MUST bubble up to pause the graph — never swallow it here.
+                raise
             except Exception as e:
                 logger.warning("tool_execution_failed", tool=tc["name"], error=str(e))
                 result = json.dumps({"error": str(e)})
