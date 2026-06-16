@@ -145,7 +145,10 @@ async def get_doctors() -> str:
                     ],
                 }
                 for d in data
-                if d.get("is_active")
+                # Skip doctors with no availability: the API flags them as
+                # has_availability=False with an empty availability list. Validate both so a
+                # doctor with no real slots is never offered to the patient.
+                if d.get("is_active") and d.get("has_availability") and (d.get("availability") or [])
             ]
             logger.info("odontoking_doctors_fetched", count=len(filtered))
             return json.dumps({"data": filtered}, ensure_ascii=False)
