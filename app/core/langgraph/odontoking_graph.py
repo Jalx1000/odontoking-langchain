@@ -410,8 +410,10 @@ class OdontokingAgent:
         # intake completes it hands off to the LLM (steps 7-12) with all data injected.
         intake_handoff: Optional[str] = None
         if settings.INTAKE_ENABLED:
+            # Seed the name only from the CRM-registered name. The WhatsApp profile name is
+            # often wrong, so the intake must ask for the real name when it is not registered.
             intake_reply, intake_handoff = await self._intake_turn(
-                wa_id, last_user_text, nombre_registrado or nombre_whatsapp
+                wa_id, last_user_text, nombre_registrado
             )
             if intake_reply is not None:
                 return intake_reply
