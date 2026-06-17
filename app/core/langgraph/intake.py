@@ -25,16 +25,34 @@ _SEGURO_OPTIONS = ["Alianza", "Nacional Vida", "Membresía Odontoking", "No teng
 # Keywords that signal the patient wants to book — used to start the intake.
 _BOOKING_KEYWORDS = (
     "agendar", "agenda", "cita", "reservar", "reserva", "turno", "consulta",
-    "sacar hora", "sacar cita", "quiero ver", "atención", "atencion", "atender",
+    "sacar hora", "sacar cita", "quiero ver",
 )
 
 
-# ── Booking-intent detection ──────────────────────────────────────────────────
+# Keywords for non-booking FAQ questions (location, hours, price, phone). On first contact
+# these go to the LLM; anything else starts the booking intake, since the bot's purpose is
+# booking and most patients open with a greeting rather than the word "cita".
+_FAQ_KEYWORDS = (
+    "ubicacion", "ubicación", "ubicad", "donde estan", "dónde están", "donde queda", "dónde queda",
+    "direccion", "dirección", "como llego", "cómo llego", "como llegar", "cómo llegar", "mapa", "sucursal",
+    "horario", "horarios", "abren", "abierto", "cierran", "a que hora atienden", "a qué hora atienden",
+    "precio", "precios", "costo", "costos", "cuanto cuesta", "cuánto cuesta", "tarifa",
+    "telefono", "teléfono", "numero de contacto", "número de contacto",
+)
+
+
+# ── Intent detection ──────────────────────────────────────────────────────────
 
 def is_booking_intent(text: str) -> bool:
     """Heuristic: does the message express intent to book an appointment?"""
     low = (text or "").lower()
     return any(k in low for k in _BOOKING_KEYWORDS)
+
+
+def is_faq_query(text: str) -> bool:
+    """Heuristic: is this a non-booking FAQ (location, hours, price, phone)?"""
+    low = (text or "").lower()
+    return any(k in low for k in _FAQ_KEYWORDS)
 
 
 # ── State helpers ─────────────────────────────────────────────────────────────

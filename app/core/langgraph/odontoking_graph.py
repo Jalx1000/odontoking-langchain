@@ -63,6 +63,7 @@ from app.core.langgraph.intake import (
     handoff_context,
     intake_store,
     is_booking_intent,
+    is_faq_query,
     new_state,
 )
 from app.core.logging import logger
@@ -352,8 +353,11 @@ class OdontokingAgent:
             return reply, None
 
         if state is None:
-            if not is_booking_intent(text):
-                return None, None  # greeting / general question → let the LLM handle it
+            # The bot's purpose is booking and most patients open with "Hola" rather than the
+            # word "cita", so start the deterministic intake on first contact — EXCEPT for pure
+            # FAQ questions (location/hours/price), which the LLM answers.
+            if is_faq_query(text) and not is_booking_intent(text):
+                return None, None
             return await _start()
 
         # Active deterministic booking (Phase 2) → keep driving it; do NOT restart on a

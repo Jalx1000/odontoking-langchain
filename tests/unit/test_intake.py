@@ -11,9 +11,15 @@ from app.core.langgraph.intake import (
     apply_answer,
     handoff_context,
     is_booking_intent,
+    is_faq_query,
     new_state,
     next_pending,
 )
+
+
+def _starts_intake(text: str) -> bool:
+    """Mirror of the _intake_turn first-contact gate: start intake unless a pure FAQ."""
+    return not (is_faq_query(text) and not is_booking_intent(text))
 
 
 async def _vigente(ci, seguro):
@@ -35,6 +41,42 @@ class TestBookingIntent:
         """Greetings / general questions do not trigger the intake."""
         assert not is_booking_intent("hola buenos días")
         assert not is_booking_intent("¿dónde están ubicados?")
+
+
+class TestFaqQuery:
+    """Detection of non-booking FAQ questions (location, hours, price)."""
+
+    def test_detects_faq(self):
+        """Location/hours/price questions are recognized as FAQ."""
+        assert is_faq_query("¿dónde están ubicados?")
+        assert is_faq_query("cuál es su horario")
+        assert is_faq_query("cuánto cuesta una limpieza")
+        assert is_faq_query("me pasan la dirección")
+
+    def test_greetings_and_answers_are_not_faq(self):
+        """A greeting or a plain answer is not a FAQ — it should start the intake."""
+        assert not is_faq_query("Hola")
+        assert not is_faq_query("Sofia moreno")
+        assert not is_faq_query("Se me rompió la corona dental")
+
+
+class TestFirstContactGate:
+    """The first-contact gate starts the deterministic intake unless it's a pure FAQ."""
+
+    def test_greeting_and_answers_start_intake(self):
+        """'Hola' and plain answers (no booking keyword) still start the intake."""
+        assert _starts_intake("Hola")
+        assert _starts_intake("Sofia moreno")
+        assert _starts_intake("Se me rompió la corona dental")
+
+    def test_pure_faq_goes_to_llm(self):
+        """A pure FAQ question does not start the intake."""
+        assert not _starts_intake("¿dónde están ubicados?")
+        assert not _starts_intake("cuál es el horario de atención")
+
+    def test_booking_intent_wins_over_faq(self):
+        """A message with booking intent starts the intake even if it mentions a FAQ topic."""
+        assert _starts_intake("quiero una cita, ¿dónde están?")
 
 
 class TestNextPending:
