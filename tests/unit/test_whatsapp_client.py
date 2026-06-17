@@ -95,6 +95,22 @@ class TestBuildInteractivePayload:
         assert all("*" not in r["title"] for r in rows)
 
 
+class TestStripBodyMarkdown:
+    """The outgoing body strips Markdown markers WhatsApp would render literally."""
+
+    def test_strips_double_emphasis_and_backticks(self):
+        from app.services.whatsapp_client import _strip_body_markdown
+
+        out = _strip_body_markdown("La Dra. **Susana Urrusti** tiene `12345` cupos")
+        assert out == "La Dra. Susana Urrusti tiene 12345 cupos"
+
+    def test_keeps_plain_text_untouched(self):
+        from app.services.whatsapp_client import _strip_body_markdown
+
+        text = "Martes 16/06: 15:00 - 16:00"
+        assert _strip_body_markdown(text) == text
+
+
 class TestSendTextMessage:
     @pytest.mark.asyncio
     async def test_send_text_message_success(self):

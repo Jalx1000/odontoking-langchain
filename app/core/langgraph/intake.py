@@ -60,6 +60,22 @@ def new_state(nombre: Optional[str] = None, nombre_whatsapp: Optional[str] = Non
         "motivo": None,
         "pending": None,
         "completo": False,
+        # Phase-2 deterministic booking (see booking.py) — populated after intake completes.
+        "wa_id": None,
+        "booking_phase": None,
+        "specialty_id": None,
+        "service_id": None,
+        "service_name": None,
+        "proposed_doctors": [],
+        "doctor_id": None,
+        "doctor_name": None,
+        "schedule": [],
+        "current_slots": [],
+        "chosen_date": None,
+        "chosen_day_label": None,
+        "chosen_start": None,
+        "chosen_end": None,
+        "booking_confirmado": False,
     }
 
 
@@ -275,6 +291,15 @@ async def advance_intake(
         return IntakeResult(state, None, True)
 
     state["pending"] = nxt
+    # When booking for a third person, validate THAT person's CI (the patient), not the
+    # writer's — so the carnet question must name the third person.
+    if nxt == "ci" and state.get("is_for_self") is False and state.get("tercero_nombre"):
+        tercero = state["tercero_nombre"]
+        return IntakeResult(
+            state,
+            f"Para validar el seguro de {tercero}, ¿podría compartir el número de carnet de identidad de {tercero}? 🪪",
+            False,
+        )
     return IntakeResult(state, question_for(nxt), False)
 
 

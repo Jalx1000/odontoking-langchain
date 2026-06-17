@@ -56,6 +56,7 @@ from app.core.langgraph.tools.odontoking import (
     get_services,
     get_specialties,
 )
+from app.core.langgraph.booking import advance_booking, motivo_is_deterministic
 from app.core.langgraph.intake import (
     advance_intake,
     crm_display_name,
@@ -355,20 +356,42 @@ class OdontokingAgent:
                 return None, None  # greeting / general question → let the LLM handle it
             return await _start()
 
+        # Active deterministic booking (Phase 2) → keep driving it; do NOT restart on a
+        # booking keyword that may appear mid-flow.
+        booking_phase = state.get("booking_phase")
+        if booking_phase and booking_phase != "done":
+            return await self._booking_turn(wa_id, state, text)
+
         if state.get("completo"):
             if is_booking_intent(text):
-                return await _start()  # a new booking → re-run the 12 steps
-            return None, handoff_context(state)  # continue Phase 2 of the current booking
+                return await _start()  # a new booking → re-run from step 1
+            # "Otro" / free-text motivo runs Phase 2 on the LLM; a finished booking (or
+            # anything else) is plain post-booking chat for the LLM.
+            if state.get("motivo") and not motivo_is_deterministic(state.get("motivo")):
+                return None, handoff_context(state)
+            return None, None
 
         result = await advance_intake(state, text)
         await intake_store.set(wa_id, result.state)
         if not result.completed:
             return result.reply, None
 
-        # Intake just completed this turn → best-effort CRM capture + handoff to the LLM.
-        self._persist_intake_crm(wa_id, result.state)
         logger.info("intake_completed", wa_id=wa_id)
+        # Fixed motivo → drive the deterministic booking flow. Free-text "Otro" → best-effort
+        # CRM capture + LLM handoff (semantic matching is the LLM's job).
+        if motivo_is_deterministic(result.state.get("motivo")):
+            return await self._booking_turn(wa_id, result.state, None)
+        self._persist_intake_crm(wa_id, result.state)
         return None, handoff_context(result.state)
+
+    async def _booking_turn(
+        self, wa_id: str, state: dict, text: Optional[str]
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Drive one deterministic Phase-2 booking turn and persist the updated state."""
+        state["wa_id"] = wa_id
+        result = await advance_booking(state, text)
+        await intake_store.set(wa_id, result.state)
+        return result.reply, None
 
     def _persist_intake_crm(self, wa_id: str, state: dict) -> None:
         """Fire-and-forget CRM capture of the intake data (lead + person + insurance)."""

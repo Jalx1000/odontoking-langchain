@@ -88,6 +88,14 @@ _MD_MARKERS = re.compile(r"[*_~`]")
 _INVISIBLE = re.compile(r"[\u200b-\u200f\u2060\u2066-\u2069\ufeff]")
 
 
+_BODY_MARKDOWN = re.compile(r"\*\*|__|`")
+
+
+def _strip_body_markdown(text: str) -> str:
+    """Remove Markdown emphasis/code markers (**, __, `) that WhatsApp renders literally."""
+    return _BODY_MARKDOWN.sub("", text)
+
+
 def _clean_title(text: str, limit: int) -> str:
     """Sanitize an interactive button/row title.
 
@@ -220,6 +228,9 @@ async def send_response(
     token: str = "",
 ) -> None:
     """Send a WhatsApp response — interactive if options detected, plain text otherwise."""
+    # Safety net: the LLM sometimes emits Markdown (e.g. **bold**) despite the prompt ban;
+    # WhatsApp shows the markers literally, so strip them from the outgoing body.
+    mensaje = _strip_body_markdown(mensaje)
     interactive = build_interactive_payload(mensaje, to)
     try:
         if interactive:

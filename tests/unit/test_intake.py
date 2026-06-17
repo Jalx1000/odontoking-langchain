@@ -120,6 +120,23 @@ class TestAdvanceIntakeFlow:
         assert r.state["ci"] is None  # cleared so the patient can resend after regularizing
 
     @pytest.mark.asyncio
+    async def test_third_person_carnet_question_names_the_patient(self):
+        """When booking for a third person, the carnet question must name that person."""
+        state = new_state("Danitza Alvarez")
+        state.update({
+            "edad": 28,
+            "is_for_self": False,
+            "tercero_nombre": "ADELINO RODA",
+            "tercero_edad": 21,
+            "es_antiguo": True,
+            "pending": "seguro",
+        })
+        r = await advance_intake(state, "Membresía Odontoking")
+        assert r.state["pending"] == "ci"
+        assert "ADELINO RODA" in r.reply
+        assert "carnet" in r.reply.lower()
+
+    @pytest.mark.asyncio
     async def test_no_insurance_skips_ci(self):
         """'No tengo seguro' goes straight to motivo (particular)."""
         state = new_state("Javier Mogro")
