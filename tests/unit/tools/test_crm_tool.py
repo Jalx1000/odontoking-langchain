@@ -562,3 +562,24 @@ class TestRealNameOrNone:
         from app.core.langgraph.tools.crm import _real_name_or_none
 
         assert _real_name_or_none("  Javier Mogro  ") == "Javier Mogro"
+
+
+class TestUpdatePersonAge:
+    """Person age is persisted via the standard person PUT, never the removed 404 route."""
+
+    @pytest.mark.asyncio
+    async def test_puts_age_to_persons_endpoint(self):
+        """It PUTs job_title to /contacts/persons/{id} (not the non-existent attributes route)."""
+        from app.core.langgraph.tools.crm import _update_person_age
+
+        client = AsyncMock()
+        client.put = AsyncMock(return_value=_r({"data": {"id": 99}}))
+
+        await _update_person_age(client, 99, "591700000000", "Ana López", "591700000000", 34)
+
+        url = client.put.call_args.args[0]
+        payload = client.put.call_args.kwargs["json"]
+        assert url.endswith("/api/v1/contacts/persons/99")
+        assert "attributes/edit" not in url  # the old route returned 404 — never use it again
+        assert payload["job_title"] == "34"
+        assert payload["entity_type"] == "persons"

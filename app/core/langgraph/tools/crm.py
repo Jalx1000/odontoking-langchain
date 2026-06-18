@@ -114,15 +114,26 @@ def _person_payload(
     return payload
 
 
-async def _update_person_attributes(
+async def _update_person_age(
     client: httpx.AsyncClient,
     person_id: int,
-    attrs: dict[str, Any],
+    wa_id: str,
+    person_name: str,
+    person_phone: str,
+    age: int,
 ) -> None:
-    """Write custom attribute values onto a CRM person record (mirrors lead attributes endpoint)."""
+    """Persist the patient's age on the CRM person record.
+
+    There is NO person custom-attributes endpoint in this Krayin REST API (the old
+    /contacts/persons/attributes/edit/{id} route 404s), and the standard person PUT ignores
+    user-defined custom attributes (ci_paciente, seguro_paciente — a select). The only person
+    field the API accepts is the native `job_title` (labeled "Edad"), set via the full person
+    payload. CI / insurance / status are persisted on the LEAD instead (see update_crm step 6).
+    """
+    payload = _person_payload(wa_id, person_name, person_phone, age=age)
     resp = await client.put(
-        f"{_BASE}/api/v1/contacts/persons/attributes/edit/{person_id}",
-        json=attrs,
+        f"{_BASE}/api/v1/contacts/persons/{person_id}",
+        json=payload,
         headers=_HEADERS,
     )
     resp.raise_for_status()
@@ -283,22 +294,16 @@ async def update_crm(
             if not person_id:
                 return json.dumps({"error": "could not obtain person_id"})
 
-            # 1b. Persist collected patient attributes onto the person record
-            person_attrs: dict[str, Any] = {}
+            # 1b. Persist the writer's age on the person record (the only person field the CRM
+            # REST API accepts). CI / insurance / status go on the lead in step 6.
+            # TODO(pending): when is_for_self is False, the third person should get their OWN CRM
+            # person record (today their data lives on the writer's person + the lead).
             if edad_paciente is not None:
-                person_attrs["job_title"] = str(edad_paciente)
-            if numero_carnet:
-                person_attrs["ci_paciente"] = numero_carnet
-            if seguro_de_vida:
-                person_attrs["seguro_paciente"] = seguro_de_vida
-            if estado_seguro:
-                person_attrs["estado_seguro_paciente"] = estado_seguro
-            if person_attrs:
                 try:
-                    await _update_person_attributes(client, person_id, person_attrs)
-                    log.info("crm_person_attributes_updated", person_id=person_id, attrs=list(person_attrs.keys()))
+                    await _update_person_age(client, person_id, wa_id, person_name, person_phone, edad_paciente)
+                    log.info("crm_person_age_updated", person_id=person_id)
                 except Exception as attr_err:
-                    log.warning("crm_person_attributes_failed", person_id=person_id, error=str(attr_err))
+                    log.warning("crm_person_age_failed", person_id=person_id, error=str(attr_err))
 
             # 2. Find existing leads for this person — filter by person_id server-side
             leads_resp = await client.get(
