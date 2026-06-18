@@ -6,7 +6,10 @@ controller, this module owns the doctor → day → time → confirm flow determ
 calls the Odontoking tools directly and builds each message from the EXACT API data, so a
 slot is never fabricated and the order is guaranteed.
 
-Free-text "Otro" motivos fall back to the LLM (semantic match) — see motivo_is_deterministic.
+Every motivo runs deterministically: the 4 fixed buttons map to a specialty via keywords, and
+free-text / "Otro" descriptions are classified into a specialty+service by a single bounded LLM
+call (molestia_classifier) that returns only IDs — never conversation. So the flow can neither
+loop nor hallucinate a slot regardless of how the patient phrased their molestia.
 
 State is the same per-wa_id dict used by intake (extended with the booking_* fields seeded in
 intake.new_state), persisted in cache_service so it survives across WhatsApp turns.
@@ -15,8 +18,11 @@ intake.new_state), persisted in cache_service so it survives across WhatsApp tur
 import json
 import re
 import unicodedata
-from typing import Optional
+from datetime import datetime
+from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
+from app.core.langgraph.molestia_classifier import classify_molestia
 from app.core.langgraph.tools.crm import update_crm
 from app.core.langgraph.tools.odontoking import (
     get_doctor_schedule,
@@ -28,6 +34,7 @@ from app.core.langgraph.intake import crm_display_name
 from app.core.logging import logger
 
 _DURATION_DEFAULT = 60  # every service returns duration_minutes=None, so the schedule default
+_TZ_BOLIVIA = ZoneInfo("America/La_Paz")
 
 # motivo (normalized) → ordered specialty-name keywords matched against get_specialties.
 # Tunable per clinic. "Limpieza" → Periodoncia matches the clinic's observed behavior.
@@ -150,7 +157,7 @@ def _is_affirmative(user_text: Optional[str]) -> bool:
 
 # ── Message builders ──────────────────────────────────────────────────────────
 
-def _numbered(titles: list[str]) -> str:
+def _numbered(titles: list[Any]) -> str:
     return "\n".join(f"{i}. {t}" for i, t in enumerate(titles, start=1))
 
 
@@ -169,8 +176,10 @@ def _fmt_time(t: Optional[str]) -> str:
     return (t or "")[:5]
 
 
-def _fmt_date(date_iso: str) -> str:
+def _fmt_date(date_iso: Optional[str]) -> str:
     """'2026-06-18' → '18/06/2026'."""
+    if not date_iso:
+        return ""
     try:
         y, m, d = date_iso.split("-")
         return f"{d}/{m}/{y}"
@@ -178,20 +187,47 @@ def _fmt_date(date_iso: str) -> str:
         return date_iso
 
 
+def _future_slots(date_iso: Optional[str], slots: list[dict]) -> list[dict]:
+    """Drop slots already past for TODAY (Bolivia time); other days pass through unchanged.
+
+    Offering a slot earlier than the current time is useless, so when the chosen day is today we
+    keep only slots whose start_time is after the current local time.
+    """
+    now = datetime.now(_TZ_BOLIVIA)
+    if date_iso != now.date().isoformat():
+        return slots
+    now_hms = now.strftime("%H:%M:%S")
+    return [s for s in slots if (s.get("start_time") or "") > now_hms]
+
+
 # ── Phase transitions ─────────────────────────────────────────────────────────
+
+async def _resolve_specialty_service(
+    motivo: str, specialties: list[dict], services: list[dict]
+) -> tuple[Optional[int], Optional[dict]]:
+    """Resolve motivo → (specialty_id, service).
+
+    Fixed motivos use keywords; anything else (or a fixed motivo without a keyword match) is
+    classified by the bounded LLM (with its own fallback).
+    """
+    if motivo_is_deterministic(motivo):
+        sid = _match_specialty_id(motivo, specialties)
+        if sid:
+            return sid, _match_service(motivo, services)
+    return await classify_molestia(motivo, specialties, services)
+
 
 async def _enter_doctor_phase(state: dict) -> BookingResult:
     motivo = state.get("motivo") or ""
     specialties = await _fetch_specialties()
-    state["specialty_id"] = _match_specialty_id(motivo, specialties)
-
-    service = _match_service(motivo, await _fetch_services())
+    services = await _fetch_services()
+    specialty_id, service = await _resolve_specialty_service(motivo, specialties, services)
+    state["specialty_id"] = specialty_id
     if service:
         state["service_id"] = service.get("id")
         state["service_name"] = service.get("name")
 
     doctors = await _fetch_doctors()
-    specialty_id = state.get("specialty_id")
     filtered = [
         d for d in doctors
         if specialty_id and any(s.get("id") == specialty_id for s in (d.get("specialties") or []))
@@ -205,15 +241,19 @@ async def _enter_doctor_phase(state: dict) -> BookingResult:
         state["booking_phase"] = "done"
         return BookingResult(state, "Por el momento no hay doctores con disponibilidad. Intente más tarde, por favor 🙏.", True)
 
-    servicio = state.get("service_name") or motivo
+    # Neutral wording so any motivo (fixed label or free-text phrase) reads naturally.
     titles = [d["name"] for d in state["proposed_doctors"]]
-    msg = f"Para su {servicio}, ¿con quién le gustaría agendar su cita? 😊\n\n{_numbered(titles)}"
+    msg = f"Para agendar su cita, ¿con quién le gustaría atenderse? 😊\n\n{_numbered(titles)}"
     return BookingResult(state, msg, False)
 
 
 async def _enter_dia_phase(state: dict) -> BookingResult:
     schedule = await _fetch_schedule(state["doctor_id"])
-    schedule = [d for d in schedule if d.get("date") and d.get("slots")]
+    # Keep only days that still have FUTURE slots (today's past hours are dropped).
+    schedule = [
+        d for d in schedule
+        if d.get("date") and _future_slots(d["date"], d.get("slots") or [])
+    ]
     state["schedule"] = schedule
     if not schedule:
         # No availability for this doctor → back to choosing another doctor.
@@ -232,16 +272,27 @@ async def _enter_dia_phase(state: dict) -> BookingResult:
 
 
 def _enter_hora_phase(state: dict, day: dict) -> BookingResult:
-    # De-duplicate slots (the API/LLM sometimes repeats them), keep ascending order, cap at 10.
+    # Drop past hours for today, then de-duplicate (the API sometimes repeats), sort ascending, cap 10.
+    future = _future_slots(day.get("date"), day.get("slots") or [])
     seen = set()
     slots = []
-    for s in sorted(day.get("slots", []), key=lambda x: x.get("start_time", "")):
+    for s in sorted(future, key=lambda x: x.get("start_time", "")):
         key = (s.get("start_time"), s.get("end_time"))
         if key in seen:
             continue
         seen.add(key)
         slots.append(s)
     slots = slots[:10]
+
+    if not slots:
+        # All of this day's hours already passed → send the patient back to pick another day.
+        state["booking_phase"] = "dia"
+        titles = [d.get("day_label") or d["date"] for d in state.get("schedule", [])]
+        msg = (
+            f"Ya no hay horarios disponibles para el {day.get('day_label') or day.get('date')}. "
+            f"¿Para qué otro día le gustaría agendar? 📅\n\n{_numbered(titles)}"
+        )
+        return BookingResult(state, msg, False)
 
     state["current_slots"] = slots
     state["chosen_date"] = day.get("date")
@@ -262,7 +313,7 @@ def _enter_confirmar_phase(state: dict) -> BookingResult:
         "Por favor confirme su cita ✅:",
         "",
         f"👤 Paciente: {_patient_name(state)} ({_patient_age(state)})",
-        f"🛠️ Servicio: {state.get('service_name') or state.get('motivo')}",
+        f"🛠️ Servicio: {state.get('motivo')}",
         f"📅 Fecha: {_fmt_date(state.get('chosen_date'))}",
         f"⏰ Hora: {_fmt_time(state.get('chosen_start'))}",
         "",
@@ -314,7 +365,7 @@ async def _do_booking(state: dict) -> BookingResult:
         f"Perfecto ✅ {_patient_name(state)}, su cita ha sido agendada exitosamente con el/la Dr/a. {state.get('doctor_name')}:",
         "",
         f"👤 Paciente: {_patient_name(state)} ({_patient_age(state)})",
-        f"🛠️ Servicio: {state.get('service_name') or state.get('motivo')}",
+        f"🛠️ Servicio: {state.get('motivo')}",
         f"📅 Fecha: {_fmt_date(state.get('chosen_date'))}",
         f"⏰ Hora: {_fmt_time(state.get('chosen_start'))}",
         "",

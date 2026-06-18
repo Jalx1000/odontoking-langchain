@@ -11,6 +11,7 @@ survives across WhatsApp turns. One worker per wa_id (message buffer) avoids rac
 
 import json
 import re
+import unicodedata
 from collections.abc import Awaitable, Callable
 from typing import Optional
 
@@ -76,6 +77,7 @@ def new_state(nombre: Optional[str] = None, nombre_whatsapp: Optional[str] = Non
         "ci": None,
         "seguro_estado": None,  # "VIGENTE" | "PARTICULAR" | None
         "motivo": None,
+        "motivo_otro_pendiente": False,  # patient chose "Otro" → awaiting the free-text detail
         "pending": None,
         "completo": False,
         # Phase-2 deterministic booking (see booking.py) — populated after intake completes.
@@ -118,6 +120,9 @@ def next_pending(state: dict) -> Optional[str]:
         # insurer chosen but not yet verified → need the CI
         return "ci"
     if not state.get("motivo"):
+        # "Otro" was chosen → ask for the free-text detail instead of re-listing the options.
+        if state.get("motivo_otro_pendiente"):
+            return "motivo_detalle"
         return "motivo"
     return None
 
@@ -134,10 +139,26 @@ def question_for(slot: str) -> str:
         "seguro": "¿Cuenta con algún seguro dental?\n1) Alianza\n2) Nacional Vida\n3) Membresía Odontoking\n4) No tengo seguro",
         "ci": "Para validar su seguro, ¿podría compartir su número de carnet de identidad? 🪪",
         "motivo": "¿Qué molestia o servicio necesita?\n1) Dolor dental\n2) Diente quebrado\n3) Encía inflamada\n4) Limpieza\n5) Otro",
+        "motivo_detalle": "Para poder ayudarle mejor, ¿podría indicarme qué molestia o servicio necesita? 🦷💬",
     }[slot]
 
 
 # ── Deterministic parsing ─────────────────────────────────────────────────────
+
+# Numbered motivo options 1-4 → their canonical labels (option 5 = "Otro" handled separately).
+_MOTIVO_NUM = {
+    "1": "Dolor dental",
+    "2": "Diente quebrado",
+    "3": "Encía inflamada",
+    "4": "Limpieza",
+}
+
+
+def _norm(text: str) -> str:
+    """Lowercase, strip accents and surrounding whitespace — for option matching."""
+    t = unicodedata.normalize("NFD", (text or "").lower())
+    return "".join(c for c in t if unicodedata.category(c) != "Mn").strip()
+
 
 def _parse_age(text: str) -> Optional[int]:
     m = re.search(r"\b(\d{1,3})\b", text or "")
@@ -228,9 +249,26 @@ def apply_answer(state: dict, slot: str, text: str) -> Optional[str]:
             state["seguro_estado"] = "PARTICULAR"
         return None
     if slot == "motivo":
-        if not text:
+        norm = _norm(text)
+        if not norm:
             return "¿Podría indicarme la molestia o servicio que necesita?"
+        # "Otro" / option 5 → defer to the free-text detail step (do NOT re-list the options).
+        if norm in ("5", "otro"):
+            state["motivo_otro_pendiente"] = True
+            return None
+        # A numbered option 1-4 → its canonical label.
+        if norm in _MOTIVO_NUM:
+            state["motivo"] = _MOTIVO_NUM[norm]
+            return None
+        # Anything else is a free-text description of the molestia — accept it as-is; booking
+        # will classify it into a specialty/service.
+        state["motivo"] = text.strip()
+        return None
+    if slot == "motivo_detalle":
+        if len(text) < 2 or text.isdigit():
+            return "Por favor describa brevemente qué molestia o servicio necesita 🦷."
         state["motivo"] = text
+        state["motivo_otro_pendiente"] = False
         return None
     return None  # unknown slot — should not happen
 

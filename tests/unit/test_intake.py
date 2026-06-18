@@ -187,6 +187,35 @@ class TestAdvanceIntakeFlow:
         assert r.state["seguro_estado"] == "PARTICULAR"
         assert "molestia" in r.reply.lower() or "servicio" in r.reply.lower()
 
+    @pytest.mark.asyncio
+    async def test_otro_asks_detail_without_relisting(self):
+        """'Otro' asks for the free-text detail instead of re-sending the 5-option list."""
+        state = new_state("Javier Mogro")
+        state.update({
+            "edad": 27, "is_for_self": True, "es_antiguo": False,
+            "seguro": "No tengo seguro", "seguro_estado": "PARTICULAR", "pending": "motivo",
+        })
+        r = await advance_intake(state, "Otro")
+        assert r.completed is False
+        assert r.state["pending"] == "motivo_detalle"
+        assert "Dolor dental" not in r.reply  # the option list is NOT re-sent
+        # The free-text description is then stored as the motivo.
+        r = await advance_intake(r.state, "quiero realizarme una corona dental")
+        assert r.completed is True
+        assert r.state["motivo"] == "quiero realizarme una corona dental"
+
+    @pytest.mark.asyncio
+    async def test_numbered_motivo_maps_to_canonical_label(self):
+        """A numbered motivo option resolves to its canonical label."""
+        state = new_state("Ana")
+        state.update({
+            "edad": 25, "is_for_self": True, "es_antiguo": False,
+            "seguro": "No tengo seguro", "seguro_estado": "PARTICULAR", "pending": "motivo",
+        })
+        r = await advance_intake(state, "2")
+        assert r.completed is True
+        assert r.state["motivo"] == "Diente quebrado"
+
 
 class TestHandoffContext:
     def test_includes_collected_data(self):

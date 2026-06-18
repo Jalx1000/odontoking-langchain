@@ -56,11 +56,10 @@ from app.core.langgraph.tools.odontoking import (
     get_services,
     get_specialties,
 )
-from app.core.langgraph.booking import advance_booking, motivo_is_deterministic
+from app.core.langgraph.booking import advance_booking
 from app.core.langgraph.intake import (
     advance_intake,
     crm_display_name,
-    handoff_context,
     intake_store,
     is_booking_intent,
     is_faq_query,
@@ -369,10 +368,7 @@ class OdontokingAgent:
         if state.get("completo"):
             if is_booking_intent(text):
                 return await _start()  # a new booking → re-run from step 1
-            # "Otro" / free-text motivo runs Phase 2 on the LLM; a finished booking (or
-            # anything else) is plain post-booking chat for the LLM.
-            if state.get("motivo") and not motivo_is_deterministic(state.get("motivo")):
-                return None, handoff_context(state)
+            # Booking finished (or nothing pending) → post-booking chat goes to the LLM.
             return None, None
 
         result = await advance_intake(state, text)
@@ -381,12 +377,12 @@ class OdontokingAgent:
             return result.reply, None
 
         logger.info("intake_completed", wa_id=wa_id)
-        # Fixed motivo → drive the deterministic booking flow. Free-text "Otro" → best-effort
-        # CRM capture + LLM handoff (semantic matching is the LLM's job).
-        if motivo_is_deterministic(result.state.get("motivo")):
-            return await self._booking_turn(wa_id, result.state, None)
+        # Best-effort progressive CRM capture (lead + insurance + CI) so the patient is recorded
+        # even if they abandon before confirming the appointment.
         self._persist_intake_crm(wa_id, result.state)
-        return None, handoff_context(result.state)
+        # Every motivo (fixed buttons AND free-text/"Otro") runs the deterministic booking flow;
+        # free-text is routed to a specialty/service by the bounded LLM classifier inside booking.
+        return await self._booking_turn(wa_id, result.state, None)
 
     async def _booking_turn(
         self, wa_id: str, state: dict, text: Optional[str]

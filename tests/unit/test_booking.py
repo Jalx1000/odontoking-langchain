@@ -58,7 +58,7 @@ def _third_party_state() -> dict:
 
 
 class TestMotivoRouting:
-    """Routing: fixed motivos go deterministic, free-text falls back to the LLM."""
+    """Routing: fixed motivos use keywords; free-text is classified by the bounded LLM."""
 
     def test_fixed_motivos_are_deterministic(self):
         """The 4 fixed motivos route to the deterministic booking flow."""
@@ -153,3 +153,63 @@ class TestBookingFlow:
             r = await advance_booking(_third_party_state(), None)
         # specialty (Periodoncia/General) matches nobody → offer all available doctors
         assert "Ortodoncista X" in r.reply
+
+
+class TestFreeTextMotivo:
+    """Free-text molestias are classified into a specialty by the bounded LLM classifier."""
+
+    @pytest.mark.asyncio
+    async def test_free_text_uses_classifier_to_pick_doctor(self):
+        """A free-text motivo routes to the classifier's specialty and offers its doctor."""
+        ortho_specialties = [{"id": 6, "name": "Ortodoncia"}, {"id": 20, "name": "General"}]
+        docs = [
+            {"id": 7, "name": "Ortodoncista Real", "specialties": [{"id": 6, "name": "Ortodoncia"}]},
+            {"id": 8, "name": "Periodoncista", "specialties": [{"id": 10, "name": "Periodoncia"}]},
+        ]
+        state = new_state("Leo")
+        state.update({
+            "edad": 30, "is_for_self": True, "es_antiguo": False, "seguro": "No tengo seguro",
+            "seguro_estado": "PARTICULAR", "motivo": "quiero ponerme brackets",
+            "completo": True, "wa_id": "591",
+        })
+        with (
+            patch.object(bk, "_fetch_specialties", AsyncMock(return_value=ortho_specialties)),
+            patch.object(bk, "_fetch_services", AsyncMock(return_value=[])),
+            patch.object(bk, "_fetch_doctors", AsyncMock(return_value=docs)),
+            patch.object(bk, "classify_molestia", AsyncMock(return_value=(6, None))) as clf,
+        ):
+            r = await advance_booking(state, None)
+        clf.assert_awaited_once()  # free-text → classifier was consulted
+        assert "Ortodoncista Real" in r.reply
+        assert "Periodoncista" not in r.reply  # only the classified specialty's doctor
+
+
+class TestPastSlotFiltering:
+    """Slots earlier than the current local time are never offered for today."""
+
+    def test_future_slots_filters_today_past_hours(self):
+        """For today, slots starting before now are dropped; future ones are kept."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        fixed_now = datetime(2026, 6, 17, 10, 30, tzinfo=ZoneInfo("America/La_Paz"))
+        slots = [
+            {"start_time": "08:00:00", "end_time": "09:00:00"},  # past
+            {"start_time": "11:00:00", "end_time": "12:00:00"},  # future
+        ]
+        with patch.object(bk, "datetime") as dt:
+            dt.now.return_value = fixed_now
+            kept = bk._future_slots("2026-06-17", slots)
+        assert [s["start_time"] for s in kept] == ["11:00:00"]
+
+    def test_future_slots_keeps_all_for_other_days(self):
+        """Slots for a day other than today pass through unchanged."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        fixed_now = datetime(2026, 6, 17, 10, 30, tzinfo=ZoneInfo("America/La_Paz"))
+        slots = [{"start_time": "08:00:00", "end_time": "09:00:00"}]
+        with patch.object(bk, "datetime") as dt:
+            dt.now.return_value = fixed_now
+            kept = bk._future_slots("2026-06-18", slots)
+        assert kept == slots
