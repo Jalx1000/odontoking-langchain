@@ -65,6 +65,11 @@ from app.core.langgraph.intake import (
     is_faq_query,
     new_state,
 )
+from app.core.langgraph.postbooking import (
+    advance_postbooking,
+    is_cancel_intent,
+    is_name_change_intent,
+)
 from app.core.logging import logger
 from app.core.observability import langfuse_callback_handler
 from app.schemas import GraphState
@@ -366,6 +371,10 @@ class OdontokingAgent:
             return await self._booking_turn(wa_id, state, text)
 
         if state.get("completo"):
+            # Post-booking sub-flow (cancel / correct name) takes priority: "cancelar mi cita"
+            # also contains the booking keyword "cita", so it must be checked before re-booking.
+            if state.get("post_phase") or is_cancel_intent(text) or is_name_change_intent(text):
+                return await self._postbooking_turn(wa_id, state, text)
             if is_booking_intent(text):
                 return await _start()  # a new booking → re-run from step 1
             # Booking finished (or nothing pending) → post-booking chat goes to the LLM.
@@ -391,6 +400,18 @@ class OdontokingAgent:
         state["wa_id"] = wa_id
         result = await advance_booking(state, text)
         await intake_store.set(wa_id, result.state)
+        return result.reply, None
+
+    async def _postbooking_turn(
+        self, wa_id: str, state: dict, text: Optional[str]
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Drive one deterministic post-booking turn (cancel / correct name) and persist state."""
+        state["wa_id"] = wa_id
+        result = await advance_postbooking(state, text)
+        if result.clear:
+            await intake_store.clear(wa_id)  # cancelled → fresh start for any new booking
+        else:
+            await intake_store.set(wa_id, result.state)
         return result.reply, None
 
     def _persist_intake_crm(self, wa_id: str, state: dict) -> None:

@@ -80,6 +80,9 @@ def new_state(nombre: Optional[str] = None, nombre_whatsapp: Optional[str] = Non
         "motivo_otro_pendiente": False,  # patient chose "Otro" → awaiting the free-text detail
         "pending": None,
         "completo": False,
+        # Post-booking sub-flow (see postbooking.py) — correcting the name or cancelling the cita.
+        "post_phase": None,
+        "pending_new_name": None,
         # Phase-2 deterministic booking (see booking.py) — populated after intake completes.
         "wa_id": None,
         "booking_phase": None,
@@ -204,6 +207,29 @@ def _parse_seguro(text: str) -> Optional[str]:
     return None
 
 
+# Leading words that signal the answer is a question or a command, not a name. A patient who
+# replies to "¿su nombre?" with "cual es mi nombre?" must NOT have that phrase stored as a name
+# (this happened in production: the cita was registered for "cual es mi nombre?").
+_NON_NAME_STARTS = (
+    "cual", "cuales", "que", "quien", "quienes", "como", "cuando", "donde", "cuanto", "cuantos",
+    "por que", "porque", "para que", "no se", "no lo se", "dime", "adivina", "sabes",
+    "cambiar", "cambia", "cancelar", "cancela", "quiero", "necesito", "puedes", "puede",
+    "olvida", "ayuda", "ayudame", "hola",
+)
+
+
+def _looks_like_name(text: str) -> bool:
+    """Heuristic: does `text` plausibly look like a person's name (not a question/command)?"""
+    if "?" in text or "¿" in text:
+        return False
+    norm = _norm(text)
+    if not norm:
+        return False
+    if any(norm == w or norm.startswith(w + " ") for w in _NON_NAME_STARTS):
+        return False
+    return sum(c.isalpha() for c in text) >= 2
+
+
 _INVALID = {
     "nombre": "Por favor indíqueme su nombre completo (nombre y apellido). 🙏",
     "edad": "¿Podría indicarme su edad en números, por favor?",
@@ -214,12 +240,25 @@ _INVALID = {
 }
 
 
+def validate_name(text: str) -> Optional[str]:
+    """Return an error message if `text` is not a plausible full name, else None.
+
+    Shared by the intake (nombre / tercero_nombre) and the post-booking rename flow so a
+    question or command is never accepted as a name.
+    """
+    t = (text or "").strip()
+    if len(t) < 3 or t.isdigit() or not _looks_like_name(t):
+        return _INVALID["nombre"]
+    return None
+
+
 def apply_answer(state: dict, slot: str, text: str) -> Optional[str]:
     """Fill `slot` from the user's text. Returns an error message to re-ask, or None on success."""
     text = (text or "").strip()
     if slot in ("nombre", "tercero_nombre"):
-        if len(text) < 3 or text.isdigit():
-            return _INVALID["nombre"]
+        error = validate_name(text)
+        if error:
+            return error
         state[slot] = text
         return None
     if slot in ("edad", "tercero_edad"):

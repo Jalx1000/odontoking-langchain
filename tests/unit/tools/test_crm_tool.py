@@ -564,6 +564,96 @@ class TestRealNameOrNone:
         assert _real_name_or_none("  Javier Mogro  ") == "Javier Mogro"
 
 
+class TestCancelAppointment:
+    """Cancelling deletes the latest meeting activity and moves the lead to the cancelled stage."""
+
+    _ACTIVITIES = _r({
+        "data": [
+            {"id": 5, "type": "meeting", "schedule_from": "2026-06-23 14:30:00", "is_done": 0},
+            {"id": 6, "type": "note", "schedule_from": "2026-06-20 10:00:00", "is_done": 0},
+            {"id": 7, "type": "meeting", "schedule_from": "2026-06-10 09:00:00", "is_done": 1},
+        ]
+    })
+
+    @pytest.mark.asyncio
+    async def test_deletes_meeting_and_cancels_lead(self):
+        """The future not-done meeting is deleted and the lead stage moves to cancelled."""
+        from app.core.langgraph.tools.crm import cancel_appointment
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, self._ACTIVITIES])
+            client.delete = AsyncMock(return_value=_make_response(200, {}))
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            cls.return_value = client
+
+            result = await cancel_appointment("591700000000")
+
+            assert result["success"] is True
+            # the future, not-done meeting (id 5) is the one deleted — not the done one (7)
+            assert result["deleted_activity_id"] == 5
+            assert client.delete.call_args.args[0].endswith("/api/v1/activities/5")
+            stage_calls = [c for c in client.put.call_args_list if "stage" in c[0][0]]
+            assert len(stage_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_lead_returns_not_found(self):
+        """No person/lead for the wa_id returns a not-found result, never raises."""
+        from app.core.langgraph.tools.crm import cancel_appointment
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=_make_response(200, {"data": []}))
+            cls.return_value = client
+
+            result = await cancel_appointment("591799999999")
+            assert result["success"] is False
+            assert result["error"] == "no_appointment_found"
+
+
+class TestRenamePerson:
+    """Renaming PUTs the new name to the person endpoint, preserving the stored age."""
+
+    @pytest.mark.asyncio
+    async def test_puts_new_name_preserving_age(self):
+        """The new name is PUT to the person endpoint and the stored age is preserved."""
+        from app.core.langgraph.tools.crm import rename_person
+
+        person = _r({"data": [{
+            "id": 99, "name": "Ale", "job_title": "24",
+            "emails": [{"value": "591700000000@whatsapp.sofopolis.net"}],
+            "contact_numbers": [{"value": "591700000000"}],
+        }]})
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=person)
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            cls.return_value = client
+
+            result = await rename_person("591700000000", "Ale - Maria Isabel Galarza")
+
+            assert result["success"] is True
+            url = client.put.call_args.args[0]
+            payload = client.put.call_args.kwargs["json"]
+            assert url.endswith("/api/v1/contacts/persons/99")
+            assert payload["name"] == "Ale - Maria Isabel Galarza"
+            assert payload["job_title"] == "24"  # existing age preserved
+
+    @pytest.mark.asyncio
+    async def test_person_not_found(self):
+        """A missing person returns a not-found result, never raises."""
+        from app.core.langgraph.tools.crm import rename_person
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=_make_response(200, {"data": []}))
+            cls.return_value = client
+
+            result = await rename_person("591799999999", "Nuevo Nombre")
+            assert result["success"] is False
+            assert result["error"] == "person_not_found"
+
+
 class TestUpdatePersonAge:
     """Person age is persisted via the standard person PUT, never the removed 404 route."""
 

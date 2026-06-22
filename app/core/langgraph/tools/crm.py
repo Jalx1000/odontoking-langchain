@@ -492,6 +492,102 @@ async def update_crm(
         return json.dumps({"success": False, "error": str(e)})
 
 
+async def _find_person_and_lead(
+    client: httpx.AsyncClient, wa_id: str
+) -> tuple[dict[str, Any] | None, int | None]:
+    """Return (person, lead_id) for a wa_id, matching the lead by the person's WhatsApp email."""
+    person = await find_person_by_wa_id(client, wa_id)
+    if not person or not person.get("id"):
+        return None, None
+    person_email = _person_email_from_wa_id(wa_id)
+    leads_resp = await client.get(
+        f"{_BASE}/api/v1/leads",
+        params={"sort": "id", "limit": 10, "person_id": str(person["id"])},
+        headers=_HEADERS,
+    )
+    leads_resp.raise_for_status()
+    all_leads = leads_resp.json().get("data", [])
+    matching = [
+        ld for ld in all_leads
+        if any(
+            (e.get("value", "")).lower() == person_email.lower()
+            for e in (ld.get("person", {}).get("emails") or [])
+        )
+    ]
+    return person, (matching[-1]["id"] if matching else None)
+
+
+async def cancel_appointment(wa_id: str) -> dict[str, Any]:
+    """Cancel a patient's latest appointment.
+
+    Deletes the most recent not-done meeting activity (DELETE /api/v1/activities/{id}) and moves
+    the lead to the cancelled pipeline stage. Used by the deterministic post-booking flow.
+    """
+    log = logger.bind(wa_id=wa_id)
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            person, lead_id = await _find_person_and_lead(client, wa_id)
+            if not person or not lead_id:
+                return {"success": False, "error": "no_appointment_found"}
+
+            acts_resp = await client.get(f"{_BASE}/api/v1/leads/{lead_id}/activities", headers=_HEADERS)
+            acts_resp.raise_for_status()
+            raw = acts_resp.json()
+            activities = raw.get("data", raw) if isinstance(raw, dict) else raw
+            meetings = [
+                a for a in (activities if isinstance(activities, list) else [])
+                if a.get("type") == "meeting" and not a.get("is_done")
+            ]
+            deleted_id = None
+            if meetings:
+                meetings.sort(key=lambda a: a.get("schedule_from", ""))
+                meeting_id = meetings[-1].get("id")
+                del_resp = await client.delete(f"{_BASE}/api/v1/activities/{meeting_id}", headers=_HEADERS)
+                del_resp.raise_for_status()
+                deleted_id = meeting_id
+                log.info("crm_appointment_deleted", lead_id=lead_id, activity_id=meeting_id)
+
+            await client.put(
+                f"{_BASE}/api/v1/leads/stage/edit/{lead_id}",
+                json={"lead_pipeline_stage_id": [6]},
+                headers=_HEADERS,
+            )
+            log.info("crm_lead_stage_cancelled", lead_id=lead_id)
+            return {"success": True, "lead_id": lead_id, "deleted_activity_id": deleted_id}
+    except Exception as e:
+        log.exception("cancel_appointment_failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+async def rename_person(wa_id: str, new_name: str) -> dict[str, Any]:
+    """Update a CRM person's display name, preserving the stored age (job_title)."""
+    log = logger.bind(wa_id=wa_id)
+    clean = (new_name or "").strip()
+    if not clean:
+        return {"success": False, "error": "empty_name"}
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            person = await find_person_by_wa_id(client, wa_id)
+            if not person or not person.get("id"):
+                return {"success": False, "error": "person_not_found"}
+            person_id = person["id"]
+            phones = person.get("contact_numbers") or []
+            phone = phones[0].get("value") if phones and isinstance(phones[0], dict) else None
+            existing_age = str(person.get("job_title") or "")
+            age_int = int(existing_age) if existing_age.isdigit() else None
+            resp = await client.put(
+                f"{_BASE}/api/v1/contacts/persons/{person_id}",
+                json=_person_payload(wa_id, clean, phone or wa_id, age=age_int),
+                headers=_HEADERS,
+            )
+            resp.raise_for_status()
+            log.info("crm_person_renamed", person_id=person_id)
+            return {"success": True, "person_id": person_id}
+    except Exception as e:
+        log.exception("rename_person_failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
 @tool
 async def get_citas(wa_id: str) -> str:
     """Get all appointments (meetings) for a patient by their WhatsApp ID.

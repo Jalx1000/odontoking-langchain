@@ -14,6 +14,7 @@ from app.core.langgraph.intake import (
     is_faq_query,
     new_state,
     next_pending,
+    validate_name,
 )
 
 
@@ -94,6 +95,37 @@ class TestNextPending:
         state["edad"] = 30
         state["is_for_self"] = False
         assert next_pending(state) == "tercero_nombre"
+
+
+class TestNameValidation:
+    """A question or command must never be stored as a name (prod bug: 'cual es mi nombre?')."""
+
+    def test_rejects_questions_and_commands(self):
+        """Interrogatives and commands are rejected as names."""
+        assert validate_name("cual es mi nombre?") is not None
+        assert validate_name("cual es mi nombre") is not None
+        assert validate_name("quiero cambiar mi nombre") is not None
+        assert validate_name("no se") is not None
+        assert validate_name("¿quién soy?") is not None
+
+    def test_accepts_real_names(self):
+        """Plausible names pass."""
+        assert validate_name("Maria Isabel Galarza") is None
+        assert validate_name("Javier Mogro") is None
+        assert validate_name("Ana") is None
+
+    def test_rejects_too_short_or_numeric(self):
+        """Empty, too short, or numeric answers are rejected."""
+        assert validate_name("") is not None
+        assert validate_name("ab") is not None
+        assert validate_name("12345") is not None
+
+    def test_apply_answer_reasks_on_question(self):
+        """apply_answer does not store a question as the name."""
+        state = new_state()
+        err = apply_answer(state, "nombre", "cual es mi nombre?")
+        assert err is not None
+        assert state["nombre"] is None
 
 
 class TestApplyAnswer:
