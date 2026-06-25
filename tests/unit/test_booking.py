@@ -265,6 +265,88 @@ class TestSlotSelectionTimeVsIndex:
         assert r.state["chosen_start"] == "08:00:00"
 
 
+class TestConfirmTimeRevalidation:
+    """At confirmation the slot is re-checked against a fresh schedule before booking."""
+
+    _DAY = "2026-12-17"
+
+    def _day(self, start_times: list[str]) -> list[dict]:
+        return [{
+            "date": self._DAY,
+            "day_label": "jueves 17/12",
+            "slots": [{"start_time": t, "end_time": t} for t in start_times],
+        }]
+
+    @contextmanager
+    def _tools(self, *, schedules: list, crm=None):
+        """Like _mocked_tools but _fetch_schedule yields a different result per call (side_effect)."""
+        crm = crm if crm is not None else {"success": True, "appointment_registered": True}
+        book = AsyncMock(return_value=crm)
+        with (
+            patch.object(bk, "_fetch_specialties", AsyncMock(return_value=_SPECIALTIES)),
+            patch.object(bk, "_fetch_services", AsyncMock(return_value=_SERVICES)),
+            patch.object(bk, "_fetch_doctors", AsyncMock(return_value=_DOCTORS)),
+            patch.object(bk, "_fetch_schedule", AsyncMock(side_effect=schedules)),
+            patch.object(bk, "_book_crm", book),
+        ):
+            yield book
+
+    @pytest.mark.asyncio
+    async def test_books_when_slot_still_free_at_confirm(self):
+        """Slot present in the fresh schedule at confirm → books normally."""
+        full = self._day(["15:00:00", "17:00:00"])
+        with self._tools(schedules=[full, full]) as book:  # offer fetch + confirm fetch
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "1")          # doctor → days
+            r = await advance_booking(r.state, "1")          # day → times
+            r = await advance_booking(r.state, "17:00")      # pick 17:00 → confirm
+            r = await advance_booking(r.state, "sí")         # confirm
+        assert r.done is True
+        book.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reoffers_when_slot_taken_before_confirm(self):
+        """Slot vanished from the fresh schedule at confirm → re-offer, do NOT book."""
+        offered = self._day(["15:00:00", "17:00:00"])
+        taken = self._day(["15:00:00"])  # 17:00 was taken in the meantime
+        with self._tools(schedules=[offered, taken]) as book:
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "17:00")
+            r = await advance_booking(r.state, "sí")         # confirm → revalidation fails
+        book.assert_not_called()
+        assert r.done is False
+        assert r.state["booking_phase"] == "hora"
+        assert "ya fue tomado" in r.reply
+        # 17:00 is named in the apology, but must NOT appear as an offered slot anymore.
+        assert "1. 15:00 - 15:00" in r.reply
+        assert "17:00 -" not in r.reply
+        assert r.state.get("chosen_start") != "17:00:00"  # stale pick was cleared
+
+    @pytest.mark.asyncio
+    async def test_bounces_to_day_picker_when_whole_day_gone(self):
+        """The entire chosen day disappeared at confirm → back to choosing a day, no booking."""
+        offered = self._day(["17:00:00"])
+        other_day = [{
+            "date": "2026-12-18", "day_label": "viernes 18/12",
+            "slots": [{"start_time": "09:00:00", "end_time": "10:00:00"}],
+        }]
+        with self._tools(schedules=[offered, other_day]) as book:
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "17:00")
+            r = await advance_booking(r.state, "sí")
+        book.assert_not_called()
+        assert r.state["booking_phase"] == "dia"
+        assert "ya no está disponible" in r.reply
+        assert "viernes 18/12" in r.reply
+
+
 class TestFreeTextMotivo:
     """Free-text molestias are classified into a specialty by the bounded LLM classifier."""
 

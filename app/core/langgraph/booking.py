@@ -377,7 +377,62 @@ def _crm_payload(state: dict) -> dict:
     return payload
 
 
+async def _revalidate_slot(state: dict) -> Optional[BookingResult]:
+    """Re-check, at confirmation time, that the chosen slot is still free.
+
+    The slots were fetched when the day was picked; by the time the patient confirms, that slot
+    may already be taken (or have passed, for today). Returns a re-offer BookingResult when the
+    slot is gone, or None when it is still available and the caller may proceed to book.
+    """
+    doctor_id = state.get("doctor_id")
+    chosen_date = state.get("chosen_date")
+    chosen_start = state.get("chosen_start")
+    if not (doctor_id and chosen_date and chosen_start):
+        return None  # nothing to validate against → let the CRM be the final gate
+
+    schedule = [
+        d for d in await _fetch_schedule(doctor_id)
+        if d.get("date") and _future_slots(d["date"], d.get("slots") or [])
+    ]
+    day = next((d for d in schedule if d.get("date") == chosen_date), None)
+    if day and any((s.get("start_time") or "") == chosen_start for s in _future_slots(chosen_date, day.get("slots") or [])):
+        return None  # still free → proceed to book
+
+    # Slot is gone — drop the stale pick so no obsolete hour can be carried into a later booking.
+    state.pop("chosen_start", None)
+    state.pop("chosen_end", None)
+
+    if day:  # the day still has OTHER slots → re-offer that same day
+        reoffer = _enter_hora_phase(state, day)
+        reoffer.reply = f"Disculpe, el horario de las {_fmt_time(chosen_start)} ya fue tomado. {reoffer.reply}"
+        return reoffer
+
+    # The whole day is gone → send the patient back to pick another day (or doctor).
+    state["schedule"] = schedule
+    if not schedule:
+        state["booking_phase"] = "doctor"
+        titles = [d["name"] for d in state.get("proposed_doctors", [])]
+        return BookingResult(
+            state,
+            f"Disculpe, el/la Dr/a. {state.get('doctor_name')} ya no tiene horarios disponibles. "
+            f"¿Con quién más le gustaría agendar? 😊\n\n{_numbered(titles)}",
+            False,
+        )
+    state["booking_phase"] = "dia"
+    titles = [d.get("day_label") or d["date"] for d in schedule]
+    return BookingResult(
+        state,
+        f"Disculpe, el horario de las {_fmt_time(chosen_start)} del {_fmt_date(chosen_date)} ya no está disponible. "
+        f"¿Para qué otro día le gustaría agendar? 📅\n\n{_numbered(titles)}",
+        False,
+    )
+
+
 async def _do_booking(state: dict) -> BookingResult:
+    reoffer = await _revalidate_slot(state)
+    if reoffer is not None:
+        return reoffer
+
     result = await _book_crm(_crm_payload(state))
     if not (result.get("success") and result.get("appointment_registered")):
         logger.warning("booking_crm_not_registered", wa_id=state.get("wa_id"), result=result)
