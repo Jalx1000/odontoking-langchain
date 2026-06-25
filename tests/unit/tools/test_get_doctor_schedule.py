@@ -1,19 +1,19 @@
 """Unit tests for the rewritten get_doctor_schedule tool.
 
 Endpoint under test:
-    GET {CRM_BASE_URL}/api/doctors/{id}/slots
+    GET {CRM_BASE_URL}/api/doctors/{id}/available-slots
         ?date=YYYY-MM-DD
         &days=<int>
         &duration_minutes=<int>
 
 Key contract:
-- No auth headers (public endpoint).
-- Returns {"doctor_id": int, "slots": [...], "days_queried": int}.
+- Authenticated (Bearer token) — availability comes from SMD ∩ jornada − citas.
+- Returns {"doctor_id": int, "schedule": [...], "days_queried": int}.
 - 404  → {"error": "doctor_not_found", ...}  — no exception raised.
 - 422  → {"error": "invalid_parameters", "slots": []}  — no exception raised.
 - 5xx/429  → retried up to 3 times, then returns error.
 - date query param is today (YYYY-MM-DD).
-- Old endpoints (/api/disponibilidad, /api/doctors/{id} without /slots) are
+- Old endpoints (/api/disponibilidad, the local /api/doctors/{id}/slots) are
   never called.
 
 Note: pytest-asyncio is not installed in this project. All async tests are run
@@ -27,7 +27,6 @@ from datetime import date as _date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +68,9 @@ def _slots_payload(doctor_id: int = 5, slots: list | None = None, days: int = 7)
         "from": "2026-05-25",
         "days": days,
         "duration_minutes": 60,
+        "source": "smd",
+        "degraded": False,
+        "reason": None,
         "schedule": schedule,
     }
 
@@ -360,13 +362,13 @@ class TestErrorHandling:
 
 
 # ---------------------------------------------------------------------------
-# Security — no auth header must be sent
+# Security — the available-slots endpoint is authenticated
 # ---------------------------------------------------------------------------
 
 
-class TestNoAuthHeader:
-    def test_authorization_header_not_sent(self):
-        """The new /slots endpoint is public — Authorization must not be in headers."""
+class TestAuthHeader:
+    def test_authorization_bearer_header_sent(self):
+        """available-slots is authenticated — a Bearer Authorization header must be sent."""
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
             client.get = AsyncMock(return_value=_make_response(200, _slots_payload()))
@@ -374,32 +376,11 @@ class TestNoAuthHeader:
 
             invoke(5)
 
-        call_kwargs = client.get.call_args[1]
-        headers = call_kwargs.get("headers", {})
-        assert "Authorization" not in headers, (
-            "get_doctor_schedule must not send Authorization header — endpoint is public"
+        headers = client.get.call_args[1].get("headers", {})
+        assert "Authorization" in headers, (
+            "get_doctor_schedule must send the Bearer token — available-slots is authenticated"
         )
-
-    def test_no_bearer_token_in_any_request_kwarg(self):
-        """Check all kwargs passed to client.get — none may carry Authorization."""
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(return_value=_make_response(200, _slots_payload()))
-            cls.return_value = client
-
-            invoke(5)
-
-        all_call_args = client.get.call_args
-        # Check positional args
-        for arg in all_call_args.args:
-            if isinstance(arg, dict):
-                assert "Authorization" not in arg
-        # Check keyword args
-        for val in all_call_args.kwargs.values():
-            if isinstance(val, dict):
-                assert "Authorization" not in val, (
-                    f"Found Authorization in request kwargs: {val}"
-                )
+        assert headers["Authorization"].startswith("Bearer ")
 
 
 # ---------------------------------------------------------------------------
@@ -408,8 +389,8 @@ class TestNoAuthHeader:
 
 
 class TestEndpointRegression:
-    def test_calls_slots_endpoint_not_old_doctor_detail(self):
-        """Must call /api/doctors/{id}/slots — NOT the old /api/doctors/{id} endpoint."""
+    def test_calls_available_slots_endpoint(self):
+        """Must call /api/doctors/{id}/available-slots — the SMD-backed availability endpoint."""
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
             client.get = AsyncMock(return_value=_make_response(200, _slots_payload(doctor_id=5)))
@@ -418,15 +399,15 @@ class TestEndpointRegression:
             invoke(5)
 
         called_url: str = client.get.call_args[0][0]
-        assert "/slots" in called_url, (
-            f"Expected URL to contain /slots, got: {called_url}"
+        assert "/available-slots" in called_url, (
+            f"Expected URL to contain /available-slots, got: {called_url}"
         )
 
-    def test_does_not_call_old_doctor_detail_bare_url(self):
-        """The bare /api/doctors/{id} URL (without /slots) must not be called.
+    def test_does_not_call_local_slots_or_bare_doctor_url(self):
+        """Neither the local /api/doctors/{id}/slots nor the bare /api/doctors/{id} may be called.
 
-        This is a regression for the old implementation which fetched
-        /api/doctors/5 and parsed the `schedule` field from doctor detail.
+        Regression for the old implementations: /api/doctors/5 (doctor detail) and the
+        local-only /api/doctors/5/slots (no ShareMeData availability).
         """
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
@@ -436,10 +417,12 @@ class TestEndpointRegression:
             invoke(5)
 
         called_url: str = client.get.call_args[0][0]
-        # Old endpoint: ends exactly at /api/doctors/5 with no further path
         import re
         assert not re.search(r"/api/doctors/\d+$", called_url), (
-            f"Called the old bare doctor-detail URL without /slots: {called_url}"
+            f"Called the old bare doctor-detail URL: {called_url}"
+        )
+        assert not re.search(r"/api/doctors/\d+/slots$", called_url), (
+            f"Called the old local-only /slots URL (no SMD): {called_url}"
         )
 
     def test_does_not_call_disponibilidad_endpoint(self):

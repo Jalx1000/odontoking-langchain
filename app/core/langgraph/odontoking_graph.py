@@ -49,10 +49,8 @@ from app.core.langgraph.tools.ask_human import ask_human
 from app.core.langgraph.tools.crm import get_citas, sync_transcript_to_crm, update_crm
 from app.core.langgraph.tools.insurance import verify_insurance
 from app.core.langgraph.tools.odontoking import (
-    get_disponibilidad,
     get_doctor_schedule,
     get_doctors,
-    get_horarios,
     get_services,
     get_specialties,
 )
@@ -86,8 +84,6 @@ _ODONTOKING_TOOLS = [
     get_specialties,
     get_doctors,
     get_doctor_schedule,
-    get_horarios,
-    get_disponibilidad,
     verify_insurance,
     update_crm,
     get_citas,

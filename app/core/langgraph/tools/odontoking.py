@@ -170,11 +170,15 @@ async def _fetch_doctor_slots(
     days: int,
     duration_minutes: int = 60,
 ) -> httpx.Response:
-    """Call the public slots endpoint. Retries on 429/5xx, re-raises on the final attempt."""
+    """Call the real availability endpoint (SMD ∩ jornada local − citas).
+
+    Uses /api/doctors/{id}/available-slots, the only endpoint backed by ShareMeData; the old
+    /slots returned local-only data without SMD. Requires the Bearer token. Retries on 429/5xx.
+    """
     resp = await client.get(
-        f"{_BASE}/api/doctors/{id_doctor}/slots",
+        f"{_BASE}/api/doctors/{id_doctor}/available-slots",
         params={"date": date, "days": days, "duration_minutes": duration_minutes},
-        headers={"accept": "application/json", "X-CSRF-TOKEN": ""},
+        headers=_HEADERS,
     )
     resp.raise_for_status()
     return resp
@@ -200,8 +204,10 @@ async def get_doctor_schedule(id_doctor: int, duration_minutes: int = 60, days: 
             resp = await _fetch_doctor_slots(client, id_doctor, today, days, duration_minutes)
 
         payload = resp.json()
-        # API returns {"schedule": [{"date": "YYYY-MM-DD", "slots": [{start_time, end_time, status}]}]}
-        raw_schedule = payload.get("schedule", []) if isinstance(payload, dict) else []
+        # available-slots returns {"source", "degraded", "reason",
+        #   "schedule": [{"date": "YYYY-MM-DD", "slots": [{start_time, end_time, status}]}]}
+        is_dict = isinstance(payload, dict)
+        raw_schedule = payload.get("schedule", []) if is_dict else []
 
         schedule = [
             {
@@ -218,12 +224,24 @@ async def get_doctor_schedule(id_doctor: int, duration_minutes: int = 60, days: 
         ]
 
         total_slots = sum(len(d["slots"]) for d in schedule)
+        # source/degraded/reason tell whether availability came from SMD or a local fallback;
+        # surface them so degraded availability is visible in operations (per integration doc).
+        degraded = payload.get("degraded") if is_dict else None
+        if degraded:
+            logger.warning(
+                "odontoking_doctor_schedule_degraded",
+                id_doctor=id_doctor,
+                source=payload.get("source") if is_dict else None,
+                reason=payload.get("reason") if is_dict else None,
+            )
         logger.info(
             "odontoking_doctor_schedule_fetched",
             id_doctor=id_doctor,
             days=days,
             duration_minutes=duration_minutes,
             total_slots=total_slots,
+            source=payload.get("source") if is_dict else None,
+            degraded=degraded,
         )
         return json.dumps(
             {"doctor_id": id_doctor, "schedule": schedule, "days_queried": days},
@@ -251,72 +269,3 @@ async def get_doctor_schedule(id_doctor: int, duration_minutes: int = 60, days: 
     except Exception as e:
         logger.exception("get_doctor_schedule_failed", id_doctor=id_doctor, error=str(e))
         return json.dumps({"error": str(e), "slots": []}, ensure_ascii=False)
-
-
-@tool
-async def get_horarios(doctor_id: int | None = None) -> str:
-    """Get the base weekly schedule (in text format) for one or all doctors.
-
-    Use this to show a doctor's general working hours (e.g., Mon-Fri 09:00-17:00).
-    For real-time available slots on a specific date, use get_disponibilidad instead.
-
-    Args:
-        doctor_id: Optional doctor ID to filter results. Returns all doctors if omitted.
-    """
-    try:
-        params: dict = {}
-        if doctor_id is not None:
-            params["doctorId"] = doctor_id
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{_BASE}/api/horarios",
-                params=params,
-                headers=_HEADERS,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            logger.info("odontoking_horarios_fetched", doctor_id=doctor_id)
-            return json.dumps(data, ensure_ascii=False)
-    except httpx.HTTPStatusError as e:
-        logger.exception("get_horarios_http_error", status=e.response.status_code, error=str(e))
-        return json.dumps({"error": f"API returned {e.response.status_code}"})
-    except Exception as e:
-        logger.exception("get_horarios_failed", error=str(e))
-        return json.dumps({"error": str(e)})
-
-
-@tool
-async def get_disponibilidad(doctor_id: int, date: str) -> str:
-    """Get real-time available appointment slots for a doctor on a specific date.
-
-    Returns a list of available time blocks (startTime, endTime) that can be offered
-    to the patient. Always call this before confirming an appointment to ensure the
-    slot is actually free.
-
-    Args:
-        doctor_id: The numeric ID of the doctor from get_doctors().
-        date: The date to check in YYYY-MM-DD format (e.g., '2026-05-15').
-    """
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{_BASE}/api/disponibilidad",
-                params={"doctorId": doctor_id, "date": date},
-                headers=_HEADERS,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            logger.info("odontoking_disponibilidad_fetched", doctor_id=doctor_id, date=date)
-            return json.dumps(data, ensure_ascii=False)
-    except httpx.HTTPStatusError as e:
-        logger.exception(
-            "get_disponibilidad_http_error",
-            status=e.response.status_code,
-            doctor_id=doctor_id,
-            date=date,
-            error=str(e),
-        )
-        return json.dumps({"error": f"API returned {e.response.status_code}"})
-    except Exception as e:
-        logger.exception("get_disponibilidad_failed", doctor_id=doctor_id, date=date, error=str(e))
-        return json.dumps({"error": str(e)})

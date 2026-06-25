@@ -194,9 +194,10 @@ class TestGetDoctors:
 
 
 class TestGetDoctorSchedule:
-    """Tests for the /api/doctors/{id}/slots endpoint contract.
+    """Tests for the /api/doctors/{id}/available-slots endpoint contract (SMD-backed).
 
-    New response shape: {"schedule": [{"date", "slots": [{start_time, end_time, status}]}]}.
+    Response shape: {"source", "degraded", "reason",
+        "schedule": [{"date", "slots": [{start_time, end_time, status}]}]}.
     Tool returns {"doctor_id", "schedule": [{date, day_label, slots}], "days_queried"}.
 
     Run synchronously via asyncio.run() — pytest-asyncio is not installed, so
@@ -210,9 +211,12 @@ class TestGetDoctorSchedule:
         return json.loads(asyncio.run(get_doctor_schedule.ainvoke(payload)))
 
     def test_calls_slots_endpoint_and_returns_schedule(self):
-        """Calls /api/doctors/{id}/slots with CSRF header and returns day objects."""
+        """Calls /api/doctors/{id}/available-slots with the Bearer token and returns day objects."""
         raw = {
             "doctor_id": 5,
+            "source": "smd",
+            "degraded": False,
+            "reason": None,
             "schedule": [
                 {
                     "date": "2026-05-26",
@@ -243,9 +247,9 @@ class TestGetDoctorSchedule:
 
         call_url = client.get.call_args[0][0]
         call_headers = client.get.call_args[1]["headers"]
-        assert call_url.endswith("/api/doctors/5/slots")
+        assert call_url.endswith("/api/doctors/5/available-slots")
         assert call_headers["accept"] == "application/json"
-        assert call_headers["X-CSRF-TOKEN"] == ""
+        assert call_headers["Authorization"].startswith("Bearer ")
 
     def test_returns_error_when_doctor_not_found(self):
         """404 yields {"error": "doctor_not_found"} without raising."""
@@ -296,160 +300,3 @@ class TestGetDoctorSchedule:
         assert slot["end_time"] == "09:00"
         assert "internal_id" not in slot
         assert "status" not in slot
-
-
-class TestGetHorarios:
-    @pytest.mark.asyncio
-    async def test_returns_all_horarios_without_filter(self):
-        from app.core.langgraph.tools.odontoking import get_horarios
-
-        data = [
-            {"doctorId": 1, "doctorName": "Dr. García", "horarioRaw": "Lun-Vie 09:00-17:00"},
-            {"doctorId": 2, "doctorName": "Dra. López", "horarioRaw": "Lun-Sáb 08:00-14:00"},
-        ]
-        resp = _make_response(200, data)
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(return_value=resp)
-            cls.return_value = client
-
-            result = json.loads(await get_horarios.ainvoke({}))
-            assert len(result) == 2
-            assert result[0]["doctorName"] == "Dr. García"
-
-    @pytest.mark.asyncio
-    async def test_filters_by_doctor_id(self):
-        from app.core.langgraph.tools.odontoking import get_horarios
-
-        data = [{"doctorId": 5, "doctorName": "Dr. Specific", "horarioRaw": "Lun-Vie 10:00-18:00"}]
-        resp = _make_response(200, data)
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(return_value=resp)
-            cls.return_value = client
-
-            result = json.loads(await get_horarios.ainvoke({"doctor_id": 5}))
-            # Verify doctorId param was passed
-            call_params = client.get.call_args[1]["params"]
-            assert call_params["doctorId"] == 5
-            assert len(result) == 1
-
-    @pytest.mark.asyncio
-    async def test_no_doctor_id_omits_param(self):
-        from app.core.langgraph.tools.odontoking import get_horarios
-
-        resp = _make_response(200, [])
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(return_value=resp)
-            cls.return_value = client
-
-            await get_horarios.ainvoke({})
-            call_params = client.get.call_args[1]["params"]
-            assert "doctorId" not in call_params
-
-    @pytest.mark.asyncio
-    async def test_returns_error_on_404(self):
-        from app.core.langgraph.tools.odontoking import get_horarios
-
-        resp = _make_response(404, {"message": "Not found"})
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(return_value=resp)
-            cls.return_value = client
-
-            result = json.loads(await get_horarios.ainvoke({"doctor_id": 999}))
-            assert "error" in result
-
-    @pytest.mark.asyncio
-    async def test_returns_error_on_exception(self):
-        from app.core.langgraph.tools.odontoking import get_horarios
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=Exception("timeout"))
-            cls.return_value = client
-
-            result = json.loads(await get_horarios.ainvoke({}))
-            assert "error" in result
-
-
-class TestGetDisponibilidad:
-    @pytest.mark.asyncio
-    async def test_returns_available_slots(self):
-        from app.core.langgraph.tools.odontoking import get_disponibilidad
-
-        data = [
-            {"doctorId": 5, "date": "2026-05-15", "startTime": "09:00", "endTime": "10:00"},
-            {"doctorId": 5, "date": "2026-05-15", "startTime": "11:00", "endTime": "12:00"},
-        ]
-        resp = _make_response(200, data)
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(return_value=resp)
-            cls.return_value = client
-
-            result = json.loads(await get_disponibilidad.ainvoke({"doctor_id": 5, "date": "2026-05-15"}))
-            assert len(result) == 2
-            assert result[0]["startTime"] == "09:00"
-
-    @pytest.mark.asyncio
-    async def test_passes_correct_query_params(self):
-        from app.core.langgraph.tools.odontoking import get_disponibilidad
-
-        resp = _make_response(200, [])
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(return_value=resp)
-            cls.return_value = client
-
-            await get_disponibilidad.ainvoke({"doctor_id": 19, "date": "2026-05-20"})
-            call_params = client.get.call_args[1]["params"]
-            assert call_params["doctorId"] == 19
-            assert call_params["date"] == "2026-05-20"
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_list_when_no_slots(self):
-        from app.core.langgraph.tools.odontoking import get_disponibilidad
-
-        resp = _make_response(200, [])
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(return_value=resp)
-            cls.return_value = client
-
-            result = json.loads(await get_disponibilidad.ainvoke({"doctor_id": 5, "date": "2026-05-15"}))
-            assert result == []
-
-    @pytest.mark.asyncio
-    async def test_returns_error_on_400(self):
-        from app.core.langgraph.tools.odontoking import get_disponibilidad
-
-        resp = _make_response(400, {"message": "invalid date"})
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(return_value=resp)
-            cls.return_value = client
-
-            result = json.loads(await get_disponibilidad.ainvoke({"doctor_id": 5, "date": "not-a-date"}))
-            assert "error" in result
-
-    @pytest.mark.asyncio
-    async def test_returns_error_on_exception(self):
-        from app.core.langgraph.tools.odontoking import get_disponibilidad
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=Exception("network error"))
-            cls.return_value = client
-
-            result = json.loads(await get_disponibilidad.ainvoke({"doctor_id": 5, "date": "2026-05-15"}))
-            assert "error" in result

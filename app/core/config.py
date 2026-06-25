@@ -254,10 +254,6 @@ class Settings:
         self.BUFFER_WINDOW_SECONDS = float(os.getenv("BUFFER_WINDOW_SECONDS", "3.0"))
         self.BUFFER_MAX_MESSAGES = int(os.getenv("BUFFER_MAX_MESSAGES", "10"))
 
-        # Sharemedata Calendar
-        self.SHAREMEDATA_API_URL = os.getenv("SHAREMEDATA_API_URL", "http://gamma.sharemedata.com:3000")
-        self.SHAREMEDATA_API_KEY = os.getenv("SHAREMEDATA_API_KEY", "")
-
         # Alert Notifications — SMTP email
         self.MAIL_HOST = os.getenv("MAIL_HOST", "")
         self.MAIL_PORT = int(os.getenv("MAIL_PORT", "465"))
