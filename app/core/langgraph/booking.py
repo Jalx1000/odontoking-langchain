@@ -127,20 +127,47 @@ def _match_service(motivo: str, services: list[dict]) -> Optional[dict]:
     return None
 
 
+def _slot_start_hour(title: str) -> Optional[int]:
+    """Start hour of a slot title ('08:00 - 09:00' → 8), or None if the title is not a time."""
+    m = re.match(r"\s*(\d{1,2}):\d{2}", _norm(title))
+    return int(m.group(1)) if m else None
+
+
 def _choose(user_text: Optional[str], titles: list[str]) -> Optional[int]:
     """Map the patient's reply to a 1-based option index.
 
-    Handles both a typed number and a tapped WhatsApp button (which sends the option title,
-    possibly truncated). Returns None when nothing matches.
+    Time always wins over position: a leading/lone hour is read as a TIME, never as the option
+    number. This fixes the bug where "08:00 - 09:00" was parsed as option 8 (→ 17:00) and the
+    case where "5" meant "5pm" but selected the 5th option.
     """
     text = _norm(user_text)
     if not text or not titles:
         return None
-    m = re.match(r"^(\d+)", text)
+
+    # A bare number: TIME WINS. Treat it as an hour and match an offered slot first; only fall
+    # back to the list position when no offered slot has that hour. ("5" → 17:00 when 17:00 is
+    # offered; "8" → 08:00; "3" → 15:00.) Patients say "a las 5" far more often than "opción 5",
+    # and morning hours 1-6 are never offered (clinic opens 07:30), so the pm reading is safe.
+    if re.fullmatch(r"\d{1,2}\.?", text):
+        n = int(text.rstrip("."))
+        candidate_hours = {n} | ({n + 12} if 1 <= n <= 11 else set())
+        hour_matches = [i for i, t in enumerate(titles, start=1) if _slot_start_hour(t) in candidate_hours]
+        if len(hour_matches) == 1:
+            return hour_matches[0]
+        if hour_matches:
+            return None  # the number maps to >1 offered hour → ambiguous, let the caller re-offer
+        return n if 1 <= n <= len(titles) else None
+
+    # An explicit time ("17:00", "08:00 - 09:00", "8:00") → the slot whose start is that time.
+    m = re.search(r"(\d{1,2}):(\d{2})", text)
     if m:
-        n = int(m.group(1))
-        if 1 <= n <= len(titles):
-            return n
+        hhmm = f"{int(m.group(1)):02d}:{m.group(2)}"
+        for i, title in enumerate(titles, start=1):
+            if _norm(title).startswith(hhmm):
+                return i
+        return None  # a typed time that matches no offered slot → re-offer rather than guess
+
+    # Otherwise match by title text (doctor names, day labels, or a full slot title).
     for i, title in enumerate(titles, start=1):
         nt = _norm(title)
         if nt and (nt == text or nt.startswith(text) or text.startswith(nt)):

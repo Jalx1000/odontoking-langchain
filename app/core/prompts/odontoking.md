@@ -145,7 +145,7 @@ Mensaje cuando pidan ubicación o sucursal:
 • Sábados: 09:00 a 12:00
 
 📍 Dirección: Calle Burapucú #2888
-<https://maps.app.goo.gl/MAhDrWzvC3nXhaJD7>`
+https://maps.app.goo.gl/MAhDrWzvC3nXhaJD7`
 
 ══════════════════════════════════════
 FORMATO DE RESPUESTA (OBLIGATORIO)

@@ -155,6 +155,116 @@ class TestBookingFlow:
         assert "Ortodoncista X" in r.reply
 
 
+_SCHEDULE_8_SLOTS = [
+    {
+        # A future date (never "today") so _future_slots doesn't drop past hours and the day
+        # always keeps all 8 slots regardless of when the test runs.
+        "date": "2026-12-17",
+        "day_label": "jueves 17/12",
+        "slots": [
+            {"start_time": "08:00:00", "end_time": "09:00:00"},
+            {"start_time": "09:00:00", "end_time": "10:00:00"},
+            {"start_time": "10:00:00", "end_time": "11:00:00"},
+            {"start_time": "11:00:00", "end_time": "12:00:00"},
+            {"start_time": "14:00:00", "end_time": "15:00:00"},
+            {"start_time": "15:00:00", "end_time": "16:00:00"},
+            {"start_time": "16:00:00", "end_time": "17:00:00"},
+            {"start_time": "17:00:00", "end_time": "18:00:00"},
+        ],
+    },
+]
+
+
+class TestSlotSelectionTimeVsIndex:
+    """Regression: a time reply ('08:00 - 09:00') must never be read as the option NUMBER.
+
+    Reproduces the real chat bug — the patient picked '08:00 - 09:00' from an 8-slot list and the
+    bot booked 17:00 (the 8th option) because the leading '08' was parsed as index 8.
+    """
+
+    @pytest.mark.asyncio
+    async def test_full_time_string_picks_that_slot_not_the_index(self):
+        """'08:00 - 09:00' on an 8-slot day confirms 08:00, NOT 17:00 (option 8)."""
+        with _mocked_tools(schedule=_SCHEDULE_8_SLOTS):
+            st = _third_party_state()
+            r = await advance_booking(st, None)            # → doctor
+            r = await advance_booking(r.state, "1")         # doctor → days
+            r = await advance_booking(r.state, "1")         # day → 8 times
+            r = await advance_booking(r.state, "08:00 - 09:00")  # pick by time text
+        assert r.state["booking_phase"] == "confirmar"
+        assert "08:00" in r.reply
+        assert "17:00" not in r.reply
+        assert r.state["chosen_start"] == "08:00:00"
+
+    @pytest.mark.asyncio
+    async def test_partial_time_string_picks_that_slot(self):
+        """Just '08:00' (no range) also maps to the 08:00 slot."""
+        with _mocked_tools(schedule=_SCHEDULE_8_SLOTS):
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "08:00")
+        assert r.state["chosen_start"] == "08:00:00"
+
+    @pytest.mark.asyncio
+    async def test_time_without_leading_zero_picks_that_slot(self):
+        """'9:00' (no leading zero) normalizes to the 09:00 slot."""
+        with _mocked_tools(schedule=_SCHEDULE_8_SLOTS):
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "9:00")
+        assert r.state["chosen_start"] == "09:00:00"
+
+    @pytest.mark.asyncio
+    async def test_bare_five_is_5pm_not_the_fifth_option(self):
+        """A lone '5' means 17:00 (an offered hour), NOT the 5th option (14:00). Time wins."""
+        with _mocked_tools(schedule=_SCHEDULE_8_SLOTS):
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "5")
+        assert r.state["chosen_start"] == "17:00:00"
+
+    @pytest.mark.asyncio
+    async def test_bare_number_interprets_as_hour(self):
+        """'8' → 08:00 and '3' → 15:00 (pm): a bare hour matches the offered slot, not a position."""
+        for reply, expected in (("8", "08:00:00"), ("3", "15:00:00")):
+            with _mocked_tools(schedule=_SCHEDULE_8_SLOTS):
+                st = _third_party_state()
+                r = await advance_booking(st, None)
+                r = await advance_booking(r.state, "1")
+                r = await advance_booking(r.state, "1")
+                r = await advance_booking(r.state, reply)
+            assert r.state["chosen_start"] == expected, f"reply={reply}"
+
+    @pytest.mark.asyncio
+    async def test_bare_number_falls_back_to_position_when_hour_not_offered(self):
+        """'7' has no 07:00/19:00 slot, so it falls back to the 7th option (16:00)."""
+        with _mocked_tools(schedule=_SCHEDULE_8_SLOTS):
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "7")
+        assert r.state["chosen_start"] == "16:00:00"
+
+    @pytest.mark.asyncio
+    async def test_seven_slots_time_string_no_regression(self):
+        """With 7 slots, '08:00 - 09:00' had worked by luck (8 > 7); it must still pick 08:00."""
+        seven = [{**_SCHEDULE_8_SLOTS[0], "slots": _SCHEDULE_8_SLOTS[0]["slots"][:7]}]
+        with _mocked_tools(schedule=seven):
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "08:00 - 09:00")
+        assert r.state["chosen_start"] == "08:00:00"
+
+
 class TestFreeTextMotivo:
     """Free-text molestias are classified into a specialty by the bounded LLM classifier."""
 
