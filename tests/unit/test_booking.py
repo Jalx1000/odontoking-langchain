@@ -376,6 +376,51 @@ class TestFreeTextMotivo:
         assert "Periodoncista" not in r.reply  # only the classified specialty's doctor
 
 
+class TestReschedule:
+    """Rescheduling a confirmed cita re-uses the booking flow and replaces (not duplicates) it."""
+
+    def _confirmed_state(self) -> dict:
+        st = _third_party_state()
+        st.update({
+            "doctor_id": 12, "doctor_name": "Susana Urrusti",
+            "booking_phase": "done", "booking_confirmado": True,
+            "chosen_date": "2026-06-18", "chosen_start": "15:00:00",
+        })
+        return st
+
+    @pytest.mark.asyncio
+    async def test_reschedule_cancels_previous_then_books_new(self):
+        """start_reschedule → día/hora → confirm cancels the old cita and books the new one once."""
+        with _mocked_tools() as book:
+            with patch.object(bk, "cancel_appointment", AsyncMock(return_value={"success": True})) as cancel:
+                r = await bk.start_reschedule(self._confirmed_state())  # → día
+                assert r.state["booking_phase"] == "dia"
+                assert r.state["rescheduling"] is True
+                r = await advance_booking(r.state, "1")          # día → horas
+                r = await advance_booking(r.state, "17:00")      # new time → confirmar
+                assert r.state["booking_phase"] == "confirmar"
+                cancel.assert_not_called()                       # nothing happens before "sí"
+                r = await advance_booking(r.state, "sí")         # confirm
+            cancel.assert_awaited_once_with("591")               # old cita removed first
+            book.assert_called_once()                            # exactly one new booking
+            assert r.done is True
+            assert r.state.get("rescheduling") is False
+        payload = book.call_args.args[0]
+        assert payload["horario_cita"] == "18/06/2026 17:00"     # the NEW time
+
+    @pytest.mark.asyncio
+    async def test_reschedule_books_new_even_if_cancel_fails(self):
+        """A failed cancel is logged but still creates the new cita (patient gets their slot)."""
+        with _mocked_tools() as book:
+            with patch.object(bk, "cancel_appointment", AsyncMock(return_value={"success": False})):
+                r = await bk.start_reschedule(self._confirmed_state())
+                r = await advance_booking(r.state, "1")
+                r = await advance_booking(r.state, "17:00")
+                r = await advance_booking(r.state, "sí")
+            book.assert_called_once()
+            assert r.done is True
+
+
 class TestPastSlotFiltering:
     """Slots earlier than the current local time are never offered for today."""
 

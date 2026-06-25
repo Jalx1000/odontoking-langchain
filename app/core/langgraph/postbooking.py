@@ -31,6 +31,16 @@ _RENAME_KEYWORDS = (
     "actualizar mi nombre", "modificar mi nombre", "arreglar mi nombre", "mi nombre esta mal",
     "ese no es mi nombre", "no es mi nombre", "mi nombre no es",
 )
+# Reschedule = change the DAY or TIME of an already-confirmed cita (keeps the same doctor).
+# Checked after cancel/rename so "cambiar mi nombre" is not misread as a reschedule.
+_RESCHEDULE_KEYWORDS = (
+    "cambiar mi horario", "cambiar el horario", "cambiar mi hora", "cambiar la hora",
+    "cambiar mi cita", "cambiar la cita", "cambiar el dia", "cambiar la fecha", "cambiar de dia",
+    "reprogramar", "reagendar", "reprograma", "reagenda",
+    "mover mi cita", "mover la cita", "otro horario", "otra hora", "otro dia",
+    "corregir mi hora", "corregir la hora", "corrija mi hora", "corrija la hora",
+    "corregir mi cita", "se corrija mi hora",
+)
 
 _AFFIRMATIVE = {"si", "sí", "s", "yes", "y", "confirmo", "confirmar", "correcto", "ok", "okay", "dale"}
 
@@ -45,6 +55,14 @@ def is_name_change_intent(text: Optional[str]) -> bool:
     """True when the message asks to change/correct the patient's name."""
     low = _norm(text)
     return any(k in low for k in _RENAME_KEYWORDS)
+
+
+def is_reschedule_intent(text: Optional[str]) -> bool:
+    """True when the message asks to change the day/time of a confirmed cita."""
+    low = _norm(text)
+    if any(k in low for k in _RENAME_KEYWORDS):
+        return False  # a name correction is not a reschedule
+    return any(k in low for k in _RESCHEDULE_KEYWORDS)
 
 
 def _is_affirmative(text: Optional[str]) -> bool:

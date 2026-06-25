@@ -56,7 +56,7 @@ from app.core.langgraph.tools.odontoking import (
     get_services,
     get_specialties,
 )
-from app.core.langgraph.booking import advance_booking
+from app.core.langgraph.booking import advance_booking, start_reschedule
 from app.core.langgraph.intake import (
     advance_intake,
     crm_display_name,
@@ -69,6 +69,7 @@ from app.core.langgraph.postbooking import (
     advance_postbooking,
     is_cancel_intent,
     is_name_change_intent,
+    is_reschedule_intent,
 )
 from app.core.logging import logger
 from app.core.observability import langfuse_callback_handler
@@ -375,6 +376,13 @@ class OdontokingAgent:
             # also contains the booking keyword "cita", so it must be checked before re-booking.
             if state.get("post_phase") or is_cancel_intent(text) or is_name_change_intent(text):
                 return await self._postbooking_turn(wa_id, state, text)
+            # Reschedule a confirmed cita (change day/time, same doctor) → re-enter the booking
+            # flow at the día step instead of starting a brand-new booking (which duplicated it).
+            if is_reschedule_intent(text) and state.get("doctor_id"):
+                state["wa_id"] = wa_id
+                result = await start_reschedule(state)
+                await intake_store.set(wa_id, result.state)
+                return result.reply, None
             if is_booking_intent(text):
                 return await _start()  # a new booking → re-run from step 1
             # Booking finished (or nothing pending) → post-booking chat goes to the LLM.

@@ -15,6 +15,7 @@ from app.core.langgraph.postbooking import (
     advance_postbooking,
     is_cancel_intent,
     is_name_change_intent,
+    is_reschedule_intent,
 )
 
 
@@ -43,6 +44,14 @@ class TestIntentDetection:
         assert is_name_change_intent("quiero cambiar mi nombre")
         assert is_name_change_intent("ese no es mi nombre")
         assert not is_name_change_intent("quiero cambiar el horario")
+
+    def test_reschedule_intent(self):
+        """Day/time-change phrasings are detected, but a rename is not a reschedule."""
+        assert is_reschedule_intent("quiero cambiar mi horario para el jueves")
+        assert is_reschedule_intent("quiero que se corrija mi hora")
+        assert is_reschedule_intent("puedo reprogramar mi cita?")
+        assert not is_reschedule_intent("quiero cambiar mi nombre")  # rename ≠ reschedule
+        assert not is_reschedule_intent("quiero agendar una cita")
 
 
 class TestCancelFlow:

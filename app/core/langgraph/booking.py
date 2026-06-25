@@ -23,7 +23,7 @@ from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from app.core.langgraph.molestia_classifier import classify_molestia
-from app.core.langgraph.tools.crm import update_crm
+from app.core.langgraph.tools.crm import cancel_appointment, update_crm
 from app.core.langgraph.tools.odontoking import (
     get_doctor_schedule,
     get_doctors,
@@ -428,10 +428,30 @@ async def _revalidate_slot(state: dict) -> Optional[BookingResult]:
     )
 
 
+async def start_reschedule(state: dict) -> BookingResult:
+    """Begin rescheduling a confirmed cita: keep the same doctor, re-pick día → hora → confirmar.
+
+    Reuses the whole booking flow (so the slot fixes and confirm-time re-validation apply) and
+    flags the state so _do_booking cancels the previous cita before creating the new one — no
+    duplicate appointment is left behind.
+    """
+    state["rescheduling"] = True
+    state["booking_confirmado"] = False
+    return await _enter_dia_phase(state)
+
+
 async def _do_booking(state: dict) -> BookingResult:
     reoffer = await _revalidate_slot(state)
     if reoffer is not None:
         return reoffer
+
+    # Rescheduling: remove the previous cita BEFORE creating the new one. cancel_appointment
+    # deletes the latest meeting, which at this point is still the old one (the new activity does
+    # not exist yet), so this never deletes the appointment we are about to create.
+    if state.get("rescheduling"):
+        cancel = await cancel_appointment(state.get("wa_id") or "")
+        if not cancel.get("success"):
+            logger.warning("reschedule_cancel_previous_failed", wa_id=state.get("wa_id"), result=cancel)
 
     result = await _book_crm(_crm_payload(state))
     if not (result.get("success") and result.get("appointment_registered")):
@@ -443,6 +463,7 @@ async def _do_booking(state: dict) -> BookingResult:
         )
     state["booking_phase"] = "done"
     state["booking_confirmado"] = True
+    state["rescheduling"] = False
     lines = [
         f"Perfecto ✅ {_patient_name(state)}, su cita ha sido agendada exitosamente con el/la Dr/a. {state.get('doctor_name')}:",
         "",
