@@ -15,6 +15,7 @@ def app_client():
         patch("app.services.database.database_service"),
         patch("app.services.memory.memory_service"),
         patch("app.core.langgraph.tools.crm.ensure_person_registered", new_callable=AsyncMock),
+        patch("app.core.langgraph.tools.crm.ensure_lead_registered", new_callable=AsyncMock),
         patch("app.core.langgraph.odontoking_graph.OdontokingAgent.create_graph", new_callable=AsyncMock),
         patch("app.core.langgraph.graph.LangGraphAgent.create_graph", new_callable=AsyncMock),
         patch("app.services.message_buffer.message_buffer_service.initialize", new_callable=AsyncMock),

@@ -25,7 +25,7 @@ from fastapi.responses import PlainTextResponse
 from app.core.broker import broker
 from app.core.config import settings
 from app.core.langgraph.odontoking_graph import odontoking_agent
-from app.core.langgraph.tools.crm import ensure_person_registered
+from app.core.langgraph.tools.crm import ensure_lead_registered, ensure_person_registered
 from app.core.limiter import limiter
 from app.core.logging import logger
 from app.core.tenant import TenantConfig, get_tenant, get_tenant_async
@@ -234,6 +234,16 @@ async def _handle_webhook_payload(
                             name=profile_name or "Paciente WhatsApp",
                             is_new_patient=registered_wa_ids[wa_id]["is_new_patient"],
                         )
+                        # First contact of a brand-new number → create the lead in the "Consulta"
+                        # pipeline stage right away, so it appears in the pipeline even if the
+                        # patient only greets. Idempotent and gated on is_new_patient so it costs
+                        # one extra CRM call only on the very first message, never on later ones.
+                        if reg.get("is_new_patient") and reg.get("person_id"):
+                            lead_task = asyncio.create_task(
+                                ensure_lead_registered(wa_id, reg["person_id"], profile_name or None)
+                            )
+                            _background_tasks.add(lead_task)
+                            lead_task.add_done_callback(_background_tasks.discard)
                     except Exception as e:
                         registered_wa_ids[wa_id] = {}
                         logger.exception(

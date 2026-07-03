@@ -442,6 +442,79 @@ class TestUpdateCrmIdempotency:
         assert any("activities" in c[0][0] for c in client.post.call_args_list)
 
 
+class TestEnsureLeadRegistered:
+    """First contact creates a lead in the Consulta stage; idempotent if one already exists."""
+
+    @pytest.mark.asyncio
+    async def test_creates_lead_in_consulta_stage_when_none(self):
+        """No existing lead → POST a lead in stage 1 titled 'Consulta - <name>'."""
+        from app.core.langgraph.tools.crm import ensure_lead_registered
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=LEADS_EMPTY)
+            client.post = AsyncMock(return_value=LEAD_CREATED)
+            cls.return_value = client
+
+            result = await ensure_lead_registered("591700000000", 99, "Ana López")
+
+        assert result["success"] is True
+        assert result["created"] is True
+        assert result["lead_id"] == 77
+        body = client.post.call_args.kwargs["json"]
+        assert body["lead_pipeline_stage_id"] == 1
+        assert body["title"] == "Consulta - Ana López"
+        assert body["person"]["id"] == "99"
+
+    @pytest.mark.asyncio
+    async def test_skips_creation_when_lead_exists(self):
+        """An existing lead is reused, never duplicated (safe against webhook retries)."""
+        from app.core.langgraph.tools.crm import ensure_lead_registered
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=LEADS_WITH_MATCH)
+            client.post = AsyncMock(return_value=LEAD_CREATED)
+            cls.return_value = client
+
+            result = await ensure_lead_registered("591700000000", 99, "Ana López")
+
+        assert result["created"] is False
+        assert result["lead_id"] == 77
+        client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_uses_placeholder_when_name_missing(self):
+        """With no real name the lead falls back to the 'Paciente WhatsApp' placeholder."""
+        from app.core.langgraph.tools.crm import ensure_lead_registered
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(return_value=LEADS_EMPTY)
+            client.post = AsyncMock(return_value=LEAD_CREATED)
+            cls.return_value = client
+
+            await ensure_lead_registered("591700000000", 99, None)
+
+        body = client.post.call_args.kwargs["json"]
+        assert body["title"] == "Consulta - Paciente WhatsApp"
+
+    @pytest.mark.asyncio
+    async def test_returns_error_on_exception(self):
+        """Any failure returns an error payload and never raises (never breaks the webhook)."""
+        from app.core.langgraph.tools.crm import ensure_lead_registered
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=Exception("boom"))
+            cls.return_value = client
+
+            result = await ensure_lead_registered("591700000000", 99, "Ana López")
+
+        assert result["success"] is False
+        assert "error" in result
+
+
 class TestGetCitas:
     @pytest.mark.asyncio
     async def test_returns_meetings_for_patient(self):

@@ -214,6 +214,65 @@ async def ensure_person_registered(
     }
 
 
+async def ensure_lead_registered(
+    wa_id: str, person_id: int, person_name: str | None = None
+) -> dict[str, Any]:
+    """Ensure the person has a CRM lead in the 'Consulta' pipeline stage.
+
+    Called on first contact so a brand-new WhatsApp number appears in the pipeline immediately,
+    even if the patient only greets and never finishes the intake. Idempotent: if a lead already
+    exists for this person it is returned unchanged (no duplicate created), which also makes it
+    safe against Meta webhook retries. Mirrors the new-lead branch of update_crm (stage 1,
+    source 6, title "Consulta - <nombre>") so a later update_crm reuses this same lead.
+    """
+    log = logger.bind(wa_id=wa_id)
+    name = _real_name_or_none(person_name) or "Paciente WhatsApp"
+    person_email = _person_email_from_wa_id(wa_id)
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            leads_resp = await client.get(
+                f"{_BASE}/api/v1/leads",
+                params={"sort": "id", "limit": 10, "person_id": str(person_id)},
+                headers=_HEADERS,
+            )
+            leads_resp.raise_for_status()
+            all_leads = leads_resp.json().get("data", [])
+            matching = [
+                ld for ld in all_leads
+                if any(
+                    (e.get("value", "")).lower() == person_email.lower()
+                    for e in (ld.get("person", {}).get("emails") or [])
+                )
+            ]
+            if matching:
+                lead_id = matching[-1]["id"]
+                log.info("crm_lead_exists_skip_create", lead_id=lead_id)
+                return {"success": True, "lead_id": lead_id, "created": False}
+
+            close_date = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
+            lead_body = {
+                "title": f"Consulta - {name}",
+                "description": "Primer contacto vía WhatsApp",
+                "lead_value": 0,
+                "lead_source_id": 6,
+                "lead_pipeline_stage_id": 1,
+                "lead_type_id": 1,
+                "user_id": _pick_agent_user(),
+                "expected_close_date": close_date,
+                "person": {"id": str(person_id), "name": name},
+                "products": {},
+                "entity_type": "leads",
+            }
+            lead_resp = await client.post(f"{_BASE}/api/v1/leads", json=lead_body, headers=_HEADERS)
+            lead_resp.raise_for_status()
+            lead_id = lead_resp.json().get("data", {}).get("id")
+            log.info("crm_lead_created_first_contact", lead_id=lead_id)
+            return {"success": True, "lead_id": lead_id, "created": True}
+    except Exception as e:
+        log.exception("ensure_lead_registered_failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
 async def _find_duplicate_meeting_id(
     client: httpx.AsyncClient, lead_id: int, schedule_from: str
 ) -> Optional[int]:
