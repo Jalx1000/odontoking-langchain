@@ -467,8 +467,9 @@ class OdontokingAgent:
         # ── Deterministic intake (steps 1-6) — guarantees the flow order ──
         # When active it asks one canonical question per turn and returns early; when the
         # intake completes it hands off to the LLM (steps 7-12) with all data injected.
+        # AI_BOOKING_ENABLED bypasses the intake entirely so the LLM graph drives everything.
         intake_handoff: Optional[str] = None
-        if settings.INTAKE_ENABLED:
+        if settings.INTAKE_ENABLED and not settings.AI_BOOKING_ENABLED:
             # The intake always asks for the real name (the WhatsApp profile name is often
             # wrong). nombre_whatsapp is only used to build the CRM name afterwards.
             intake_reply, intake_handoff = await self._intake_turn(
