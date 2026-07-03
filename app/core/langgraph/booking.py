@@ -60,6 +60,15 @@ def _norm(s: Optional[str]) -> str:
     return "".join(c for c in text if unicodedata.category(c) != "Mn").strip()
 
 
+def _lines(text: Optional[str]) -> list[str]:
+    r"""Split a buffered turn into its non-empty lines.
+
+    The message buffer joins rapid-fire WhatsApp messages with "\n", so a single turn may carry
+    several messages. Structured steps parse these line by line (see _choose / _is_affirmative).
+    """
+    return [ln for ln in re.split(r"[\r\n]+", text or "") if ln.strip()]
+
+
 def motivo_is_deterministic(motivo: Optional[str]) -> bool:
     """True when the motivo is one of the fixed categories we can route deterministically."""
     return _norm(motivo) in MOTIVO_SPECIALTY
@@ -133,8 +142,8 @@ def _slot_start_hour(title: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-def _choose(user_text: Optional[str], titles: list[str]) -> Optional[int]:
-    """Map the patient's reply to a 1-based option index.
+def _choose_one(user_text: Optional[str], titles: list[str]) -> Optional[int]:
+    """Map a single message to a 1-based option index (see _choose for the multi-line wrapper).
 
     Time always wins over position: a leading/lone hour is read as a TIME, never as the option
     number. This fixes the bug where "08:00 - 09:00" was parsed as option 8 (→ 17:00) and the
@@ -175,11 +184,37 @@ def _choose(user_text: Optional[str], titles: list[str]) -> Optional[int]:
     return None
 
 
+def _choose(user_text: Optional[str], titles: list[str]) -> Optional[int]:
+    """Map the patient's reply to a 1-based option index, tolerating a buffered multi-message turn.
+
+    When several messages were concatenated (e.g. the patient tapped "1" then "2", or greeted then
+    chose), the most RECENT line that maps to a valid option wins. For a single message this is
+    identical to _choose_one.
+    """
+    if not titles:
+        return None
+    lines = _lines(user_text)
+    if len(lines) <= 1:
+        return _choose_one(user_text, titles)
+    for ln in reversed(lines):
+        idx = _choose_one(ln, titles)
+        if idx is not None:
+            return idx
+    return None
+
+
 _AFFIRMATIVE = {"si", "sí", "s", "yes", "y", "confirmo", "confirmar", "correcto", "ok", "okay", "dale"}
 
 
 def _is_affirmative(user_text: Optional[str]) -> bool:
-    return _norm(user_text) in _AFFIRMATIVE
+    r"""True when the patient confirmed.
+
+    On a buffered multi-message turn the LAST line decides, so a double-tap ("Sí\nSí") confirms
+    and a later correction is not overridden by an earlier "Sí".
+    """
+    lines = _lines(user_text)
+    candidate = lines[-1] if lines else user_text
+    return _norm(candidate) in _AFFIRMATIVE
 
 
 # ── Message builders ──────────────────────────────────────────────────────────

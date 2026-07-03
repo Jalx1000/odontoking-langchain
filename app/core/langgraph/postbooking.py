@@ -7,6 +7,7 @@ intents deterministically, with an explicit confirmation gate, calling the CRM h
 booking, using the `post_phase` field.
 """
 
+import re
 import unicodedata
 from typing import Optional
 
@@ -66,7 +67,10 @@ def is_reschedule_intent(text: Optional[str]) -> bool:
 
 
 def _is_affirmative(text: Optional[str]) -> bool:
-    return _norm(text) in _AFFIRMATIVE
+    """True when the patient confirmed. On a buffered multi-message turn the LAST line decides."""
+    lines = [ln for ln in re.split(r"[\r\n]+", text or "") if ln.strip()]
+    candidate = lines[-1] if lines else text
+    return _norm(candidate) in _AFFIRMATIVE
 
 
 def _fmt_date(date_iso: Optional[str]) -> str:

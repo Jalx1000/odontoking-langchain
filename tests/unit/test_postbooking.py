@@ -72,6 +72,15 @@ class TestCancelFlow:
             assert "cancelada" in r.reply.lower()
 
     @pytest.mark.asyncio
+    async def test_double_tap_yes_confirms_cancel(self):
+        """A buffered double tap ("sí\\nsí") at the gate still cancels — the last line decides."""
+        with patch.object(pb, "cancel_appointment", AsyncMock(return_value={"success": True})) as cancel:
+            r = await advance_postbooking(_booked_state(), "quiero cancelar mi cita")
+            r = await advance_postbooking(r.state, "sí\nsí")
+            cancel.assert_awaited_once_with("591")
+            assert r.done is True and r.clear is True
+
+    @pytest.mark.asyncio
     async def test_cancel_declined_keeps_appointment(self):
         """A non-affirmative answer at the gate keeps the cita and does not call the CRM."""
         with patch.object(pb, "cancel_appointment", AsyncMock(return_value={"success": True})) as cancel:

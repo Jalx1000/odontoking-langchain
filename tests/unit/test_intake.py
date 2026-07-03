@@ -154,6 +154,35 @@ class TestApplyAnswer:
         assert state["seguro_estado"] == "PARTICULAR"
 
 
+class TestBufferedMultiMessageAnswers:
+    """The buffer joins rapid-fire messages with "\\n"; free-text concatenates, options take the
+    most recent line. Single-message answers are unchanged."""
+
+    def test_name_across_two_messages_is_concatenated(self):
+        """"Juan\\nPérez Gómez" is stored as one space-separated name, no embedded newline."""
+        state = new_state()
+        assert apply_answer(state, "nombre", "Juan\nPérez Gómez") is None
+        assert state["nombre"] == "Juan Pérez Gómez"
+
+    def test_structured_answer_uses_last_line(self):
+        """A stray earlier message does not break a numbered option: "hola\\n2" → for another."""
+        state = new_state("X")
+        apply_answer(state, "para_quien", "hola\n2")
+        assert state["is_for_self"] is False
+
+    def test_seguro_option_number_after_greeting(self):
+        """"buenas\\n1" selects insurer option 1 (Alianza)."""
+        state = new_state("X")
+        assert apply_answer(state, "seguro", "buenas\n1") is None
+        assert state["seguro"] == "Alianza"
+
+    def test_free_text_motivo_is_concatenated(self):
+        """A molestia split across messages concatenates instead of keeping only one line."""
+        state = new_state("X")
+        assert apply_answer(state, "motivo", "me duele\nla muela de atrás") is None
+        assert state["motivo"] == "me duele la muela de atrás"
+
+
 class TestAdvanceIntakeFlow:
     @pytest.mark.asyncio
     async def test_full_happy_path_with_insurance(self):

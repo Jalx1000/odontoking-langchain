@@ -163,6 +163,26 @@ def _norm(text: str) -> str:
     return "".join(c for c in t if unicodedata.category(c) != "Mn").strip()
 
 
+def _last_line(text: Optional[str]) -> str:
+    r"""Last non-empty line of a buffered turn (messages joined by "\n").
+
+    Structured single-token answers (age, para_quien, antiguo, seguro) read the most recent line,
+    so a stray earlier message in the same batch does not break parsing. For a single message this
+    returns the message itself.
+    """
+    lines = [ln for ln in re.split(r"[\r\n]+", text or "") if ln.strip()]
+    return lines[-1] if lines else (text or "")
+
+
+def _collapse_ws(text: Optional[str]) -> str:
+    r"""Collapse internal whitespace (including newlines) to single spaces.
+
+    Free-text answers (name, motivo) are CONCATENATED across a buffered turn — "Juan\nPérez" is
+    stored as "Juan Pérez", not with an embedded newline.
+    """
+    return re.sub(r"\s+", " ", (text or "")).strip()
+
+
 def _parse_age(text: str) -> Optional[int]:
     m = re.search(r"\b(\d{1,3})\b", text or "")
     if not m:
@@ -255,32 +275,35 @@ def validate_name(text: str) -> Optional[str]:
 def apply_answer(state: dict, slot: str, text: str) -> Optional[str]:
     """Fill `slot` from the user's text. Returns an error message to re-ask, or None on success."""
     text = (text or "").strip()
+    # Structured single-token answers read the most recent line of a buffered turn; free-text
+    # answers (name, motivo) concatenate the whole turn into one space-separated string.
+    line = _last_line(text)
     if slot in ("nombre", "tercero_nombre"):
         error = validate_name(text)
         if error:
             return error
-        state[slot] = text
+        state[slot] = _collapse_ws(text)
         return None
     if slot in ("edad", "tercero_edad"):
-        age = _parse_age(text)
+        age = _parse_age(line)
         if age is None:
             return _INVALID["edad"]
         state[slot] = age
         return None
     if slot == "para_quien":
-        choice = _parse_choice_for_whom(text)
+        choice = _parse_choice_for_whom(line)
         if choice is None:
             return _INVALID["para_quien"]
         state["is_for_self"] = choice
         return None
     if slot == "antiguo":
-        choice = _parse_antiguo(text)
+        choice = _parse_antiguo(line)
         if choice is None:
             return _INVALID["antiguo"]
         state["es_antiguo"] = choice
         return None
     if slot == "seguro":
-        seguro = _parse_seguro(text)
+        seguro = _parse_seguro(line)
         if seguro is None:
             return _INVALID["seguro"]
         state["seguro"] = seguro
@@ -288,25 +311,27 @@ def apply_answer(state: dict, slot: str, text: str) -> Optional[str]:
             state["seguro_estado"] = "PARTICULAR"
         return None
     if slot == "motivo":
-        norm = _norm(text)
-        if not norm:
+        if not _norm(text):
             return "¿Podría indicarme la molestia o servicio que necesita?"
+        # An option is a single token, so match it on the most recent line ("hola\n1" → 1).
+        norm_line = _norm(line)
         # "Otro" / option 5 → defer to the free-text detail step (do NOT re-list the options).
-        if norm in ("5", "otro"):
+        if norm_line in ("5", "otro"):
             state["motivo_otro_pendiente"] = True
             return None
         # A numbered option 1-4 → its canonical label.
-        if norm in _MOTIVO_NUM:
-            state["motivo"] = _MOTIVO_NUM[norm]
+        if norm_line in _MOTIVO_NUM:
+            state["motivo"] = _MOTIVO_NUM[norm_line]
             return None
-        # Anything else is a free-text description of the molestia — accept it as-is; booking
-        # will classify it into a specialty/service.
-        state["motivo"] = text.strip()
+        # Anything else is a free-text description of the molestia — accept it (concatenated);
+        # booking will classify it into a specialty/service.
+        state["motivo"] = _collapse_ws(text)
         return None
     if slot == "motivo_detalle":
-        if len(text) < 2 or text.isdigit():
+        detalle = _collapse_ws(text)
+        if len(detalle) < 2 or detalle.isdigit():
             return "Por favor describa brevemente qué molestia o servicio necesita 🦷."
-        state["motivo"] = text
+        state["motivo"] = detalle
         state["motivo_otro_pendiente"] = False
         return None
     return None  # unknown slot — should not happen

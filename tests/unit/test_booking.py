@@ -175,6 +175,47 @@ _SCHEDULE_8_SLOTS = [
 ]
 
 
+class TestBufferedMultiMessageTurn:
+    """The message buffer joins rapid-fire messages with "\\n"; a turn may carry several lines.
+
+    Structured steps resolve the most recent valid line (a double-tap confirms, a correction
+    wins); free-text (name/motivo) is concatenated. Single-message turns are unaffected.
+    """
+
+    @pytest.mark.asyncio
+    async def test_double_tap_yes_confirms(self):
+        """"sí\\nsí" (double tap) still confirms — not treated as one non-affirmative token."""
+        with _mocked_tools() as book:
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "2")          # → confirmar
+            r = await advance_booking(r.state, "sí\nsí")     # buffered double tap
+            assert r.done is True
+            book.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_last_valid_line_wins_for_option(self):
+        """"1\\n2" resolves to the most recent valid option (day 2 is unavailable here, so day 1)."""
+        with _mocked_tools():
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "hola\n1")    # greeting + doctor pick → doctor 1
+            assert "jueves 18/06" in r.reply
+
+    @pytest.mark.asyncio
+    async def test_greeting_then_time_picks_the_time(self):
+        """A stray line before the answer does not break parsing: "buenas\\n17:00" → 17:00."""
+        with _mocked_tools():
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "buenas\n17:00")
+        assert r.state["chosen_start"] == "17:00:00"
+
+
 class TestSlotSelectionTimeVsIndex:
     """Regression: a time reply ('08:00 - 09:00') must never be read as the option NUMBER.
 
