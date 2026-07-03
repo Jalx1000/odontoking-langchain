@@ -214,6 +214,39 @@ async def ensure_person_registered(
     }
 
 
+async def _find_duplicate_meeting_id(
+    client: httpx.AsyncClient, lead_id: int, schedule_from: str
+) -> Optional[int]:
+    """Return the id of an existing not-done meeting at the same start time, or None.
+
+    Idempotency guard for appointment creation: prevents a second activity for the same slot
+    when update_crm is retried (e.g. the previous POST /activities succeeded on the server but
+    its response was lost, so booking.py stayed in the 'confirmar' phase and the patient re-sent
+    "SÍ"). Matches on the minute (YYYY-MM-DD HH:MM) since our writer always emits :00 seconds.
+
+    Fails open: any error looking up existing activities returns None so a legitimate booking is
+    never blocked — the worst case is the pre-existing behaviour (a possible duplicate).
+    """
+    try:
+        resp = await client.get(f"{_BASE}/api/v1/leads/{lead_id}/activities", headers=_HEADERS)
+        resp.raise_for_status()
+        raw = resp.json()
+        activities = raw.get("data", raw) if isinstance(raw, dict) else raw
+        target = (schedule_from or "")[:16]  # compare on the minute, ignore seconds
+        if not target:
+            return None
+        for a in (activities if isinstance(activities, list) else []):
+            if (
+                a.get("type") == "meeting"
+                and not a.get("is_done")
+                and (a.get("schedule_from") or "")[:16] == target
+            ):
+                return a.get("id")
+    except Exception as e:
+        logger.warning("crm_duplicate_check_failed", lead_id=lead_id, error=str(e))
+    return None
+
+
 @tool
 async def update_crm(
     wa_id: str,
@@ -426,6 +459,26 @@ async def update_crm(
                         "message": "No se pudo interpretar la fecha y hora de la cita.",
                         "person_id": person_id,
                         "lead_id": lead_id,
+                    })
+
+                # Idempotency guard: if a meeting for this exact slot already exists on the lead,
+                # do not create a second one. Protects against a retried confirmation where the
+                # previous POST succeeded but its response was lost (patient re-sent "SÍ").
+                duplicate_id = await _find_duplicate_meeting_id(client, lead_id, schedule_from)
+                if duplicate_id is not None:
+                    log.info(
+                        "crm_activity_duplicate_skipped",
+                        lead_id=lead_id,
+                        activity_id=duplicate_id,
+                        schedule=schedule_from,
+                    )
+                    return json.dumps({
+                        "success": True,
+                        "person_id": person_id,
+                        "lead_id": lead_id,
+                        "appointment_registered": True,
+                        "activity_id": duplicate_id,
+                        "idempotent": True,
                     })
 
                 appointment_patient = nombre_paciente_de_otra_persona if not is_for_self else person_name

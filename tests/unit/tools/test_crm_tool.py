@@ -48,6 +48,8 @@ LEADS_WITH_MATCH = _r({
 LEAD_CREATED = _make_response(201, {"data": {"id": 77}})
 LEAD_UPDATED = _r({"data": {"id": 77}})
 ACTIVITY_CREATED = _make_response(201, {"data": {"id": 1}})
+# No pre-existing meeting on the lead — the idempotency dup-check GET returns an empty list.
+ACTIVITIES_EMPTY = _r({"data": []})
 
 
 class TestUpdateCrm:
@@ -100,7 +102,7 @@ class TestUpdateCrm:
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, ACTIVITIES_EMPTY])
             client.put = AsyncMock(return_value=_make_response(200, {}))
             client.post = AsyncMock(return_value=ACTIVITY_CREATED)
             cls.return_value = client
@@ -118,6 +120,7 @@ class TestUpdateCrm:
             )
             assert result["success"] is True
             assert result["appointment_registered"] is True
+            assert result.get("idempotent") is not True
             # POST must have been called for the activity endpoint
             activity_call_args = client.post.call_args
             assert "activities" in activity_call_args[0][0]
@@ -274,7 +277,7 @@ class TestUpdateCrmActivity422:
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, ACTIVITIES_EMPTY])
             client.put = AsyncMock(return_value=_make_response(200, {}))
             client.post = AsyncMock(return_value=conflict_resp)
             cls.return_value = client
@@ -302,7 +305,7 @@ class TestUpdateCrmActivity422:
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, ACTIVITIES_EMPTY])
             client.put = AsyncMock(return_value=_make_response(200, {}))
             client.post = AsyncMock(return_value=smd_resp)
             cls.return_value = client
@@ -327,7 +330,7 @@ class TestUpdateCrmActivity422:
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, ACTIVITIES_EMPTY])
             client.put = AsyncMock(return_value=_make_response(200, {}))
             client.post = AsyncMock(return_value=conflict_resp)
             cls.return_value = client
@@ -336,6 +339,107 @@ class TestUpdateCrmActivity422:
 
         assert result.get("person_id") == 99
         assert result.get("lead_id") == 77
+
+
+class TestUpdateCrmIdempotency:
+    """A confirmed appointment must not create a duplicate meeting for a slot already booked."""
+
+    def _confirmed_args(self, **overrides) -> dict:
+        args = {
+            "wa_id": "591700000000",
+            "person_name": "Ana López",
+            "person_phone": "591700000000",
+            "doctor_id": 5,
+            "horario_cita": "15/05/2026 09:00",
+            "es_cita_confirmada": True,
+            "products_name": "Limpieza",
+            "products_product_id": 1,
+        }
+        args.update(overrides)
+        return args
+
+    @pytest.mark.asyncio
+    async def test_existing_meeting_same_slot_skips_creation(self):
+        """A retried confirmation for an already-booked slot returns idempotent, no new POST."""
+        from app.core.langgraph.tools.crm import update_crm
+
+        existing = _r({"data": [
+            {"id": 42, "type": "meeting", "schedule_from": "2026-05-15 09:00:00", "is_done": 0},
+        ]})
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, existing])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            client.post = AsyncMock(return_value=ACTIVITY_CREATED)
+            cls.return_value = client
+
+            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+
+        assert result["success"] is True
+        assert result["appointment_registered"] is True
+        assert result["idempotent"] is True
+        assert result["activity_id"] == 42
+        # No activity POST — the slot was already booked.
+        assert not any("activities" in c[0][0] for c in client.post.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_existing_meeting_different_slot_still_creates(self):
+        """A meeting at a different time does not block booking the requested slot."""
+        from app.core.langgraph.tools.crm import update_crm
+
+        other = _r({"data": [
+            {"id": 42, "type": "meeting", "schedule_from": "2026-05-16 11:00:00", "is_done": 0},
+        ]})
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, other])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            client.post = AsyncMock(return_value=ACTIVITY_CREATED)
+            cls.return_value = client
+
+            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+
+        assert result["appointment_registered"] is True
+        assert result.get("idempotent") is not True
+        assert any("activities" in c[0][0] for c in client.post.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_done_meeting_same_slot_does_not_block(self):
+        """A completed (is_done) meeting at the same time is a past visit, not a duplicate."""
+        from app.core.langgraph.tools.crm import update_crm
+
+        done = _r({"data": [
+            {"id": 42, "type": "meeting", "schedule_from": "2026-05-15 09:00:00", "is_done": 1},
+        ]})
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, done])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            client.post = AsyncMock(return_value=ACTIVITY_CREATED)
+            cls.return_value = client
+
+            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+
+        assert result["appointment_registered"] is True
+        assert result.get("idempotent") is not True
+        assert any("activities" in c[0][0] for c in client.post.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_dup_check_failure_falls_open_and_creates(self):
+        """If the activities lookup errors, booking proceeds (never blocked by the guard)."""
+        from app.core.langgraph.tools.crm import update_crm
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, Exception("boom")])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            client.post = AsyncMock(return_value=ACTIVITY_CREATED)
+            cls.return_value = client
+
+            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+
+        assert result["appointment_registered"] is True
+        assert any("activities" in c[0][0] for c in client.post.call_args_list)
 
 
 class TestGetCitas:
