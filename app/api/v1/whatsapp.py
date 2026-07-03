@@ -234,11 +234,13 @@ async def _handle_webhook_payload(
                             name=profile_name or "Paciente WhatsApp",
                             is_new_patient=registered_wa_ids[wa_id]["is_new_patient"],
                         )
-                        # First contact of a brand-new number → create the lead in the "Consulta"
-                        # pipeline stage right away, so it appears in the pipeline even if the
-                        # patient only greets. Idempotent and gated on is_new_patient so it costs
-                        # one extra CRM call only on the very first message, never on later ones.
-                        if reg.get("is_new_patient") and reg.get("person_id"):
+                        # Ensure the patient has a lead in the "Consulta" pipeline stage from the
+                        # first message — even a plain greeting, and even for someone who already
+                        # exists as a Person but has no lead yet (returning patients, recycled test
+                        # numbers). ensure_lead_registered is idempotent (it reuses an existing
+                        # lead), so this is safe to attempt on every contact; it runs as a
+                        # background task so it never delays the reply.
+                        if reg.get("person_id"):
                             lead_task = asyncio.create_task(
                                 ensure_lead_registered(wa_id, reg["person_id"], profile_name or None)
                             )
