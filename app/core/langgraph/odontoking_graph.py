@@ -154,10 +154,17 @@ def _load_odontoking_prompt(
         context_lines.append(f"seguro_registrado: {seguro_paciente}")
     else:
         context_lines.append("seguro_registrado: null")
-    # Insurance is a hard gate before booking. If it is not already verified in context,
-    # the agent MUST run the insurance flow (ask + carnet + verify_insurance) before
-    # proposing slots or confirming — even for returning patients.
-    if not (ci_paciente and seguro_paciente):
+    # Insurance is a HARD GATE on every booking (policy: always re-validate). A previously
+    # registered insurance belongs to the wa_id owner, can lapse (mora/vencido), and is NOT
+    # valid for a third-party patient — so it never skips verify_insurance, it only pre-fills.
+    if ci_paciente and seguro_paciente:
+        context_lines.append(
+            "# ⚠️ SEGURO — el titular tiene un seguro registrado. Úsalo SOLO para pre-llenar "
+            "(confírmalo con el paciente y pide/confirma el carnet), pero SIEMPRE vuelve a llamar "
+            "verify_insurance en esta conversación. Si la cita es PARA OTRA PERSONA, ese seguro NO "
+            "aplica: valida el seguro y el carnet de esa persona. Si NO da VIGENTE, NO agendes."
+        )
+    else:
         context_lines.append(
             "# ⚠️ SEGURO NO VERIFICADO — OBLIGATORIO antes de agendar (también pacientes recurrentes): "
             "pregunta por el seguro; si elige una aseguradora pide el carnet y llama verify_insurance. "
