@@ -227,7 +227,7 @@
         "id": "1989b760-4d86-4a56-91e0-5e41c59a09f4"
       },
       {
-        "content": "¿Cuenta con algún seguro dental? 🦷📄\n\n1. Alianza Odontoking\n2. Nacional Vida\n3. Membresía Odontoking\n4. No tengo seguro",
+        "content": "¿Cuenta con algún seguro dental? 🦷📄\n\n1. Alianza\n2. Nacional Vida\n3. Membresía Odontoking\n4. No tengo seguro",
         "additional_kwargs": {
           "refusal": null
         },
