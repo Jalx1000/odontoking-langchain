@@ -68,29 +68,30 @@ _PERSON_NOT_FOUND = _ok({"data": []})
 
 _PERSON_CREATED = _resp(201, {"data": {"id": 99}})
 
-# Insurance API responses — all use the same endpoint shape
+# Insurance API responses — POST /api/insurance/verify shape (all three insurers).
+# The tool derives has_insurance strictly from status == "VIGENTE".
 _INSURANCE_VIGENTE = _ok({
-    "has_insurance": True,
     "status": "VIGENTE",
-    "policy_number": "POL-001",
-    "valid_until": "2027-01-01",
-    "message": "Membresía activa",
+    "message": "Todo en orden, cobertura activa",
+    "success": True,
+    "seguro_name": "Alianza",
+    "data": {"CI": "1234567", "NOMBRE COMPLETO": "RIVAS CALDERON, MARIA ALEJANDRA", "ESTADO": "VIGENTE"},
 })
 
 _INSURANCE_VENCIDA = _ok({
-    "has_insurance": True,
     "status": "VENCIDO",
-    "policy_number": "POL-002",
-    "valid_until": "2024-12-31",
-    "message": "Membresía vencida",
+    "message": "Cobertura vencida",
+    "success": True,
+    "seguro_name": "Alianza",
+    "data": {"CI": "1234567", "NOMBRE COMPLETO": "RIVAS CALDERON, MARIA ALEJANDRA", "ESTADO": "VENCIDO"},
 })
 
 _INSURANCE_NOT_FOUND = _ok({
-    "has_insurance": False,
-    "status": None,
-    "policy_number": "",
-    "valid_until": None,
+    "status": "NO_REGISTRADO",
     "message": "No se encontró seguro para este paciente",
+    "success": True,
+    "seguro_name": "Alianza",
+    "data": None,
 })
 
 
@@ -281,210 +282,121 @@ class TestEnsurePersonRegisteredIdempotency:
         client.put.assert_not_called()
 
 
-# ── 3. Insurance verification — all insurers use the same endpoint ───────────
+# ── 3. Insurance verification — single POST endpoint for all three insurers ───
 
 class TestVerifyInsuranceUnifiedEndpoint:
-    """verify_insurance uses GET /api/v1/insurance/verify for all insurer names."""
+    """verify_insurance uses POST /api/insurance/verify for all insurers, routing by
+    insurance_type and resolving person_id from wa_id. Coverage is active only when the
+    returned status is VIGENTE."""
 
-    def _invoke(self, ci: str, seguro: str) -> dict:
-        from app.core.langgraph.tools.insurance import verify_insurance
+    _UNSET = object()
+
+    def _invoke(self, ci: str, seguro: str, response, *, person=_UNSET) -> tuple[dict, AsyncMock]:
+        from app.core.langgraph.tools import insurance
 
         async def _call():
-            return json.loads(await verify_insurance.coroutine(
-                ci_paciente=ci, seguro_paciente=seguro
+            return json.loads(await insurance.verify_insurance.coroutine(
+                wa_id="591700000001", ci_paciente=ci, seguro_paciente=seguro
             ))
 
-        with patch("httpx.AsyncClient") as cls:
-            client = _ctx(AsyncMock())
-            client.get = AsyncMock(return_value=_INSURANCE_VIGENTE)
-            cls.return_value = client
-            result = _run(_call())
-        return result
+        find_return = {"id": 42} if person is self._UNSET else person
+        find = AsyncMock(return_value=find_return)
+        with patch.object(insurance, "find_person_by_wa_id", find):
+            with patch("httpx.AsyncClient") as cls:
+                client = _ctx(AsyncMock())
+                client.post = AsyncMock(return_value=response)
+                cls.return_value = client
+                result = _run(_call())
+        return result, client
 
     def test_alianza_vigente_returns_has_insurance_true(self):
-        """Alianza seguro with VIGENTE status → has_insurance True."""
-        from app.core.langgraph.tools.insurance import verify_insurance
-
-        async def _call():
-            return json.loads(await verify_insurance.coroutine(
-                ci_paciente="1234567", seguro_paciente="Alianza"
-            ))
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _ctx(AsyncMock())
-            client.get = AsyncMock(return_value=_INSURANCE_VIGENTE)
-            cls.return_value = client
-            result = _run(_call())
+        """Alianza with VIGENTE status → has_insurance True, hitting POST /api/insurance/verify."""
+        result, client = self._invoke("1234567", "Alianza", _INSURANCE_VIGENTE)
 
         assert result["has_insurance"] is True
         assert result["status"] == "VIGENTE"
-        # Verify the correct endpoint and params were used
-        call_url = client.get.call_args[0][0]
-        assert "/api/v1/insurance/verify" in call_url
-        call_params = client.get.call_args[1]["params"]
-        assert call_params["ci_paciente"] == "1234567"
-        assert call_params["seguro_paciente"] == "Alianza"
+        # Correct endpoint (POST, no /v1/) and body params.
+        call_url = client.post.call_args[0][0]
+        assert call_url.endswith("/api/insurance/verify")
+        assert "/api/v1/insurance/verify" not in call_url
+        body = client.post.call_args[1]["json"]
+        assert body["ci"] == "1234567"
+        assert body["insurance_type"] == "Alianza"
+        assert body["person_id"] == 42
 
-    def test_alianza_vencido_returns_has_insurance_blocked(self):
-        """Alianza with has_insurance=True but status != VIGENTE → insurance present but expired."""
-        from app.core.langgraph.tools.insurance import verify_insurance
+    def test_alianza_vencido_returns_has_insurance_false(self):
+        """A VENCIDO policy must NOT be reported as active coverage (regression: old code forced VIGENTE)."""
+        result, _ = self._invoke("1234567", "Alianza", _INSURANCE_VENCIDA)
 
-        async def _call():
-            return json.loads(await verify_insurance.coroutine(
-                ci_paciente="1234567", seguro_paciente="Alianza"
-            ))
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _ctx(AsyncMock())
-            client.get = AsyncMock(return_value=_INSURANCE_VENCIDA)
-            cls.return_value = client
-            result = _run(_call())
-
-        # Tool returns the raw API response — caller checks status != VIGENTE to block
-        assert result["has_insurance"] is True
-        assert result["status"] != "VIGENTE"
+        assert result["has_insurance"] is False
+        assert result["status"] == "VENCIDO"
 
     def test_nacional_vida_vigente_uses_same_endpoint(self):
-        """Nacional Vida also uses /api/v1/insurance/verify — no separate endpoint."""
-        from app.core.langgraph.tools.insurance import verify_insurance
+        """Nacional Vida also uses POST /api/insurance/verify — no separate endpoint."""
+        result, client = self._invoke("9876543", "Nacional Vida", _INSURANCE_VIGENTE)
 
-        async def _call():
-            return json.loads(await verify_insurance.coroutine(
-                ci_paciente="9876543", seguro_paciente="Nacional Vida"
-            ))
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _ctx(AsyncMock())
-            client.get = AsyncMock(return_value=_INSURANCE_VIGENTE)
-            cls.return_value = client
-            result = _run(_call())
-
-        call_url = client.get.call_args[0][0]
-        assert "/api/v1/insurance/verify" in call_url
-        call_params = client.get.call_args[1]["params"]
-        assert call_params["seguro_paciente"] == "Nacional Vida"
+        call_url = client.post.call_args[0][0]
+        assert call_url.endswith("/api/insurance/verify")
+        assert client.post.call_args[1]["json"]["insurance_type"] == "Nacional Vida"
         assert result["has_insurance"] is True
 
     def test_membresia_odontoking_vigente_valid(self):
-        """Membresía Odontoking also uses the same endpoint and returns VIGENTE."""
-        from app.core.langgraph.tools.insurance import verify_insurance
-
-        async def _call():
-            return json.loads(await verify_insurance.coroutine(
-                ci_paciente="5551234", seguro_paciente="Membresía Odontoking"
-            ))
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _ctx(AsyncMock())
-            client.get = AsyncMock(return_value=_INSURANCE_VIGENTE)
-            cls.return_value = client
-            result = _run(_call())
+        """Membresía Odontoking also uses the same POST endpoint and returns VIGENTE."""
+        result, _ = self._invoke("5551234", "Membresía Odontoking", _INSURANCE_VIGENTE)
 
         assert result["has_insurance"] is True
         assert result["status"] == "VIGENTE"
 
-    def test_has_insurance_false_is_not_vigente(self):
-        """When has_insurance=False, patient has no coverage regardless of status."""
-        from app.core.langgraph.tools.insurance import verify_insurance
-
-        async def _call():
-            return json.loads(await verify_insurance.coroutine(
-                ci_paciente="0000000", seguro_paciente="Alianza"
-            ))
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _ctx(AsyncMock())
-            client.get = AsyncMock(return_value=_INSURANCE_NOT_FOUND)
-            cls.return_value = client
-            result = _run(_call())
+    def test_no_registrado_is_not_has_insurance(self):
+        """NO_REGISTRADO (patient/insurer not found) → has_insurance False."""
+        result, _ = self._invoke("0000000", "Alianza", _INSURANCE_NOT_FOUND)
 
         assert result["has_insurance"] is False
+        assert result["status"] == "NO_REGISTRADO"
 
-    def test_raw_field_in_response_does_not_break_parser(self):
-        """A response with a 'raw' extra field must parse without raising."""
-        from app.core.langgraph.tools.insurance import verify_insurance
+    def test_person_not_found_blocks_verification(self):
+        """If the CRM person cannot be resolved from wa_id, verification is not attempted."""
+        result, client = self._invoke("1234567", "Alianza", _INSURANCE_VIGENTE, person=None)
 
-        resp_with_raw = _ok({
-            "has_insurance": True,
-            "status": "VIGENTE",
-            "policy_number": "POL-XYZ",
-            "valid_until": "2028-01-01",
-            "raw": {"smd_id": 9999, "extra_data": "ignored"},
-        })
-
-        async def _call():
-            return json.loads(await verify_insurance.coroutine(
-                ci_paciente="1234567", seguro_paciente="Alianza"
-            ))
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _ctx(AsyncMock())
-            client.get = AsyncMock(return_value=resp_with_raw)
-            cls.return_value = client
-            result = _run(_call())
-
-        # Must not raise — the extra 'raw' field is transparently forwarded
-        assert result["has_insurance"] is True
-
-    def test_empty_policy_number_and_null_valid_until_do_not_break_parser(self):
-        """policy_number='' and valid_until=null must not cause KeyError or TypeError."""
-        from app.core.langgraph.tools.insurance import verify_insurance
-
-        resp_minimal = _ok({
-            "has_insurance": False,
-            "status": None,
-            "policy_number": "",
-            "valid_until": None,
-        })
-
-        async def _call():
-            return json.loads(await verify_insurance.coroutine(
-                ci_paciente="0000001", seguro_paciente="Alianza"
-            ))
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _ctx(AsyncMock())
-            client.get = AsyncMock(return_value=resp_minimal)
-            cls.return_value = client
-            result = _run(_call())
-
+        # find_person_by_wa_id returned None → no POST is issued.
         assert result["has_insurance"] is False
-        assert result["policy_number"] == ""
-        assert result["valid_until"] is None
+        client.post.assert_not_called()
 
     def test_5xx_returns_error_with_retry_flag(self):
         """A 500 from the insurance endpoint returns error payload with retry=True."""
-        from app.core.langgraph.tools.insurance import verify_insurance
+        from app.core.langgraph.tools import insurance
 
         async def _call():
-            return json.loads(await verify_insurance.coroutine(
-                ci_paciente="1234567", seguro_paciente="Alianza"
+            return json.loads(await insurance.verify_insurance.coroutine(
+                wa_id="591700000001", ci_paciente="1234567", seguro_paciente="Alianza"
             ))
 
-        with patch("httpx.AsyncClient") as cls:
-            client = _ctx(AsyncMock())
-            client.get = AsyncMock(return_value=_resp(500, {}))
-            cls.return_value = client
-            with patch("tenacity.nap.time"):
-                result = _run(_call())
+        with patch.object(insurance, "find_person_by_wa_id", AsyncMock(return_value={"id": 42})):
+            with patch("httpx.AsyncClient") as cls:
+                client = _ctx(AsyncMock())
+                client.post = AsyncMock(return_value=_resp(500, {}))
+                cls.return_value = client
+                with patch("tenacity.nap.time"):
+                    result = _run(_call())
 
         assert result["has_insurance"] is False
         assert result.get("retry") is True
 
     def test_4xx_returns_error_without_retry(self):
         """A 422 from the insurance endpoint returns error payload WITHOUT retry."""
-        from app.core.langgraph.tools.insurance import verify_insurance
+        from app.core.langgraph.tools import insurance
 
         async def _call():
-            return json.loads(await verify_insurance.coroutine(
-                ci_paciente="bad-ci", seguro_paciente="Alianza"
+            return json.loads(await insurance.verify_insurance.coroutine(
+                wa_id="591700000001", ci_paciente="bad-ci", seguro_paciente="Alianza"
             ))
 
-        with patch("httpx.AsyncClient") as cls:
-            client = _ctx(AsyncMock())
-            client.get = AsyncMock(return_value=_resp(422, {"message": "invalid ci"}))
-            cls.return_value = client
-            result = _run(_call())
+        with patch.object(insurance, "find_person_by_wa_id", AsyncMock(return_value={"id": 42})):
+            with patch("httpx.AsyncClient") as cls:
+                client = _ctx(AsyncMock())
+                client.post = AsyncMock(return_value=_resp(422, {"message": "invalid ci"}))
+                cls.return_value = client
+                result = _run(_call())
 
         assert result["has_insurance"] is False
         assert result.get("retry") is not True
@@ -549,47 +461,30 @@ class TestThirdPartyPatientFlow:
 
     def test_insurance_verify_uses_tercero_ci_not_wa_id(self):
         """Insurance is verified with the third party's CI, not the caller's wa_id."""
-        from app.core.langgraph.tools.insurance import verify_insurance
-
-        tercero_ci = "7654321"
-
-        async def _call():
-            return json.loads(await verify_insurance.coroutine(
-                ci_paciente=tercero_ci,
-                seguro_paciente="Alianza",
-            ))
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _ctx(AsyncMock())
-            client.get = AsyncMock(return_value=_INSURANCE_VIGENTE)
-            cls.return_value = client
-            result = _run(_call())
-
-        call_params = client.get.call_args[1]["params"]
-        assert call_params["ci_paciente"] == tercero_ci
-        assert result["has_insurance"] is True
-
-    def test_insurance_verify_does_not_use_wa_id_as_ci(self):
-        """The insurance call must NOT pass the wa_id as ci_paciente — that would be wrong."""
-        from app.core.langgraph.tools.insurance import verify_insurance
+        from app.core.langgraph.tools import insurance
 
         wa_id = "591700000010"
         tercero_ci = "7654321"
 
         async def _call():
-            return json.loads(await verify_insurance.coroutine(
+            return json.loads(await insurance.verify_insurance.coroutine(
+                wa_id=wa_id,
                 ci_paciente=tercero_ci,
                 seguro_paciente="Alianza",
             ))
 
-        with patch("httpx.AsyncClient") as cls:
-            client = _ctx(AsyncMock())
-            client.get = AsyncMock(return_value=_INSURANCE_VIGENTE)
-            cls.return_value = client
-            _run(_call())
+        with patch.object(insurance, "find_person_by_wa_id", AsyncMock(return_value={"id": 42})):
+            with patch("httpx.AsyncClient") as cls:
+                client = _ctx(AsyncMock())
+                client.post = AsyncMock(return_value=_INSURANCE_VIGENTE)
+                cls.return_value = client
+                result = _run(_call())
 
-        call_params = client.get.call_args[1]["params"]
-        assert call_params["ci_paciente"] != wa_id
+        body = client.post.call_args[1]["json"]
+        # The CI sent to the insurer is the third party's, never the wa_id.
+        assert body["ci"] == tercero_ci
+        assert body["ci"] != wa_id
+        assert result["has_insurance"] is True
 
 
 # ── 5. Confirmed appointment — modification rules ─────────────────────────────

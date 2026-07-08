@@ -53,7 +53,9 @@
       "Bash(railway variables *)",
       "Read(//Users/javier/.local/bin/**)",
       "Read(//Users/javier/.cargo/bin/**)",
-      "Bash(find / -name uv -type f)"
+      "Bash(find / -name uv -type f)",
+      "Bash(git stash *)",
+      "Bash(.venv/bin/ruff check *)"
     ]
   }
 }
