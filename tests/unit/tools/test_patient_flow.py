@@ -505,15 +505,16 @@ class TestThirdPartyPatientFlow:
             "wa_id": "591700000010",
             "person_name": "Madre que llama",
             "person_phone": "591700000010",
+            "is_for_self": False,
             "nombre_paciente_de_otra_persona": "Hijo Ejemplo",
             "edad_paciente_de_otra_persona": 10,
         }
         args.update(overrides)
         return args
 
-    def test_update_crm_with_tercero_data_succeeds(self):
-        """update_crm accepts nombre_paciente_de_otra_persona without requiring relation field."""
-        from app.core.langgraph.tools.crm import update_crm
+    def test_save_patient_with_tercero_data_succeeds(self):
+        """save_patient accepts nombre_paciente_de_otra_persona without requiring a relation field."""
+        from app.core.langgraph.tools.crm import save_patient
 
         person_exists = _ok({"data": [{"id": 55, "name": "Madre que llama",
                                         "emails": [{"value": "591700000010@whatsapp.sofopolis.net"}]}]})
@@ -528,23 +529,23 @@ class TestThirdPartyPatientFlow:
             client.post = AsyncMock(return_value=_resp(201, {}))
             cls.return_value = client
 
-            result = json.loads(_run(update_crm.coroutine(**self._base_args())))
+            result = json.loads(_run(save_patient.coroutine(**self._base_args())))
 
         assert result["success"] is True
         assert result["person_id"] == 55
         assert result["lead_id"] == 88
 
-    def test_update_crm_tercero_does_not_require_relacion_field(self):
-        """The tool signature has no 'relacion' parameter — booking for a third party
+    def test_tercero_tools_do_not_require_relacion_field(self):
+        """No CRM write tool has a 'relacion' parameter — booking for a third party
         never asks for the family relationship."""
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import create_appointment, save_patient
         import inspect
 
-        sig = inspect.signature(update_crm.coroutine)
-        param_names = list(sig.parameters.keys())
-        assert "relacion" not in param_names, (
-            "Tool must NOT have a 'relacion' param — agent should not ask for relationship"
-        )
+        for tool in (save_patient, create_appointment):
+            param_names = list(inspect.signature(tool.coroutine).parameters.keys())
+            assert "relacion" not in param_names, (
+                f"{tool.name} must NOT have a 'relacion' param — agent should not ask for relationship"
+            )
 
     def test_insurance_verify_uses_tercero_ci_not_wa_id(self):
         """Insurance is verified with the third party's CI, not the caller's wa_id."""
@@ -594,7 +595,7 @@ class TestThirdPartyPatientFlow:
 # ── 5. Confirmed appointment — modification rules ─────────────────────────────
 
 class TestConfirmedAppointmentModificationRules:
-    """Rules for update_crm when es_cita_confirmada=True on an existing confirmed appointment.
+    """Rules for create_appointment on an existing confirmed appointment.
 
     Allowed changes: horario_cita (time), doctor_id (doctor by specialty)
     Blocked changes: products_name/products_product_id (service)
@@ -608,7 +609,6 @@ class TestConfirmedAppointmentModificationRules:
             "person_phone": "591700000020",
             "doctor_id": 5,
             "horario_cita": "20/06/2026 10:00",
-            "es_cita_confirmada": True,
             "products_name": "Limpieza",
             "products_product_id": 174,
         }
@@ -620,39 +620,40 @@ class TestConfirmedAppointmentModificationRules:
     _LEADS = _ok({"data": [{"id": 55, "person": {
         "emails": [{"value": "591700000020@whatsapp.sofopolis.net"}]
     }}]})
+    _ACTIVITIES_EMPTY = _ok({"data": []})
 
     def test_confirmed_appointment_is_registered_when_all_data_valid(self):
         """Happy path: all required fields present, API returns 201 → appointment_registered=True."""
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import create_appointment
 
         activity_created = _resp(201, {"data": {"id": 300}})
 
         with patch("httpx.AsyncClient") as cls:
             client = _ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[self._PERSON, self._LEADS])
+            client.get = AsyncMock(side_effect=[self._PERSON, self._LEADS, self._ACTIVITIES_EMPTY])
             client.put = AsyncMock(return_value=_ok({}))
             client.post = AsyncMock(return_value=activity_created)
             cls.return_value = client
 
-            result = json.loads(_run(update_crm.coroutine(**self._confirmed_args())))
+            result = json.loads(_run(create_appointment.coroutine(**self._confirmed_args())))
 
         assert result["success"] is True
         assert result["appointment_registered"] is True
 
     def test_time_change_on_confirmed_appointment_is_allowed(self):
         """Changing horario_cita on a confirmed slot is allowed — POST to /activities."""
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import create_appointment
 
         activity_created = _resp(201, {"data": {"id": 301}})
 
         with patch("httpx.AsyncClient") as cls:
             client = _ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[self._PERSON, self._LEADS])
+            client.get = AsyncMock(side_effect=[self._PERSON, self._LEADS, self._ACTIVITIES_EMPTY])
             client.put = AsyncMock(return_value=_ok({}))
             client.post = AsyncMock(return_value=activity_created)
             cls.return_value = client
 
-            result = json.loads(_run(update_crm.coroutine(
+            result = json.loads(_run(create_appointment.coroutine(
                 **self._confirmed_args(horario_cita="25/06/2026 14:00")
             )))
 
@@ -664,18 +665,18 @@ class TestConfirmedAppointmentModificationRules:
 
     def test_doctor_change_on_confirmed_appointment_is_allowed(self):
         """Changing doctor_id on a confirmed slot is allowed — POST to /activities with new doctor."""
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import create_appointment
 
         activity_created = _resp(201, {"data": {"id": 302}})
 
         with patch("httpx.AsyncClient") as cls:
             client = _ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[self._PERSON, self._LEADS])
+            client.get = AsyncMock(side_effect=[self._PERSON, self._LEADS, self._ACTIVITIES_EMPTY])
             client.put = AsyncMock(return_value=_ok({}))
             client.post = AsyncMock(return_value=activity_created)
             cls.return_value = client
 
-            result = json.loads(_run(update_crm.coroutine(
+            result = json.loads(_run(create_appointment.coroutine(
                 **self._confirmed_args(doctor_id=19)  # different doctor
             )))
 
@@ -687,7 +688,7 @@ class TestConfirmedAppointmentModificationRules:
 
     def test_api_conflict_422_on_confirmed_appointment_returns_graceful_error(self):
         """When API returns 422 (slot conflict), tool returns appointment_conflict error without raising."""
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import create_appointment
 
         conflict_resp = MagicMock()
         conflict_resp.status_code = 422
@@ -697,12 +698,12 @@ class TestConfirmedAppointmentModificationRules:
 
         with patch("httpx.AsyncClient") as cls:
             client = _ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[self._PERSON, self._LEADS])
+            client.get = AsyncMock(side_effect=[self._PERSON, self._LEADS, self._ACTIVITIES_EMPTY])
             client.put = AsyncMock(return_value=_ok({}))
             client.post = AsyncMock(return_value=conflict_resp)
             cls.return_value = client
 
-            result = json.loads(_run(update_crm.coroutine(**self._confirmed_args())))
+            result = json.loads(_run(create_appointment.coroutine(**self._confirmed_args())))
 
         assert result["success"] is False
         assert result["appointment_registered"] is False
@@ -714,14 +715,14 @@ class TestConfirmedAppointmentModificationRules:
     def test_service_change_blocked_when_missing_product_data(self):
         """If products_name is provided without products_product_id, product is omitted silently.
         This is the 'service change blocked' behaviour — the agent must ask for the full product.
-        The tool itself does not POST the service unless both product_id AND name are present."""
-        from app.core.langgraph.tools.crm import update_crm
+        The tool itself does not attach the service unless both product_id AND name are present."""
+        from app.core.langgraph.tools.crm import create_appointment
 
         activity_created = _resp(201, {"data": {"id": 303}})
 
         with patch("httpx.AsyncClient") as cls:
             client = _ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[self._PERSON, self._LEADS])
+            client.get = AsyncMock(side_effect=[self._PERSON, self._LEADS, self._ACTIVITIES_EMPTY])
             client.put = AsyncMock(return_value=_ok({}))
             client.post = AsyncMock(return_value=activity_created)
             cls.return_value = client
@@ -730,9 +731,9 @@ class TestConfirmedAppointmentModificationRules:
             args = self._confirmed_args()
             args.pop("products_product_id")
             args["products_name"] = "Ortodoncia"
-            result = json.loads(_run(update_crm.coroutine(**args)))
+            result = json.loads(_run(create_appointment.coroutine(**args)))
 
-        # Tool succeeds but product_id is absent from lead update body
+        # Tool succeeds but product_id is absent from the lead update body
         assert result["success"] is True
         # The lead PUT body must NOT include products when product_id is missing
         put_calls = client.put.call_args_list
@@ -743,7 +744,7 @@ class TestConfirmedAppointmentModificationRules:
 
     def test_invalid_datetime_on_confirmed_appointment_returns_error(self):
         """When horario_cita cannot be parsed, tool returns error before hitting the API."""
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import create_appointment
 
         with patch("httpx.AsyncClient") as cls:
             client = _ctx(AsyncMock())
@@ -751,7 +752,7 @@ class TestConfirmedAppointmentModificationRules:
             client.put = AsyncMock(return_value=_ok({}))
             cls.return_value = client
 
-            result = json.loads(_run(update_crm.coroutine(
+            result = json.loads(_run(create_appointment.coroutine(
                 **self._confirmed_args(horario_cita="not-a-valid-date")
             )))
 
@@ -761,9 +762,9 @@ class TestConfirmedAppointmentModificationRules:
         # API was never called for activities
         client.post.assert_not_called()
 
-    def test_confirmed_without_doctor_id_does_not_create_activity(self):
-        """If doctor_id is absent, es_cita_confirmada=True alone must NOT create the activity."""
-        from app.core.langgraph.tools.crm import update_crm
+    def test_missing_doctor_returns_error_and_no_activity(self):
+        """create_appointment with no doctor (0) returns a guard error and never POSTs an activity."""
+        from app.core.langgraph.tools.crm import create_appointment
 
         with patch("httpx.AsyncClient") as cls:
             client = _ctx(AsyncMock())
@@ -772,16 +773,17 @@ class TestConfirmedAppointmentModificationRules:
             client.post = AsyncMock(return_value=_resp(201, {"data": {"id": 1}}))
             cls.return_value = client
 
-            result = json.loads(_run(update_crm.coroutine(
+            result = json.loads(_run(create_appointment.coroutine(
                 wa_id="591700000020",
                 person_name="Pedro Flores",
                 person_phone="591700000020",
                 horario_cita="20/06/2026 10:00",
-                es_cita_confirmada=True,
-                # doctor_id intentionally omitted
+                doctor_id=0,  # missing doctor
             )))
 
+        assert result["success"] is False
         assert result["appointment_registered"] is False
+        assert result["error_type"] == "missing_appointment_fields"
         # POST to /activities must NOT have been called
         activity_posts = [c for c in client.post.call_args_list if "activities" in (c[0][0] if c[0] else "")]
         assert len(activity_posts) == 0

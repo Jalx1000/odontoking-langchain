@@ -93,12 +93,14 @@ class TestBookingFlow:
             assert r.done is True
             assert "agendada exitosamente" in r.reply
 
-        payload = book.call_args.args[0]
-        assert payload["es_cita_confirmada"] is True
-        assert payload["doctor_id"] == 12
-        assert payload["horario_cita"] == "18/06/2026 17:00"
-        assert payload["numero_carnet"] == "2848219"            # the THIRD person's carnet
-        assert payload["nombre_paciente_de_otra_persona"] == "ADELINO RODA"
+        # _book_crm now receives the booking state; it orchestrates save_patient +
+        # save_insurance + create_appointment from these fields.
+        state_arg = book.call_args.args[0]
+        assert state_arg["doctor_id"] == 12
+        assert state_arg["chosen_date"] == "2026-06-18"
+        assert state_arg["chosen_start"] == "17:00:00"
+        assert state_arg["ci"] == "2848219"                     # the THIRD person's carnet
+        assert state_arg["tercero_nombre"] == "ADELINO RODA"
 
     @pytest.mark.asyncio
     async def test_only_specialty_matching_doctors_are_offered(self):
@@ -446,8 +448,9 @@ class TestReschedule:
             book.assert_called_once()                            # exactly one new booking
             assert r.done is True
             assert r.state.get("rescheduling") is False
-        payload = book.call_args.args[0]
-        assert payload["horario_cita"] == "18/06/2026 17:00"     # the NEW time
+        state_arg = book.call_args.args[0]
+        assert state_arg["chosen_date"] == "2026-06-18"          # the NEW day
+        assert state_arg["chosen_start"] == "17:00:00"           # the NEW time
 
     @pytest.mark.asyncio
     async def test_reschedule_books_new_even_if_cancel_fails(self):

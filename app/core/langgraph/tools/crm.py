@@ -30,6 +30,11 @@ _INSURANCE_ID_MAP = {
     "no tengo seguro": 65,
 }
 
+# CRM lead pipeline stages.
+_LEAD_STAGE_CONSULTA = 1   # first contact
+_LEAD_STAGE_CANCELADO = 6  # cancelled
+_LEAD_STAGE_AGENDADO = 7   # appointment scheduled
+
 _AGENT_USERS_WEEKDAY = [1, 2, 3, 5, 6]
 _AGENT_USERS_SUNDAY = [6, 8]
 
@@ -306,90 +311,112 @@ async def _find_duplicate_meeting_id(
     return None
 
 
+# ── Shared person/lead resolution (used by every write tool) ──────────────────
+
+async def _find_or_create_lead(
+    client: httpx.AsyncClient, wa_id: str, person_id: int, person_name: str | None
+) -> Optional[int]:
+    """Return the person's lead id, creating one in the 'Consulta' stage if none exists.
+
+    Idempotent: reuses the most recent matching lead. Every write tool calls this so the
+    person→lead substrate is resolved the same way regardless of which single action runs.
+    """
+    person_email = _person_email_from_wa_id(wa_id)
+    leads_resp = await client.get(
+        f"{_BASE}/api/v1/leads",
+        params={"sort": "id", "limit": 10, "person_id": str(person_id)},
+        headers=_HEADERS,
+    )
+    leads_resp.raise_for_status()
+    all_leads = leads_resp.json().get("data", [])
+    matching = [
+        ld for ld in all_leads
+        if any(
+            (e.get("value", "")).lower() == person_email.lower()
+            for e in (ld.get("person", {}).get("emails") or [])
+        )
+    ]
+    if matching:
+        return matching[-1]["id"]
+
+    name = _real_name_or_none(person_name) or "Paciente WhatsApp"
+    close_date = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
+    lead_body = {
+        "title": f"Consulta - {name}",
+        "description": "Primer contacto vía WhatsApp",
+        "lead_value": 0,
+        "lead_source_id": 6,
+        "lead_pipeline_stage_id": _LEAD_STAGE_CONSULTA,
+        "lead_type_id": 1,
+        "user_id": _pick_agent_user(),
+        "expected_close_date": close_date,
+        "person": {"id": str(person_id), "name": name},
+        "products": {},
+        "entity_type": "leads",
+    }
+    lead_resp = await client.post(f"{_BASE}/api/v1/leads", json=lead_body, headers=_HEADERS)
+    lead_resp.raise_for_status()
+    return lead_resp.json().get("data", {}).get("id")
+
+
+async def _resolve_person_and_lead(
+    client: httpx.AsyncClient, wa_id: str, person_name: str, person_phone: str
+) -> tuple[Optional[int], Optional[int]]:
+    """Resolve (person_id, lead_id), creating each if missing. Shared by the write tools."""
+    person_result = await ensure_person_registered(
+        client, wa_id, person_name, person_phone, update_existing_name=True
+    )
+    person_id = person_result["person_id"]
+    if not person_id:
+        return None, None
+    lead_id = await _find_or_create_lead(client, wa_id, person_id, person_name)
+    return person_id, lead_id
+
+
+def _resolve_name_phone(wa_id: str, person_name: Optional[str], person_phone: Optional[str]) -> tuple[str, str]:
+    """Apply the shared CRM fallbacks: placeholder name and wa_id-as-phone."""
+    name = person_name.strip() if isinstance(person_name, str) and person_name.strip() else "Paciente WhatsApp"
+    phone = person_phone.strip() if isinstance(person_phone, str) and person_phone.strip() else wa_id
+    return name, phone
+
+
+# ── Atomic CRM write tools (one action per tool) ──────────────────────────────
+
 @tool
-async def update_crm(
+async def save_patient(
     wa_id: str,
     person_name: Optional[str] = None,
     person_phone: Optional[str] = None,
-    products_name: Optional[str] = None,
-    products_product_id: Optional[int] = None,
-    doctor_id: Optional[int] = None,
-    nombre_doctor: Optional[str] = None,
-    seguro_de_vida: Optional[str] = None,
-    horario_cita: Optional[str] = None,
-    numero_carnet: Optional[str] = None,
-    es_cita_confirmada: bool = False,
-    es_cita_cancelada: bool = False,
-    paciente_antiguo: bool = False,
-    nombre_paciente_agente: Optional[str] = None,
-    nombre_paciente_de_otra_persona: Optional[str] = None,
-    edad_paciente_de_otra_persona: Optional[int] = None,
     edad_paciente: Optional[int] = None,
     is_for_self: bool = True,
-    motivo_consulta: Optional[str] = None,
-    estado_seguro: Optional[str] = None,
+    nombre_paciente_de_otra_persona: Optional[str] = None,
+    edad_paciente_de_otra_persona: Optional[int] = None,
 ) -> str:
-    """Create or update a patient lead and appointment in Sofopolis CRM.
+    """Register or update ONLY the patient's identity and demographics in the CRM.
 
-    Call this tool progressively as patient data is collected. Call it again
-    when the appointment is confirmed (es_cita_confirmada=True) to register
-    the appointment activity.
+    Single responsibility: persist who the patient is (name, phone, age). Call it as soon as
+    you know the patient's name/age. It does NOT touch insurance or appointments — use
+    save_insurance and create_appointment for those.
 
     Args:
         wa_id: WhatsApp ID of the contact (e.g. '591XXXXXXXX').
-        person_name: Full name of the person writing. ALWAYS pass it when known
-            (from earlier turns, verify_insurance.patient_name, or the user's
-            self-introduction). If omitted, falls back to "Paciente WhatsApp",
-            which degrades CRM data quality.
-        person_phone: Phone number digits only. ALWAYS pass it when known.
-            If omitted, falls back to wa_id.
-        products_name: Service/product name chosen by patient.
-        products_product_id: Numeric ID of the product from get_services().
-        doctor_id: Numeric ID of the chosen doctor from get_doctors().
-        nombre_doctor: Doctor display name.
-        seguro_de_vida: Insurance name (e.g. 'Alianza', 'Nacional Vida').
-        horario_cita: Appointment datetime in format 'DD/MM/YYYY HH:MM'.
-        numero_carnet: Patient ID card number.
-        es_cita_confirmada: True when patient confirmed the appointment.
-        es_cita_cancelada: True when patient cancelled.
-        paciente_antiguo: True if returning patient.
-        nombre_paciente_agente: Display name for the agent.
-        nombre_paciente_de_otra_persona: Name if booking for someone else.
-        edad_paciente_de_otra_persona: Age if booking for someone else.
+        person_name: Full name of the person writing. If omitted, falls back to "Paciente WhatsApp".
+        person_phone: Phone number digits only. If omitted, falls back to wa_id.
         edad_paciente: Age of the person writing (primary patient).
         is_for_self: True if the appointment is for the WhatsApp sender; False if for another person.
-        motivo_consulta: Patient's reason for visit or main complaint.
-        estado_seguro: Insurance status after verification (e.g. 'VIGENTE', 'VENCIDO').
+        nombre_paciente_de_otra_persona: Name if booking for someone else.
+        edad_paciente_de_otra_persona: Age if booking for someone else.
     """
-    # Resolve fallbacks locally so downstream uses (lead title, person payload,
-    # comment lines) always have a non-None string. ensure_person_registered has
-    # the same defaults internally — we mirror them here to keep CRM records
-    # consistent when the LLM omits these fields after a prior tool already
-    # established the patient's identity (e.g. verify_insurance).
-    person_name = person_name.strip() if isinstance(person_name, str) and person_name.strip() else "Paciente WhatsApp"
-    person_phone = person_phone.strip() if isinstance(person_phone, str) and person_phone.strip() else wa_id
-
+    person_name, person_phone = _resolve_name_phone(wa_id, person_name, person_phone)
     log = logger.bind(wa_id=wa_id, person_name=person_name)
-    person_email = _person_email_from_wa_id(wa_id)
-
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            # 1. Find or create person, updating the name if this call knows a better one
-            person_result = await ensure_person_registered(
-                client,
-                wa_id,
-                person_name,
-                person_phone,
-                update_existing_name=True,
-            )
-            person_id = person_result["person_id"]
+            person_id, lead_id = await _resolve_person_and_lead(client, wa_id, person_name, person_phone)
             if not person_id:
-                return json.dumps({"error": "could not obtain person_id"})
+                return json.dumps({"success": False, "error": "could not obtain person_id"})
 
-            # 1b. Persist the writer's age on the person record (the only person field the CRM
-            # REST API accepts). CI / insurance / status go on the lead in step 6.
-            # TODO(pending): when is_for_self is False, the third person should get their OWN CRM
-            # person record (today their data lives on the writer's person + the lead).
+            # Persist the writer's age on the person record (the only person field the CRM REST
+            # API accepts). CI / insurance / status go on the lead via save_insurance.
             if edad_paciente is not None:
                 try:
                     await _update_person_age(client, person_id, wa_id, person_name, person_phone, edad_paciente)
@@ -397,105 +424,71 @@ async def update_crm(
                 except Exception as attr_err:
                     log.warning("crm_person_age_failed", person_id=person_id, error=str(attr_err))
 
-            # 2. Find existing leads for this person — filter by person_id server-side
-            leads_resp = await client.get(
-                f"{_BASE}/api/v1/leads",
-                params={"sort": "id", "limit": 10, "person_id": str(person_id)},
-                headers=_HEADERS,
-            )
-            leads_resp.raise_for_status()
-            all_leads = leads_resp.json().get("data", [])
-            # Python-side guard: keep only leads that truly belong to this person
-            matching = [
-                ld for ld in all_leads
-                if any(
-                    (e.get("value", "")).lower() == person_email.lower()
-                    for e in (ld.get("person", {}).get("emails") or [])
-                )
-            ]
-
-            agent_user = _pick_agent_user()
-            close_date = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
-
-            if not matching:
-                # 3a. Create new lead
-                lead_body = {
-                    "title": f"Consulta - {person_name}",
-                    "description": "Primer contacto vía WhatsApp",
-                    "lead_value": 0,
-                    "lead_source_id": 6,
-                    "lead_pipeline_stage_id": 1,
-                    "lead_type_id": 1,
-                    "user_id": agent_user,
-                    "expected_close_date": close_date,
-                    "person": {"id": str(person_id), "name": person_name},
-                    "products": {},
-                    "entity_type": "leads",
-                }
-                lead_resp = await client.post(f"{_BASE}/api/v1/leads", json=lead_body, headers=_HEADERS)
-                lead_resp.raise_for_status()
-                lead_id = lead_resp.json().get("data", {}).get("id")
-                log.info("crm_lead_created", lead_id=lead_id)
-            else:
-                lead_id = matching[-1]["id"]
-                # 3b. Update existing lead
-                update_body = {
-                    "title": person_name,
-                    "description": f"{products_name or ''} - {nombre_doctor or ''}",
-                    "lead_value": 0,
-                    "lead_pipeline_stage_id": 7,
-                    "lead_source_id": 6,
-                    "lead_type_id": 1,
-                    "user_id": agent_user,
-                    "expected_close_date": close_date,
-                    "person": {"name": person_name, "id": str(person_id)},
-                    "entity_type": "leads",
-                }
-                if products_name and products_product_id:
-                    update_body["products"] = {
-                        "product_0": {
-                            "name": products_name,
-                            "product_id": str(products_product_id),
-                            "price": "0",
-                            "quantity": 1,
-                        }
-                    }
-                upd_resp = await client.put(f"{_BASE}/api/v1/leads/{lead_id}", json=update_body, headers=_HEADERS)
-                upd_resp.raise_for_status()
-                log.info("crm_lead_updated", lead_id=lead_id)
-
-            if not lead_id:
-                return json.dumps({"error": "could not obtain lead_id"})
-
-            # 4. Change stage if cancelled
-            if es_cita_cancelada:
-                await client.put(
-                    f"{_BASE}/api/v1/leads/stage/edit/{lead_id}",
-                    json={"lead_pipeline_stage_id": [6]},
-                    headers=_HEADERS,
-                )
-                log.info("crm_lead_stage_cancelled", lead_id=lead_id)
-
-            # 5. Register insurance on lead
-            if seguro_de_vida:
-                insurance_id = _INSURANCE_ID_MAP.get(seguro_de_vida.lower().strip())
-                if insurance_id:
-                    await client.put(
-                        f"{_BASE}/api/v1/leads/attributes/edit/{lead_id}",
-                        json={"insurance": [insurance_id]},
-                        headers=_HEADERS,
-                    )
-                    log.info("crm_insurance_registered", lead_id=lead_id, insurance_id=insurance_id)
-
-            # 6. Register CI + age + third-party name + insurance status on lead
             lead_attrs: dict[str, Any] = {}
-            if numero_carnet:
-                lead_attrs["ci"] = numero_carnet
             patient_age = edad_paciente_de_otra_persona if not is_for_self else edad_paciente
             if patient_age is not None:
                 lead_attrs["edad_lead"] = str(patient_age)
             if not is_for_self and nombre_paciente_de_otra_persona:
                 lead_attrs["nombre_paciente_de_otra_persona"] = nombre_paciente_de_otra_persona
+            if lead_attrs and lead_id:
+                await client.put(
+                    f"{_BASE}/api/v1/leads/attributes/edit/{lead_id}",
+                    json=lead_attrs,
+                    headers=_HEADERS,
+                )
+                log.info("crm_lead_attributes_updated", lead_id=lead_id, attrs=list(lead_attrs.keys()))
+
+            log.info("crm_patient_saved", person_id=person_id, lead_id=lead_id)
+            return json.dumps({"success": True, "person_id": person_id, "lead_id": lead_id})
+
+    except Exception as e:
+        log.exception("save_patient_failed", error=str(e))
+        return json.dumps({"success": False, "error": str(e)})
+
+
+@tool
+async def save_insurance(
+    wa_id: str,
+    seguro_de_vida: str,
+    numero_carnet: Optional[str] = None,
+    estado_seguro: Optional[str] = None,
+    person_name: Optional[str] = None,
+    person_phone: Optional[str] = None,
+) -> str:
+    """Register ONLY the patient's insurance data on the CRM lead.
+
+    Single responsibility: persist the insurance company, ID card (CI) and verification status.
+    Call it after verify_insurance returns. It does NOT verify coverage (use verify_insurance)
+    and does NOT create appointments.
+
+    Args:
+        wa_id: WhatsApp ID of the contact (e.g. '591XXXXXXXX').
+        seguro_de_vida: Insurance name (e.g. 'Alianza', 'Nacional Vida', 'Membresía Odontoking').
+        numero_carnet: Patient ID card number (CI).
+        estado_seguro: Insurance status after verification (e.g. 'VIGENTE', 'VENCIDO').
+        person_name: Full name of the person writing (for person/lead resolution).
+        person_phone: Phone number digits only. If omitted, falls back to wa_id.
+    """
+    person_name, person_phone = _resolve_name_phone(wa_id, person_name, person_phone)
+    log = logger.bind(wa_id=wa_id, person_name=person_name)
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            person_id, lead_id = await _resolve_person_and_lead(client, wa_id, person_name, person_phone)
+            if not lead_id:
+                return json.dumps({"success": False, "error": "could not obtain lead_id"})
+
+            insurance_id = _INSURANCE_ID_MAP.get((seguro_de_vida or "").lower().strip())
+            if insurance_id:
+                await client.put(
+                    f"{_BASE}/api/v1/leads/attributes/edit/{lead_id}",
+                    json={"insurance": [insurance_id]},
+                    headers=_HEADERS,
+                )
+                log.info("crm_insurance_registered", lead_id=lead_id, insurance_id=insurance_id)
+
+            lead_attrs: dict[str, Any] = {}
+            if numero_carnet:
+                lead_attrs["ci"] = numero_carnet
             if estado_seguro:
                 lead_attrs["estado_seguro_paciente_cita"] = estado_seguro
             if lead_attrs:
@@ -506,102 +499,185 @@ async def update_crm(
                 )
                 log.info("crm_lead_attributes_updated", lead_id=lead_id, attrs=list(lead_attrs.keys()))
 
-            # 7. Create appointment activity when confirmed
-            appointment_registered = False
-            if es_cita_confirmada and horario_cita and doctor_id:
-                schedule_from, schedule_to = _parse_appointment_datetime(horario_cita)
-                if not schedule_from:
-                    return json.dumps({
-                        "success": False,
-                        "appointment_registered": False,
-                        "error_type": "invalid_appointment_datetime",
-                        "message": "No se pudo interpretar la fecha y hora de la cita.",
-                        "person_id": person_id,
-                        "lead_id": lead_id,
-                    })
+            log.info("crm_insurance_saved", person_id=person_id, lead_id=lead_id)
+            return json.dumps({"success": True, "person_id": person_id, "lead_id": lead_id})
 
-                # Idempotency guard: if a meeting for this exact slot already exists on the lead,
-                # do not create a second one. Protects against a retried confirmation where the
-                # previous POST succeeded but its response was lost (patient re-sent "SÍ").
-                duplicate_id = await _find_duplicate_meeting_id(client, lead_id, schedule_from)
-                if duplicate_id is not None:
-                    log.info(
-                        "crm_activity_duplicate_skipped",
-                        lead_id=lead_id,
-                        activity_id=duplicate_id,
-                        schedule=schedule_from,
-                    )
-                    return json.dumps({
-                        "success": True,
-                        "person_id": person_id,
-                        "lead_id": lead_id,
-                        "appointment_registered": True,
-                        "activity_id": duplicate_id,
-                        "idempotent": True,
-                    })
+    except Exception as e:
+        log.exception("save_insurance_failed", error=str(e))
+        return json.dumps({"success": False, "error": str(e)})
 
-                appointment_patient = nombre_paciente_de_otra_persona if not is_for_self else person_name
-                patient_type_label = "Tercero" if not is_for_self else "Mismo paciente"
-                comment_lines = [
-                    f"Paciente: {appointment_patient} ({patient_type_label})",
-                    f"Servicio: {products_name or 'Por definir'}",
-                    f"Motivo: {motivo_consulta or 'No especificado'}",
-                    f"Seguro: {seguro_de_vida or 'Ninguno'}",
-                    f"Estado seguro: {estado_seguro or 'No verificado'}",
-                    f"Doctor: {nombre_doctor or str(doctor_id)}",
-                ]
-                if not is_for_self and nombre_paciente_de_otra_persona:
-                    comment_lines.append(f"Solicitado por: {person_name}")
 
-                activity_body: dict = {
-                    "lead_id": lead_id,
-                    "title": f"{appointment_patient} - {products_name or 'Consulta'}",
-                    "type": "meeting",
-                    "schedule_from": schedule_from,
-                    "schedule_to": schedule_to,
-                    "location": "Consultorio",
-                    "comment": "\n".join(comment_lines),
-                    "participants": {
-                        "persons": [str(person_id)],
-                        "users": ["1"],
-                        "doctors": [str(doctor_id)],
-                    },
+@tool
+async def create_appointment(
+    wa_id: str,
+    doctor_id: int,
+    horario_cita: str,
+    nombre_doctor: Optional[str] = None,
+    products_name: Optional[str] = None,
+    products_product_id: Optional[int] = None,
+    motivo_consulta: Optional[str] = None,
+    seguro_de_vida: Optional[str] = None,
+    estado_seguro: Optional[str] = None,
+    is_for_self: bool = True,
+    nombre_paciente_de_otra_persona: Optional[str] = None,
+    edad_paciente: Optional[int] = None,
+    edad_paciente_de_otra_persona: Optional[int] = None,
+    person_name: Optional[str] = None,
+    person_phone: Optional[str] = None,
+) -> str:
+    """Create the appointment (meeting activity) in the CRM. ONE action: book the cita.
+
+    Only call this AFTER the patient explicitly confirmed. It moves the lead to the scheduled
+    stage and creates the meeting for the chosen doctor and slot. It is idempotent: a retried
+    call for a slot already booked on the lead does not create a duplicate.
+
+    Args:
+        wa_id: WhatsApp ID of the contact (e.g. '591XXXXXXXX').
+        doctor_id: Numeric ID of the chosen doctor from get_doctors().
+        horario_cita: Appointment datetime in format 'DD/MM/YYYY HH:MM'.
+        nombre_doctor: Doctor display name.
+        products_name: Service/product name chosen by patient.
+        products_product_id: Numeric ID of the product from get_services().
+        motivo_consulta: Patient's reason for visit or main complaint.
+        seguro_de_vida: Insurance name (for the appointment comment).
+        estado_seguro: Insurance status (for the appointment comment).
+        is_for_self: True if the appointment is for the WhatsApp sender; False if for another person.
+        nombre_paciente_de_otra_persona: Name if booking for someone else.
+        edad_paciente: Age of the person writing (primary patient).
+        edad_paciente_de_otra_persona: Age if booking for someone else.
+        person_name: Full name of the person writing.
+        person_phone: Phone number digits only. If omitted, falls back to wa_id.
+    """
+    person_name, person_phone = _resolve_name_phone(wa_id, person_name, person_phone)
+    log = logger.bind(wa_id=wa_id, person_name=person_name)
+
+    if not (horario_cita and doctor_id):
+        return json.dumps({
+            "success": False,
+            "appointment_registered": False,
+            "error_type": "missing_appointment_fields",
+            "message": "Faltan el doctor o el horario para crear la cita.",
+        })
+
+    schedule_from, schedule_to = _parse_appointment_datetime(horario_cita)
+    if not schedule_from:
+        return json.dumps({
+            "success": False,
+            "appointment_registered": False,
+            "error_type": "invalid_appointment_datetime",
+            "message": "No se pudo interpretar la fecha y hora de la cita.",
+        })
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            person_id, lead_id = await _resolve_person_and_lead(client, wa_id, person_name, person_phone)
+            if not (person_id and lead_id):
+                return json.dumps({
+                    "success": False,
+                    "appointment_registered": False,
+                    "error": "could not obtain person/lead id",
+                })
+
+            # Move the lead to the scheduled stage and attach the chosen product.
+            update_body: dict[str, Any] = {
+                "title": person_name,
+                "description": f"{products_name or ''} - {nombre_doctor or ''}",
+                "lead_value": 0,
+                "lead_pipeline_stage_id": _LEAD_STAGE_AGENDADO,
+                "lead_source_id": 6,
+                "lead_type_id": 1,
+                "user_id": _pick_agent_user(),
+                "expected_close_date": (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d"),
+                "person": {"name": person_name, "id": str(person_id)},
+                "entity_type": "leads",
+            }
+            if products_name and products_product_id:
+                update_body["products"] = {
+                    "product_0": {
+                        "name": products_name,
+                        "product_id": str(products_product_id),
+                        "price": "0",
+                        "quantity": 1,
+                    }
                 }
-                if products_product_id is not None:
-                    activity_body["product_id"] = products_product_id
-                act_resp = await client.post(
-                    f"{_BASE}/api/v1/activities",
-                    json=activity_body,
-                    headers=_HEADERS,
-                )
-                if act_resp.status_code == 422:
-                    try:
-                        error_detail = act_resp.json()
-                    except Exception:
-                        error_detail = {"message": act_resp.text}
-                    log.error("crm_activity_422", body=activity_body, response=act_resp.text)
-                    return json.dumps({
-                        "success": False,
-                        "appointment_registered": False,
-                        "error_type": "appointment_conflict",
-                        "message": error_detail.get("message", "No se pudo registrar la cita."),
-                        "person_id": person_id,
-                        "lead_id": lead_id,
-                    })
-                act_resp.raise_for_status()
-                appointment_registered = True
-                log.info("crm_activity_created", lead_id=lead_id, schedule=schedule_from)
+            upd_resp = await client.put(f"{_BASE}/api/v1/leads/{lead_id}", json=update_body, headers=_HEADERS)
+            upd_resp.raise_for_status()
+            log.info("crm_lead_updated", lead_id=lead_id)
 
+            # Idempotency guard: if a meeting for this exact slot already exists on the lead,
+            # do not create a second one. Protects against a retried confirmation where the
+            # previous POST succeeded but its response was lost (patient re-sent "SÍ").
+            duplicate_id = await _find_duplicate_meeting_id(client, lead_id, schedule_from)
+            if duplicate_id is not None:
+                log.info("crm_activity_duplicate_skipped", lead_id=lead_id, activity_id=duplicate_id, schedule=schedule_from)
+                return json.dumps({
+                    "success": True,
+                    "person_id": person_id,
+                    "lead_id": lead_id,
+                    "appointment_registered": True,
+                    "activity_id": duplicate_id,
+                    "idempotent": True,
+                })
+
+            appointment_patient = nombre_paciente_de_otra_persona if not is_for_self else person_name
+            patient_type_label = "Tercero" if not is_for_self else "Mismo paciente"
+            comment_lines = [
+                f"Paciente: {appointment_patient} ({patient_type_label})",
+                f"Servicio: {products_name or 'Por definir'}",
+                f"Motivo: {motivo_consulta or 'No especificado'}",
+                f"Seguro: {seguro_de_vida or 'Ninguno'}",
+                f"Estado seguro: {estado_seguro or 'No verificado'}",
+                f"Doctor: {nombre_doctor or str(doctor_id)}",
+            ]
+            if not is_for_self and nombre_paciente_de_otra_persona:
+                comment_lines.append(f"Solicitado por: {person_name}")
+            # edad params are accepted for a complete signature; the age lives on the person/lead
+            # via save_patient, so it is not duplicated in the appointment body.
+            _ = (edad_paciente, edad_paciente_de_otra_persona)
+
+            activity_body: dict = {
+                "lead_id": lead_id,
+                "title": f"{appointment_patient} - {products_name or 'Consulta'}",
+                "type": "meeting",
+                "schedule_from": schedule_from,
+                "schedule_to": schedule_to,
+                "location": "Consultorio",
+                "comment": "\n".join(comment_lines),
+                "participants": {
+                    "persons": [str(person_id)],
+                    "users": ["1"],
+                    "doctors": [str(doctor_id)],
+                },
+            }
+            if products_product_id is not None:
+                activity_body["product_id"] = products_product_id
+            act_resp = await client.post(f"{_BASE}/api/v1/activities", json=activity_body, headers=_HEADERS)
+            if act_resp.status_code == 422:
+                try:
+                    error_detail = act_resp.json()
+                except Exception:
+                    error_detail = {"message": act_resp.text}
+                log.error("crm_activity_422", body=activity_body, response=act_resp.text)
+                return json.dumps({
+                    "success": False,
+                    "appointment_registered": False,
+                    "error_type": "appointment_conflict",
+                    "message": error_detail.get("message", "No se pudo registrar la cita."),
+                    "person_id": person_id,
+                    "lead_id": lead_id,
+                })
+            act_resp.raise_for_status()
+            log.info("crm_activity_created", lead_id=lead_id, schedule=schedule_from)
             return json.dumps({
-                "success": (not es_cita_confirmada) or appointment_registered,
+                "success": True,
                 "person_id": person_id,
                 "lead_id": lead_id,
-                "appointment_registered": appointment_registered,
+                "appointment_registered": True,
             })
 
     except Exception as e:
-        log.exception("update_crm_failed", error=str(e))
-        return json.dumps({"success": False, "error": str(e)})
+        log.exception("create_appointment_failed", error=str(e))
+        return json.dumps({"success": False, "appointment_registered": False, "error": str(e)})
 
 
 async def _find_person_and_lead(
@@ -669,6 +745,20 @@ async def cancel_appointment(wa_id: str) -> dict[str, Any]:
     except Exception as e:
         log.exception("cancel_appointment_failed", error=str(e))
         return {"success": False, "error": str(e)}
+
+
+@tool
+async def cancel_appointment_tool(wa_id: str) -> str:
+    """Cancel the patient's latest appointment. ONE action: cancel the cita.
+
+    Deletes the most recent upcoming meeting and moves the lead to the cancelled stage. Only
+    call this when the patient explicitly asked to cancel and confirmed.
+
+    Args:
+        wa_id: WhatsApp ID of the patient (e.g. '591XXXXXXXX').
+    """
+    result = await cancel_appointment(wa_id)
+    return json.dumps(result, ensure_ascii=False)
 
 
 async def rename_person(wa_id: str, new_name: str) -> dict[str, Any]:

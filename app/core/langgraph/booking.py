@@ -23,7 +23,12 @@ from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from app.core.langgraph.molestia_classifier import classify_molestia
-from app.core.langgraph.tools.crm import cancel_appointment, update_crm
+from app.core.langgraph.tools.crm import (
+    cancel_appointment,
+    create_appointment,
+    save_insurance,
+    save_patient,
+)
 from app.core.langgraph.tools.odontoking import (
     get_doctor_schedule,
     get_doctors,
@@ -110,9 +115,53 @@ async def _fetch_schedule(doctor_id: int) -> list[dict]:
     return [d for d in sched if isinstance(d, dict)] if isinstance(sched, list) else []
 
 
-async def _book_crm(payload: dict) -> dict:
+async def _book_crm(state: dict) -> dict:
+    """Persist the booking via the atomic CRM tools: patient → insurance → appointment.
+
+    Each step is a single-action tool (save_patient, save_insurance, create_appointment) so the
+    deterministic flow composes the same atomic tools the LLM uses. Returns the appointment
+    result (success / appointment_registered), which drives the confirmation message.
+    """
+    name = crm_display_name(state.get("nombre_whatsapp"), state.get("nombre"))
+    is_for_self = bool(state.get("is_for_self"))
+    tercero_nombre = state.get("tercero_nombre") if state.get("is_for_self") is False else None
+    tercero_edad = state.get("tercero_edad") if state.get("is_for_self") is False else None
+    has_seguro = bool(state.get("seguro")) and state.get("seguro") != "No tengo seguro"
     try:
-        raw = await update_crm.ainvoke(payload)
+        await save_patient.ainvoke({
+            "wa_id": state.get("wa_id"),
+            "person_name": name,
+            "person_phone": state.get("wa_id"),
+            "edad_paciente": state.get("edad"),
+            "is_for_self": is_for_self,
+            "nombre_paciente_de_otra_persona": tercero_nombre,
+            "edad_paciente_de_otra_persona": tercero_edad,
+        })
+        if has_seguro:
+            await save_insurance.ainvoke({
+                "wa_id": state.get("wa_id"),
+                "person_name": name,
+                "seguro_de_vida": state.get("seguro"),
+                "numero_carnet": state.get("ci"),
+                "estado_seguro": state.get("seguro_estado"),
+            })
+        raw = await create_appointment.ainvoke({
+            "wa_id": state.get("wa_id"),
+            "person_name": name,
+            "person_phone": state.get("wa_id"),
+            "doctor_id": state.get("doctor_id"),
+            "nombre_doctor": state.get("doctor_name"),
+            "horario_cita": f"{_fmt_date(state.get('chosen_date'))} {_fmt_time(state.get('chosen_start'))}",
+            "products_name": state.get("service_name"),
+            "products_product_id": state.get("service_id"),
+            "motivo_consulta": state.get("motivo"),
+            "seguro_de_vida": state.get("seguro") if has_seguro else None,
+            "estado_seguro": state.get("seguro_estado"),
+            "is_for_self": is_for_self,
+            "nombre_paciente_de_otra_persona": tercero_nombre,
+            "edad_paciente": state.get("edad"),
+            "edad_paciente_de_otra_persona": tercero_edad,
+        })
         return json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return {"success": False, "appointment_registered": False}
@@ -384,34 +433,6 @@ def _enter_confirmar_phase(state: dict) -> BookingResult:
     return BookingResult(state, "\n".join(lines), False)
 
 
-def _crm_payload(state: dict) -> dict:
-    payload: dict = {
-        "wa_id": state.get("wa_id"),
-        "person_name": crm_display_name(state.get("nombre_whatsapp"), state.get("nombre")),
-        "person_phone": state.get("wa_id"),
-        "edad_paciente": state.get("edad"),
-        "is_for_self": bool(state.get("is_for_self")),
-        "paciente_antiguo": bool(state.get("es_antiguo")),
-        "motivo_consulta": state.get("motivo"),
-        "doctor_id": state.get("doctor_id"),
-        "nombre_doctor": state.get("doctor_name"),
-        "horario_cita": f"{_fmt_date(state.get('chosen_date'))} {_fmt_time(state.get('chosen_start'))}",
-        "es_cita_confirmada": True,
-    }
-    if state.get("service_name"):
-        payload["products_name"] = state["service_name"]
-    if state.get("service_id"):
-        payload["products_product_id"] = state["service_id"]
-    if state.get("is_for_self") is False:
-        payload["nombre_paciente_de_otra_persona"] = state.get("tercero_nombre")
-        payload["edad_paciente_de_otra_persona"] = state.get("tercero_edad")
-    if state.get("seguro") and state.get("seguro") != "No tengo seguro":
-        payload["seguro_de_vida"] = state.get("seguro")
-        payload["numero_carnet"] = state.get("ci")
-        payload["estado_seguro"] = state.get("seguro_estado")
-    return payload
-
-
 async def _revalidate_slot(state: dict) -> Optional[BookingResult]:
     """Re-check, at confirmation time, that the chosen slot is still free.
 
@@ -488,7 +509,7 @@ async def _do_booking(state: dict) -> BookingResult:
         if not cancel.get("success"):
             logger.warning("reschedule_cancel_previous_failed", wa_id=state.get("wa_id"), result=cancel)
 
-    result = await _book_crm(_crm_payload(state))
+    result = await _book_crm(state)
     if not (result.get("success") and result.get("appointment_registered")):
         logger.warning("booking_crm_not_registered", wa_id=state.get("wa_id"), result=result)
         return BookingResult(

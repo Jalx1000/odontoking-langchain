@@ -50,7 +50,10 @@
       "Bash(railway list *)",
       "Bash(railway link *)",
       "Bash(railway status *)",
-      "Bash(railway variables *)"
+      "Bash(railway variables *)",
+      "Read(//Users/javier/.local/bin/**)",
+      "Read(//Users/javier/.cargo/bin/**)",
+      "Bash(find / -name uv -type f)"
     ]
   }
 }

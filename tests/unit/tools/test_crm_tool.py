@@ -1,4 +1,4 @@
-"""Unit tests for the Sofopolis CRM tools (update_crm, get_citas)."""
+"""Unit tests for the Sofopolis CRM tools (save_patient, save_insurance, create_appointment, get_citas)."""
 
 import json
 from datetime import datetime
@@ -52,7 +52,9 @@ ACTIVITY_CREATED = _make_response(201, {"data": {"id": 1}})
 ACTIVITIES_EMPTY = _r({"data": []})
 
 
-class TestUpdateCrm:
+class TestSavePatient:
+    """save_patient persists ONLY the patient identity/demographics (person + lead attrs)."""
+
     def _base_args(self, **overrides) -> dict:
         args = {
             "wa_id": "591700000000",
@@ -64,7 +66,7 @@ class TestUpdateCrm:
 
     @pytest.mark.asyncio
     async def test_creates_new_person_and_lead(self):
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import save_patient
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
@@ -73,14 +75,14 @@ class TestUpdateCrm:
             client.put = AsyncMock(return_value=_make_response(200, {}))
             cls.return_value = client
 
-            result = json.loads(await update_crm.ainvoke(self._base_args()))
+            result = json.loads(await save_patient.ainvoke(self._base_args()))
             assert result["success"] is True
             assert result["person_id"] == 99
             assert result["lead_id"] == 77
 
     @pytest.mark.asyncio
-    async def test_finds_existing_person_and_updates_lead(self):
-        from app.core.langgraph.tools.crm import update_crm
+    async def test_finds_existing_person_and_lead(self):
+        from app.core.langgraph.tools.crm import save_patient
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
@@ -89,45 +91,16 @@ class TestUpdateCrm:
             client.put = AsyncMock(return_value=LEAD_UPDATED)
             cls.return_value = client
 
-            result = json.loads(await update_crm.ainvoke(self._base_args()))
+            result = json.loads(await save_patient.ainvoke(self._base_args()))
             assert result["success"] is True
             assert result["person_id"] == 99
             assert result["lead_id"] == 77
-            # PUT was called for lead update (not POST for lead create)
-            assert client.put.called
+            # An existing lead is reused, never created
+            client.post.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_creates_activity_when_appointment_confirmed(self):
-        from app.core.langgraph.tools.crm import update_crm
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, ACTIVITIES_EMPTY])
-            client.put = AsyncMock(return_value=_make_response(200, {}))
-            client.post = AsyncMock(return_value=ACTIVITY_CREATED)
-            cls.return_value = client
-
-            result = json.loads(
-                await update_crm.ainvoke(
-                    self._base_args(
-                        doctor_id=5,
-                        horario_cita="15/05/2026 09:00",
-                        es_cita_confirmada=True,
-                        products_name="Limpieza",
-                        products_product_id=1,
-                    )
-                )
-            )
-            assert result["success"] is True
-            assert result["appointment_registered"] is True
-            assert result.get("idempotent") is not True
-            # POST must have been called for the activity endpoint
-            activity_call_args = client.post.call_args
-            assert "activities" in activity_call_args[0][0]
-
-    @pytest.mark.asyncio
-    async def test_no_activity_when_not_confirmed(self):
-        from app.core.langgraph.tools.crm import update_crm
+    async def test_persists_age_on_person_record(self):
+        from app.core.langgraph.tools.crm import save_patient
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
@@ -136,75 +109,128 @@ class TestUpdateCrm:
             client.post = AsyncMock(return_value=_make_response(201, {}))
             cls.return_value = client
 
-            result = json.loads(
-                await update_crm.ainvoke(
-                    self._base_args(
-                        doctor_id=5,
-                        horario_cita="15/05/2026 09:00",
-                        es_cita_confirmada=False,
-                    )
-                )
-            )
-            assert result["appointment_registered"] is False
+            result = json.loads(await save_patient.ainvoke(self._base_args(edad_paciente=34)))
+            assert result["success"] is True
+            person_puts = [c for c in client.put.call_args_list if "contacts/persons" in c[0][0]]
+            assert person_puts, "age must be PUT to the person record"
+            assert person_puts[0].kwargs["json"]["job_title"] == "34"
 
     @pytest.mark.asyncio
-    async def test_confirmed_appointment_with_invalid_datetime_returns_error(self):
-        from app.core.langgraph.tools.crm import update_crm
+    async def test_tercero_data_written_to_lead_attributes(self):
+        from app.core.langgraph.tools.crm import save_patient
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
             client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
             client.put = AsyncMock(return_value=_make_response(200, {}))
-            client.post = AsyncMock(return_value=_make_response(201, {"data": {"id": 1}}))
+            client.post = AsyncMock(return_value=_make_response(201, {}))
             cls.return_value = client
 
-            result = json.loads(
-                await update_crm.ainvoke(
-                    self._base_args(
-                        doctor_id=5,
-                        horario_cita="fecha-invalida",
-                        es_cita_confirmada=True,
-                    )
-                )
-            )
+            await save_patient.ainvoke(self._base_args(
+                is_for_self=False,
+                nombre_paciente_de_otra_persona="Hijo Ejemplo",
+                edad_paciente_de_otra_persona=10,
+            ))
+            attr_puts = [c for c in client.put.call_args_list if "attributes/edit" in c[0][0]]
+            assert attr_puts, "tercero data must be PUT to lead attributes"
+            body = attr_puts[-1].kwargs["json"]
+            assert body["nombre_paciente_de_otra_persona"] == "Hijo Ejemplo"
+            assert body["edad_lead"] == "10"
 
-            assert result["success"] is False
-            assert result["appointment_registered"] is False
-            assert result["error_type"] == "invalid_appointment_datetime"
+    @pytest.mark.asyncio
+    async def test_missing_name_uses_placeholder(self):
+        from app.core.langgraph.tools.crm import save_patient
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_NEW, LEADS_EMPTY])
+            client.post = AsyncMock(side_effect=[PERSON_CREATED, LEAD_CREATED])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            cls.return_value = client
+
+            await save_patient.ainvoke({"wa_id": "591700000000", "person_name": None})
+            person_post_body = client.post.call_args_list[0].kwargs["json"]
+            assert person_post_body["name"] == "Paciente WhatsApp"
+            assert person_post_body["contact_numbers"][0]["value"] == "591700000000"
 
     @pytest.mark.asyncio
     async def test_returns_error_payload_on_exception(self):
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import save_patient
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
             client.get = AsyncMock(side_effect=Exception("network down"))
             cls.return_value = client
 
-            result = json.loads(await update_crm.ainvoke(self._base_args()))
+            result = json.loads(await save_patient.ainvoke(self._base_args()))
             assert result["success"] is False
             assert "error" in result
 
+
+class TestSaveInsurance:
+    """save_insurance persists ONLY the insurance data (aseguradora + CI + estado) on the lead."""
+
+    def _base_args(self, **overrides) -> dict:
+        args = {
+            "wa_id": "591700000000",
+            "person_name": "Ana López",
+            "seguro_de_vida": "Alianza",
+        }
+        args.update(overrides)
+        return args
+
     @pytest.mark.asyncio
-    async def test_cancellation_changes_lead_stage(self):
-        from app.core.langgraph.tools.crm import update_crm
+    async def test_registers_insurance_and_ci(self):
+        from app.core.langgraph.tools.crm import save_insurance
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
             client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
             client.put = AsyncMock(return_value=_make_response(200, {}))
-            client.post = AsyncMock(return_value=_make_response(201, {}))
             cls.return_value = client
 
             result = json.loads(
-                await update_crm.ainvoke(self._base_args(es_cita_cancelada=True))
+                await save_insurance.ainvoke(self._base_args(numero_carnet="1234567", estado_seguro="VIGENTE"))
             )
             assert result["success"] is True
-            # PUT must be called for stage change (lead/stage/edit/{id})
-            stage_calls = [
-                c for c in client.put.call_args_list if "stage" in c[0][0]
-            ]
-            assert len(stage_calls) == 1
+            assert result["lead_id"] == 77
+            insurance_puts = [c for c in client.put.call_args_list if c.kwargs.get("json", {}).get("insurance")]
+            assert insurance_puts and insurance_puts[0].kwargs["json"]["insurance"] == [1]
+            ci_puts = [c for c in client.put.call_args_list if "ci" in c.kwargs.get("json", {})]
+            assert ci_puts and ci_puts[0].kwargs["json"]["ci"] == "1234567"
+            assert ci_puts[0].kwargs["json"]["estado_seguro_paciente_cita"] == "VIGENTE"
+
+    @pytest.mark.asyncio
+    async def test_unknown_insurer_still_writes_ci(self):
+        from app.core.langgraph.tools.crm import save_insurance
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            cls.return_value = client
+
+            result = json.loads(
+                await save_insurance.ainvoke(self._base_args(seguro_de_vida="Desconocida", numero_carnet="999"))
+            )
+            assert result["success"] is True
+            insurance_puts = [c for c in client.put.call_args_list if c.kwargs.get("json", {}).get("insurance")]
+            assert not insurance_puts  # unknown insurer → no insurance-id PUT
+            ci_puts = [c for c in client.put.call_args_list if "ci" in c.kwargs.get("json", {})]
+            assert ci_puts
+
+    @pytest.mark.asyncio
+    async def test_returns_error_payload_on_exception(self):
+        from app.core.langgraph.tools.crm import save_insurance
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=Exception("boom"))
+            cls.return_value = client
+
+            result = json.loads(await save_insurance.ainvoke(self._base_args()))
+            assert result["success"] is False
+            assert "error" in result
 
 
 class TestParseAppointmentDatetime:
@@ -244,17 +270,16 @@ class TestParseAppointmentDatetime:
         assert delta == 3600
 
 
-class TestUpdateCrmActivity422:
-    """Appointment 422 responses must be returned gracefully, never raise."""
+class TestCreateAppointment:
+    """create_appointment books the cita: moves the lead to scheduled + creates the meeting."""
 
-    def _confirmed_args(self, **overrides) -> dict:
+    def _args(self, **overrides) -> dict:
         args = {
             "wa_id": "591700000000",
             "person_name": "Ana López",
             "person_phone": "591700000000",
             "doctor_id": 19,
             "horario_cita": "15/05/2026 09:00",
-            "es_cita_confirmada": True,
             "products_name": "Limpieza",
             "products_product_id": 174,
         }
@@ -262,9 +287,62 @@ class TestUpdateCrmActivity422:
         return args
 
     @pytest.mark.asyncio
+    async def test_creates_activity(self):
+        """Happy path: lead is updated and the meeting activity is POSTed."""
+        from app.core.langgraph.tools.crm import create_appointment
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, ACTIVITIES_EMPTY])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            client.post = AsyncMock(return_value=ACTIVITY_CREATED)
+            cls.return_value = client
+
+            result = json.loads(await create_appointment.ainvoke(self._args()))
+            assert result["success"] is True
+            assert result["appointment_registered"] is True
+            assert result.get("idempotent") is not True
+            assert any("activities" in c[0][0] for c in client.post.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_invalid_datetime_returns_error(self):
+        """An unparsable datetime returns an error before any HTTP call."""
+        from app.core.langgraph.tools.crm import create_appointment
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
+            client.put = AsyncMock(return_value=_make_response(200, {}))
+            client.post = AsyncMock(return_value=_make_response(201, {"data": {"id": 1}}))
+            cls.return_value = client
+
+            result = json.loads(await create_appointment.ainvoke(self._args(horario_cita="fecha-invalida")))
+            assert result["success"] is False
+            assert result["appointment_registered"] is False
+            assert result["error_type"] == "invalid_appointment_datetime"
+            client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_time_returns_error(self):
+        """A missing/blank horario returns a guard error and never touches the API."""
+        from app.core.langgraph.tools.crm import create_appointment
+
+        with patch("httpx.AsyncClient") as cls:
+            client = _async_client_ctx(AsyncMock())
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH])
+            client.post = AsyncMock(return_value=_make_response(201, {}))
+            cls.return_value = client
+
+            result = json.loads(await create_appointment.ainvoke(self._args(horario_cita="")))
+            assert result["success"] is False
+            assert result["appointment_registered"] is False
+            assert result["error_type"] == "missing_appointment_fields"
+            client.post.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_422_doctor_conflict_returns_graceful_error(self):
         """When doctor is already booked (422), tool returns error payload without raising."""
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import create_appointment
 
         conflict_resp = MagicMock()
         conflict_resp.status_code = 422
@@ -282,7 +360,7 @@ class TestUpdateCrmActivity422:
             client.post = AsyncMock(return_value=conflict_resp)
             cls.return_value = client
 
-            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+            result = json.loads(await create_appointment.ainvoke(self._args()))
 
         assert result["success"] is False
         assert result["appointment_registered"] is False
@@ -290,37 +368,9 @@ class TestUpdateCrmActivity422:
         assert "doctor" in result["message"].lower() or "cita" in result["message"].lower()
 
     @pytest.mark.asyncio
-    async def test_422_sharemedata_auth_failure_returns_graceful_error(self):
-        """When ShareMeData auth fails (422), tool returns error payload without raising."""
-        from app.core.langgraph.tools.crm import update_crm
-
-        smd_resp = MagicMock()
-        smd_resp.status_code = 422
-        smd_resp.text = '{"message":"Error al registrar la cita en ShareMeData. La cita no fue creada.","details":{"smd_response":{"success":false,"message":"@error.authenticationFailed","status":401}}}'
-        smd_resp.json.return_value = {
-            "message": "Error al registrar la cita en ShareMeData. La cita no fue creada.",
-            "details": {"smd_response": {"success": False, "message": "@error.authenticationFailed", "status": 401}},
-        }
-        smd_resp.raise_for_status = MagicMock()
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, ACTIVITIES_EMPTY])
-            client.put = AsyncMock(return_value=_make_response(200, {}))
-            client.post = AsyncMock(return_value=smd_resp)
-            cls.return_value = client
-
-            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
-
-        assert result["success"] is False
-        assert result["appointment_registered"] is False
-        assert result["error_type"] == "appointment_conflict"
-        assert "ShareMeData" in result["message"] or "registrar" in result["message"]
-
-    @pytest.mark.asyncio
     async def test_422_preserves_person_and_lead_ids(self):
         """Even on 422, person_id and lead_id are returned so the agent has context."""
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import create_appointment
 
         conflict_resp = MagicMock()
         conflict_resp.status_code = 422
@@ -335,23 +385,22 @@ class TestUpdateCrmActivity422:
             client.post = AsyncMock(return_value=conflict_resp)
             cls.return_value = client
 
-            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+            result = json.loads(await create_appointment.ainvoke(self._args()))
 
         assert result.get("person_id") == 99
         assert result.get("lead_id") == 77
 
 
-class TestUpdateCrmIdempotency:
+class TestCreateAppointmentIdempotency:
     """A confirmed appointment must not create a duplicate meeting for a slot already booked."""
 
-    def _confirmed_args(self, **overrides) -> dict:
+    def _args(self, **overrides) -> dict:
         args = {
             "wa_id": "591700000000",
             "person_name": "Ana López",
             "person_phone": "591700000000",
             "doctor_id": 5,
             "horario_cita": "15/05/2026 09:00",
-            "es_cita_confirmada": True,
             "products_name": "Limpieza",
             "products_product_id": 1,
         }
@@ -361,7 +410,7 @@ class TestUpdateCrmIdempotency:
     @pytest.mark.asyncio
     async def test_existing_meeting_same_slot_skips_creation(self):
         """A retried confirmation for an already-booked slot returns idempotent, no new POST."""
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import create_appointment
 
         existing = _r({"data": [
             {"id": 42, "type": "meeting", "schedule_from": "2026-05-15 09:00:00", "is_done": 0},
@@ -373,7 +422,7 @@ class TestUpdateCrmIdempotency:
             client.post = AsyncMock(return_value=ACTIVITY_CREATED)
             cls.return_value = client
 
-            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+            result = json.loads(await create_appointment.ainvoke(self._args()))
 
         assert result["success"] is True
         assert result["appointment_registered"] is True
@@ -385,7 +434,7 @@ class TestUpdateCrmIdempotency:
     @pytest.mark.asyncio
     async def test_existing_meeting_different_slot_still_creates(self):
         """A meeting at a different time does not block booking the requested slot."""
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import create_appointment
 
         other = _r({"data": [
             {"id": 42, "type": "meeting", "schedule_from": "2026-05-16 11:00:00", "is_done": 0},
@@ -397,7 +446,7 @@ class TestUpdateCrmIdempotency:
             client.post = AsyncMock(return_value=ACTIVITY_CREATED)
             cls.return_value = client
 
-            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+            result = json.loads(await create_appointment.ainvoke(self._args()))
 
         assert result["appointment_registered"] is True
         assert result.get("idempotent") is not True
@@ -406,7 +455,7 @@ class TestUpdateCrmIdempotency:
     @pytest.mark.asyncio
     async def test_done_meeting_same_slot_does_not_block(self):
         """A completed (is_done) meeting at the same time is a past visit, not a duplicate."""
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import create_appointment
 
         done = _r({"data": [
             {"id": 42, "type": "meeting", "schedule_from": "2026-05-15 09:00:00", "is_done": 1},
@@ -418,7 +467,7 @@ class TestUpdateCrmIdempotency:
             client.post = AsyncMock(return_value=ACTIVITY_CREATED)
             cls.return_value = client
 
-            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+            result = json.loads(await create_appointment.ainvoke(self._args()))
 
         assert result["appointment_registered"] is True
         assert result.get("idempotent") is not True
@@ -427,7 +476,7 @@ class TestUpdateCrmIdempotency:
     @pytest.mark.asyncio
     async def test_dup_check_failure_falls_open_and_creates(self):
         """If the activities lookup errors, booking proceeds (never blocked by the guard)."""
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import create_appointment
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
@@ -436,7 +485,7 @@ class TestUpdateCrmIdempotency:
             client.post = AsyncMock(return_value=ACTIVITY_CREATED)
             cls.return_value = client
 
-            result = json.loads(await update_crm.ainvoke(self._confirmed_args()))
+            result = json.loads(await create_appointment.ainvoke(self._args()))
 
         assert result["appointment_registered"] is True
         assert any("activities" in c[0][0] for c in client.post.call_args_list)
@@ -593,12 +642,12 @@ class TestGetCitas:
             assert "error" in result
 
 
-class TestUpdateCrmMissingPersonFields:
-    """Regression: update_crm must not raise ValidationError when person_name/person_phone are omitted.
+class TestSaveInsuranceFallbacks:
+    """Regression: save_insurance must not raise when person_name/person_phone are omitted.
 
-    Root cause: LLM called update_crm after verify_insurance with only insurance fields,
-    omitting the required person_name and person_phone, causing a Pydantic ValidationError
-    that silently dropped the entire CRM write.
+    Root cause pattern: the LLM calls save_insurance after verify_insurance with only insurance
+    fields, omitting person_name/person_phone. The tool must fall back to the placeholder name
+    and wa_id-as-phone instead of dropping the write.
     """
 
     def _insurance_only_args(self, **overrides) -> dict:
@@ -613,7 +662,7 @@ class TestUpdateCrmMissingPersonFields:
 
     @pytest.mark.asyncio
     async def test_omitting_person_name_and_phone_does_not_raise(self):
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import save_insurance
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
@@ -622,12 +671,12 @@ class TestUpdateCrmMissingPersonFields:
             client.put = AsyncMock(return_value=_make_response(200, {}))
             cls.return_value = client
 
-            result = json.loads(await update_crm.ainvoke(self._insurance_only_args()))
+            result = json.loads(await save_insurance.ainvoke(self._insurance_only_args()))
             assert result["success"] is True
 
     @pytest.mark.asyncio
     async def test_person_name_none_does_not_raise(self):
-        from app.core.langgraph.tools.crm import update_crm
+        from app.core.langgraph.tools.crm import save_insurance
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
@@ -637,13 +686,13 @@ class TestUpdateCrmMissingPersonFields:
             cls.return_value = client
 
             result = json.loads(
-                await update_crm.ainvoke(self._insurance_only_args(person_name=None, person_phone=None))
+                await save_insurance.ainvoke(self._insurance_only_args(person_name=None, person_phone=None))
             )
             assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_fallback_name_paciente_whatsapp_used_in_crm_post(self):
-        from app.core.langgraph.tools.crm import update_crm
+    async def test_fallback_name_and_phone_used_in_person_post(self):
+        from app.core.langgraph.tools.crm import save_insurance
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
@@ -652,64 +701,37 @@ class TestUpdateCrmMissingPersonFields:
             client.put = AsyncMock(return_value=_make_response(200, {}))
             cls.return_value = client
 
-            await update_crm.ainvoke(self._insurance_only_args())
+            await save_insurance.ainvoke(self._insurance_only_args())
 
-            person_post_body = client.post.call_args_list[0][1]["json"]
+            person_post_body = client.post.call_args_list[0].kwargs["json"]
             assert person_post_body["name"] == "Paciente WhatsApp"
+            assert person_post_body["contact_numbers"][0]["value"] == "59176616013"
+
+
+class TestCancelAppointmentTool:
+    """The @tool wrapper returns cancel_appointment's result as a JSON string."""
+
+    _ACTIVITIES = _r({
+        "data": [
+            {"id": 5, "type": "meeting", "schedule_from": "2026-06-23 14:30:00", "is_done": 0},
+        ]
+    })
 
     @pytest.mark.asyncio
-    async def test_fallback_phone_uses_wa_id_when_phone_absent(self):
-        from app.core.langgraph.tools.crm import update_crm
-
-        wa_id = "59176616013"
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_NEW, LEADS_EMPTY])
-            client.post = AsyncMock(side_effect=[PERSON_CREATED, LEAD_CREATED])
-            client.put = AsyncMock(return_value=_make_response(200, {}))
-            cls.return_value = client
-
-            await update_crm.ainvoke(self._insurance_only_args(wa_id=wa_id))
-
-            person_post_body = client.post.call_args_list[0][1]["json"]
-            assert person_post_body["contact_numbers"][0]["value"] == wa_id
-
-    @pytest.mark.asyncio
-    async def test_empty_string_person_name_uses_fallback(self):
-        from app.core.langgraph.tools.crm import update_crm
+    async def test_returns_json_string_success(self):
+        from app.core.langgraph.tools.crm import cancel_appointment_tool
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_NEW, LEADS_EMPTY])
-            client.post = AsyncMock(side_effect=[PERSON_CREATED, LEAD_CREATED])
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, self._ACTIVITIES])
+            client.delete = AsyncMock(return_value=_make_response(200, {}))
             client.put = AsyncMock(return_value=_make_response(200, {}))
             cls.return_value = client
 
-            await update_crm.ainvoke(self._insurance_only_args(person_name="", person_phone=""))
-
-            person_post_body = client.post.call_args_list[0][1]["json"]
-            assert person_post_body["name"] == "Paciente WhatsApp"
-
-    @pytest.mark.asyncio
-    async def test_no_regression_with_valid_name_and_phone(self):
-        from app.core.langgraph.tools.crm import update_crm
-
-        with patch("httpx.AsyncClient") as cls:
-            client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_NEW, LEADS_EMPTY])
-            client.post = AsyncMock(side_effect=[PERSON_CREATED, LEAD_CREATED])
-            client.put = AsyncMock(return_value=_make_response(200, {}))
-            cls.return_value = client
-
-            await update_crm.ainvoke(
-                self._insurance_only_args(
-                    person_name="Javier Alejandro Mogro Peñafiel",
-                    person_phone="59176616013",
-                )
-            )
-
-            person_post_body = client.post.call_args_list[0][1]["json"]
-            assert person_post_body["name"] == "Javier Alejandro Mogro Peñafiel"
+            raw = await cancel_appointment_tool.ainvoke({"wa_id": "591700000000"})
+            result = json.loads(raw)
+            assert result["success"] is True
+            assert result["deleted_activity_id"] == 5
 
 
 class TestRealNameOrNone:

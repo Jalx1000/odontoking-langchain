@@ -46,7 +46,14 @@ from pydantic import SecretStr
 from app.core.config import settings
 from app.services.database import database_service
 from app.core.langgraph.tools.ask_human import ask_human
-from app.core.langgraph.tools.crm import get_citas, sync_transcript_to_crm, update_crm
+from app.core.langgraph.tools.crm import (
+    cancel_appointment_tool,
+    create_appointment,
+    get_citas,
+    save_insurance,
+    save_patient,
+    sync_transcript_to_crm,
+)
 from app.core.langgraph.tools.insurance import verify_insurance
 from app.core.langgraph.tools.odontoking import (
     get_doctor_schedule,
@@ -85,7 +92,10 @@ _ODONTOKING_TOOLS = [
     get_doctors,
     get_doctor_schedule,
     verify_insurance,
-    update_crm,
+    save_patient,
+    save_insurance,
+    create_appointment,
+    cancel_appointment_tool,
     get_citas,
     sync_transcript_to_crm,
     ask_human,
@@ -419,26 +429,34 @@ class OdontokingAgent:
         return result.reply, None
 
     def _persist_intake_crm(self, wa_id: str, state: dict) -> None:
-        """Fire-and-forget CRM capture of the intake data (lead + person + insurance)."""
+        """Fire-and-forget CRM capture of the intake data (person + insurance).
+
+        Uses the atomic tools: save_patient for identity/demographics and save_insurance for the
+        insurance data — no appointment is created here (that happens at confirmation).
+        """
 
         async def _do() -> None:
             try:
-                payload: dict = {
+                name = crm_display_name(state.get("nombre_whatsapp"), state.get("nombre"))
+                patient_payload: dict = {
                     "wa_id": wa_id,
-                    "person_name": crm_display_name(state.get("nombre_whatsapp"), state.get("nombre")),
+                    "person_name": name,
+                    "person_phone": wa_id,
                     "edad_paciente": state.get("edad"),
                     "is_for_self": bool(state.get("is_for_self")),
-                    "paciente_antiguo": bool(state.get("es_antiguo")),
-                    "motivo_consulta": state.get("motivo"),
                 }
                 if state.get("is_for_self") is False:
-                    payload["nombre_paciente_de_otra_persona"] = state.get("tercero_nombre")
-                    payload["edad_paciente_de_otra_persona"] = state.get("tercero_edad")
+                    patient_payload["nombre_paciente_de_otra_persona"] = state.get("tercero_nombre")
+                    patient_payload["edad_paciente_de_otra_persona"] = state.get("tercero_edad")
+                await save_patient.ainvoke(patient_payload)
                 if state.get("seguro") and state.get("seguro") != "No tengo seguro":
-                    payload["seguro_de_vida"] = state.get("seguro")
-                    payload["numero_carnet"] = state.get("ci")
-                    payload["estado_seguro"] = state.get("seguro_estado")
-                await update_crm.ainvoke(payload)
+                    await save_insurance.ainvoke({
+                        "wa_id": wa_id,
+                        "person_name": name,
+                        "seguro_de_vida": state.get("seguro"),
+                        "numero_carnet": state.get("ci"),
+                        "estado_seguro": state.get("seguro_estado"),
+                    })
             except Exception as e:
                 logger.warning("intake_crm_persist_failed", wa_id=wa_id, error=str(e))
 
