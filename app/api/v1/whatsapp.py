@@ -11,6 +11,7 @@ import asyncio
 import json
 import time
 from collections import defaultdict
+from hashlib import sha256
 from typing import Any
 
 import httpx
@@ -57,9 +58,13 @@ _WA_RATE_MAX_MESSAGES = 20
 _seen_message_ids: dict[str, float] = {}
 _MSG_DEDUPE_TTL = 60.0  # seconds — covers Meta's full retry window
 
-_TIMEOUT_MSG = (
-    "Disculpe, la consulta está tardando más de lo esperado. "
-    "Por favor intente de nuevo en un momento 🙏."
+_WAITING_MSG = (
+    "La consulta está tardando un poco más de lo normal. "
+    "Sigo revisando y le responderé en este mismo chat en un momento 🙏."
+)
+_HARD_TIMEOUT_MSG = (
+    "Disculpe, la consulta no pudo completarse en este momento. "
+    "Por favor intente de nuevo en unos minutos 🙏."
 )
 _UNSUPPORTED_MSG = (
     "Disculpe, por el momento solo podemos recibir mensajes de texto y notas de voz 🙏. "
@@ -128,9 +133,19 @@ def _make_process_fn(
 
     async def _process(wa_id: str, text: str) -> None:
         messages = [Message(role="user", content=text)]
+        turn_id = sha256(f"{tenant.slug}:{wa_id}:{time.monotonic_ns()}:{text}".encode()).hexdigest()[:16]
+        route = "webhook_direct"
         try:
             asyncio.create_task(send_typing_indicator(wa_id, phone_number_id=pid, token=tok))
-            response_text = await asyncio.wait_for(
+            logger.info(
+                "whatsapp_agent_turn_started",
+                tenant=tenant.slug,
+                wa_id=wa_id,
+                turn_id=turn_id,
+                route=route,
+                text_preview=text[:120],
+            )
+            agent_task = asyncio.create_task(
                 agent.get_response(
                     messages,
                     wa_id=wa_id,
@@ -139,19 +154,39 @@ def _make_process_fn(
                     seguro_paciente=seguro_paciente,
                     nombre_registrado=nombre_registrado,
                     nombre_whatsapp=nombre_whatsapp,
-                ),
-                timeout=settings.LLM_TOTAL_TIMEOUT + 30,
+                )
             )
-            await send_response(wa_id, response_text, phone_number_id=pid, token=tok)
-            logger.info("whatsapp_response_sent", tenant=tenant.slug, wa_id=wa_id, preview=response_text[:60])
-        except asyncio.TimeoutError:
-            logger.warning("whatsapp_agent_timeout", tenant=tenant.slug, wa_id=wa_id)
             try:
-                await send_text_message(wa_id, _TIMEOUT_MSG, phone_number_id=pid, token=tok)
+                response_text = await asyncio.wait_for(
+                    asyncio.shield(agent_task),
+                    timeout=settings.LLM_TOTAL_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("whatsapp_agent_soft_timeout", tenant=tenant.slug, wa_id=wa_id, turn_id=turn_id)
+                await send_text_message(wa_id, _WAITING_MSG, phone_number_id=pid, token=tok)
+                response_text = await asyncio.wait_for(
+                    asyncio.shield(agent_task),
+                    timeout=settings.LLM_TOTAL_TIMEOUT + 30,
+                )
+            await send_response(wa_id, response_text, phone_number_id=pid, token=tok)
+            logger.info(
+                "whatsapp_response_sent",
+                tenant=tenant.slug,
+                wa_id=wa_id,
+                turn_id=turn_id,
+                route=route,
+                preview=response_text[:120],
+            )
+        except asyncio.TimeoutError:
+            logger.warning("whatsapp_agent_hard_timeout", tenant=tenant.slug, wa_id=wa_id, turn_id=turn_id)
+            if "agent_task" in locals():
+                agent_task.cancel()
+            try:
+                await send_text_message(wa_id, _HARD_TIMEOUT_MSG, phone_number_id=pid, token=tok)
             except Exception:
                 pass
         except Exception as e:
-            logger.exception("whatsapp_agent_error", tenant=tenant.slug, wa_id=wa_id, error=str(e))
+            logger.exception("whatsapp_agent_error", tenant=tenant.slug, wa_id=wa_id, turn_id=turn_id, error=str(e))
             try:
                 await send_text_message(wa_id, "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.", phone_number_id=pid, token=tok)
             except Exception:
@@ -303,11 +338,16 @@ async def _handle_webhook_payload(
 
                 # ── Route: external agent (RabbitMQ) vs internal agent (in-process) ─
                 if tenant.agent_endpoint_url:
+                    patient_ctx = registered_wa_ids.get(wa_id, {})
                     try:
                         await broker.publish(
                             tenant.slug,
                             wa_id,
-                            {"text": text_content, "message_id": msg.id},
+                            {
+                                "text": text_content,
+                                "message_id": msg.id,
+                                "patient_ctx": patient_ctx,
+                            },
                         )
                         logger.info(
                             "whatsapp_message_published_to_broker",

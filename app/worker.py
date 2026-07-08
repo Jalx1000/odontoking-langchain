@@ -17,6 +17,8 @@ import asyncio
 import os
 import signal
 import sys
+import time
+from hashlib import sha256
 
 # Resolve env file before importing any app module
 _APP_ENV = os.getenv("APP_ENV", "development")
@@ -43,31 +45,75 @@ async def _handle_message(payload: dict, agent, tenant_slug: str) -> None:
     """Process one buffered message: call agent, send WhatsApp reply."""
     wa_id = payload.get("wa_id", "")
     text = payload.get("text", "")
+    message_id = payload.get("message_id", "")
+    patient_ctx = payload.get("patient_ctx") or {}
 
     if not wa_id or not text:
         logger.warning("worker_invalid_payload", tenant=tenant_slug, payload=str(payload)[:200])
         return
 
     messages = [Message(role="user", content=text)]
+    turn_id = sha256(f"{tenant_slug}:{wa_id}:{message_id}:{time.monotonic_ns()}:{text}".encode()).hexdigest()[:16]
     try:
         asyncio.create_task(send_typing_indicator(wa_id))
-        response_text = await asyncio.wait_for(
-            agent.get_response(messages, wa_id=wa_id),
-            timeout=settings.LLM_TOTAL_TIMEOUT + 30,
+        logger.info(
+            "worker_agent_turn_started",
+            tenant=tenant_slug,
+            wa_id=wa_id,
+            message_id=message_id,
+            turn_id=turn_id,
+            route="worker_broker",
+            text_preview=text[:120],
         )
+        agent_task = asyncio.create_task(
+            agent.get_response(
+                messages,
+                wa_id=wa_id,
+                is_new_patient=patient_ctx.get("is_new_patient", True),
+                ci_paciente=patient_ctx.get("ci_paciente"),
+                seguro_paciente=patient_ctx.get("seguro_paciente"),
+                nombre_registrado=patient_ctx.get("nombre_registrado"),
+                nombre_whatsapp=patient_ctx.get("nombre_whatsapp"),
+            )
+        )
+        try:
+            response_text = await asyncio.wait_for(
+                asyncio.shield(agent_task),
+                timeout=settings.LLM_TOTAL_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("worker_agent_soft_timeout", tenant=tenant_slug, wa_id=wa_id, turn_id=turn_id)
+            await send_text_message(
+                wa_id,
+                "La consulta está tardando un poco más de lo normal. Sigo revisando y le responderé en este mismo chat en un momento 🙏.",
+            )
+            response_text = await asyncio.wait_for(
+                asyncio.shield(agent_task),
+                timeout=settings.LLM_TOTAL_TIMEOUT + 30,
+            )
         await send_response(wa_id, response_text)
-        logger.info("worker_response_sent", tenant=tenant_slug, wa_id=wa_id, preview=response_text[:60])
+        logger.info(
+            "worker_response_sent",
+            tenant=tenant_slug,
+            wa_id=wa_id,
+            message_id=message_id,
+            turn_id=turn_id,
+            route="worker_broker",
+            preview=response_text[:120],
+        )
     except asyncio.TimeoutError:
-        logger.warning("worker_agent_timeout", tenant=tenant_slug, wa_id=wa_id)
+        logger.warning("worker_agent_hard_timeout", tenant=tenant_slug, wa_id=wa_id, turn_id=turn_id)
+        if "agent_task" in locals():
+            agent_task.cancel()
         try:
             await send_text_message(
                 wa_id,
-                "Disculpe, la consulta está tardando más de lo esperado. Por favor intente de nuevo 🙏.",
+                "Disculpe, la consulta no pudo completarse en este momento. Por favor intente de nuevo en unos minutos 🙏.",
             )
         except Exception:
             pass
     except Exception as e:
-        logger.exception("worker_agent_error", tenant=tenant_slug, wa_id=wa_id, error=str(e))
+        logger.exception("worker_agent_error", tenant=tenant_slug, wa_id=wa_id, turn_id=turn_id, error=str(e))
         try:
             await send_text_message(wa_id, "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.")
         except Exception:

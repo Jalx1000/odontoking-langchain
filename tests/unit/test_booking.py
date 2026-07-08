@@ -156,6 +156,33 @@ class TestBookingFlow:
         # specialty (Periodoncia/General) matches nobody → offer all available doctors
         assert "Ortodoncista X" in r.reply
 
+    @pytest.mark.asyncio
+    async def test_repeated_booking_intent_during_day_phase_repeats_same_question(self):
+        """A retry like 'quiero consulta' while choosing day must not generate a new prompt."""
+        with _mocked_tools():
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "1")  # doctor → days
+            day_question = r.reply
+            r = await advance_booking(r.state, "Quiero consulta para ortodoncia")
+
+        assert r.state["booking_phase"] == "dia"
+        assert r.reply == day_question
+
+    @pytest.mark.asyncio
+    async def test_repeated_booking_intent_during_hour_phase_repeats_same_question(self):
+        """A retry during hour selection must re-send the same hour options."""
+        with _mocked_tools():
+            st = _third_party_state()
+            r = await advance_booking(st, None)
+            r = await advance_booking(r.state, "1")
+            r = await advance_booking(r.state, "1")  # day → hours
+            hour_question = r.reply
+            r = await advance_booking(r.state, "Quiero consulta para ortodoncia")
+
+        assert r.state["booking_phase"] == "hora"
+        assert r.reply == hour_question
+
 
 _SCHEDULE_8_SLOTS = [
     {

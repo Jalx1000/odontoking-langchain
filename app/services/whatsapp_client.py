@@ -234,8 +234,27 @@ async def send_response(
     interactive = build_interactive_payload(mensaje, to)
     try:
         if interactive:
+            options: list[str] = []
+            for section in interactive.get("action", {}).get("sections", []):
+                options.extend(row.get("title", "") for row in section.get("rows", []))
+            for button in interactive.get("action", {}).get("buttons", []):
+                options.append(button.get("reply", {}).get("title", ""))
+            logger.info(
+                "whatsapp_response_rendered",
+                to=to,
+                render_type=interactive.get("type"),
+                body=interactive.get("body", {}).get("text", "")[:200],
+                options=[opt for opt in options if opt][:10],
+            )
             await send_interactive_message(to, interactive, phone_number_id=phone_number_id, token=token)
         else:
+            logger.info(
+                "whatsapp_response_rendered",
+                to=to,
+                render_type="text",
+                body=mensaje[:200],
+                options=[],
+            )
             await send_text_message(to, mensaje, phone_number_id=phone_number_id, token=token)
     except httpx.HTTPStatusError as e:
         logger.exception("whatsapp_send_failed", to=to, status=e.response.status_code, error=str(e))

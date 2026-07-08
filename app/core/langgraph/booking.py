@@ -58,6 +58,11 @@ MOTIVO_SERVICE_KW: dict[str, list[str]] = {
     "limpieza": ["limpieza", "profilaxis"],
 }
 
+_BOOKING_RETRY_WORDS = (
+    "agendar", "agenda", "cita", "consulta", "ortodoncia", "control", "quiero",
+    "reservar", "turno",
+)
+
 
 def _norm(s: Optional[str]) -> str:
     """Lowercase, strip accents/whitespace — for accent-insensitive matching."""
@@ -252,6 +257,22 @@ def _choose(user_text: Optional[str], titles: list[str]) -> Optional[int]:
     return None
 
 
+def _looks_like_booking_retry(text: Optional[str]) -> bool:
+    """True for repeated intent/noise while the booking flow is already awaiting a choice."""
+    low = _norm(text)
+    return bool(low) and any(word in low for word in _BOOKING_RETRY_WORDS)
+
+
+def _remember_reply(state: dict, reply: str) -> str:
+    """Store the exact pending question so retries can re-send it instead of regenerating."""
+    state["last_booking_reply"] = reply
+    return reply
+
+
+def _repeat_or(state: dict, fallback: str) -> str:
+    return state.get("last_booking_reply") or fallback
+
+
 _AFFIRMATIVE = {"si", "sí", "s", "yes", "y", "confirmo", "confirmar", "correcto", "ok", "okay", "dale"}
 
 
@@ -354,7 +375,7 @@ async def _enter_doctor_phase(state: dict) -> BookingResult:
 
     # Neutral wording so any motivo (fixed label or free-text phrase) reads naturally.
     titles = [d["name"] for d in state["proposed_doctors"]]
-    msg = f"Para agendar su cita, ¿con quién le gustaría atenderse? 😊\n\n{_numbered(titles)}"
+    msg = _remember_reply(state, f"Para agendar su cita, ¿con quién le gustaría atenderse? 😊\n\n{_numbered(titles)}")
     return BookingResult(state, msg, False)
 
 
@@ -370,15 +391,18 @@ async def _enter_dia_phase(state: dict) -> BookingResult:
         # No availability for this doctor → back to choosing another doctor.
         state["booking_phase"] = "doctor"
         titles = [d["name"] for d in state.get("proposed_doctors", [])]
-        msg = (
+        msg = _remember_reply(state, (
             f"El/la Dr/a. {state.get('doctor_name')} no tiene horarios disponibles en los próximos días. "
             f"¿Con quién más le gustaría agendar? 😊\n\n{_numbered(titles)}"
-        )
+        ))
         return BookingResult(state, msg, False)
 
     state["booking_phase"] = "dia"
     titles = [d.get("day_label") or d["date"] for d in schedule]
-    msg = f"¿Para qué día le gustaría agendar con el/la Dr/a. {state.get('doctor_name')}? 📅\n\n{_numbered(titles)}"
+    msg = _remember_reply(
+        state,
+        f"¿Para qué día le gustaría agendar con el/la Dr/a. {state.get('doctor_name')}? 📅\n\n{_numbered(titles)}",
+    )
     return BookingResult(state, msg, False)
 
 
@@ -399,10 +423,10 @@ def _enter_hora_phase(state: dict, day: dict) -> BookingResult:
         # All of this day's hours already passed → send the patient back to pick another day.
         state["booking_phase"] = "dia"
         titles = [d.get("day_label") or d["date"] for d in state.get("schedule", [])]
-        msg = (
+        msg = _remember_reply(state, (
             f"Ya no hay horarios disponibles para el {day.get('day_label') or day.get('date')}. "
             f"¿Para qué otro día le gustaría agendar? 📅\n\n{_numbered(titles)}"
-        )
+        ))
         return BookingResult(state, msg, False)
 
     state["current_slots"] = slots
@@ -411,10 +435,10 @@ def _enter_hora_phase(state: dict, day: dict) -> BookingResult:
     state["booking_phase"] = "hora"
 
     titles = [f"{_fmt_time(s.get('start_time'))} - {_fmt_time(s.get('end_time'))}" for s in slots]
-    msg = (
+    msg = _remember_reply(state, (
         f"Horarios disponibles del/de la Dr/a. {state.get('doctor_name')} "
         f"para el {state['chosen_day_label']}:\n\n{_numbered(titles)}"
-    )
+    ))
     return BookingResult(state, msg, False)
 
 
@@ -430,7 +454,7 @@ def _enter_confirmar_phase(state: dict) -> BookingResult:
         "",
         'Responda "SÍ" para confirmar.',
     ]
-    return BookingResult(state, "\n".join(lines), False)
+    return BookingResult(state, _remember_reply(state, "\n".join(lines)), False)
 
 
 async def _revalidate_slot(state: dict) -> Optional[BookingResult]:
@@ -546,6 +570,8 @@ async def advance_booking(state: dict, user_text: Optional[str] = None) -> Booki
         idx = _choose(user_text, [d["name"] for d in state.get("proposed_doctors", [])])
         if idx is None:
             titles = [d["name"] for d in state.get("proposed_doctors", [])]
+            if _looks_like_booking_retry(user_text):
+                return BookingResult(state, _repeat_or(state, f"Por favor elija una opción válida:\n\n{_numbered(titles)}"), False)
             return BookingResult(state, f"Por favor elija una opción válida:\n\n{_numbered(titles)}", False)
         doc = state["proposed_doctors"][idx - 1]
         state["doctor_id"], state["doctor_name"] = doc["id"], doc["name"]
@@ -556,6 +582,8 @@ async def advance_booking(state: dict, user_text: Optional[str] = None) -> Booki
         idx = _choose(user_text, [d.get("day_label") or d["date"] for d in schedule])
         if idx is None:
             titles = [d.get("day_label") or d["date"] for d in schedule]
+            if _looks_like_booking_retry(user_text):
+                return BookingResult(state, _repeat_or(state, f"Por favor elija un día de la lista:\n\n{_numbered(titles)}"), False)
             return BookingResult(state, f"Por favor elija un día de la lista:\n\n{_numbered(titles)}", False)
         return _enter_hora_phase(state, schedule[idx - 1])
 
@@ -564,6 +592,8 @@ async def advance_booking(state: dict, user_text: Optional[str] = None) -> Booki
         titles = [f"{_fmt_time(s.get('start_time'))} - {_fmt_time(s.get('end_time'))}" for s in slots]
         idx = _choose(user_text, titles)
         if idx is None:
+            if _looks_like_booking_retry(user_text):
+                return BookingResult(state, _repeat_or(state, f"Por favor elija un horario de la lista:\n\n{_numbered(titles)}"), False)
             return BookingResult(state, f"Por favor elija un horario de la lista:\n\n{_numbered(titles)}", False)
         slot = slots[idx - 1]
         state["chosen_start"], state["chosen_end"] = slot.get("start_time"), slot.get("end_time")
@@ -572,6 +602,15 @@ async def advance_booking(state: dict, user_text: Optional[str] = None) -> Booki
     if phase == "confirmar":
         if _is_affirmative(user_text):
             return await _do_booking(state)
+        if _looks_like_booking_retry(user_text):
+            return BookingResult(
+                state,
+                _repeat_or(
+                    state,
+                    'Si los datos son correctos, responda "SÍ" para confirmar. Si desea cambiar algo, indíquemelo por favor ✍️.',
+                ),
+                False,
+            )
         return BookingResult(
             state,
             'Si los datos son correctos, responda "SÍ" para confirmar. Si desea cambiar algo, indíquemelo por favor ✍️.',
