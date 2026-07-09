@@ -29,7 +29,13 @@ _BASE = settings.ODONTOKING_API_URL
 
 
 def _is_retryable_slots_error(exc: BaseException) -> bool:
-    """Retry only on 429 (rate limit) and 5xx server errors, not other 4xx."""
+    """Retry on transient failures: 429, 5xx, and network timeouts/connection errors.
+
+    Timeouts were previously NOT retried and surfaced as an empty-string error that the LLM
+    read as "no availability" — so a doctor who was merely slow looked fully booked.
+    """
+    if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError)):
+        return True
     return (
         isinstance(exc, httpx.HTTPStatusError)
         and (exc.response.status_code == 429 or exc.response.status_code >= 500)
@@ -194,7 +200,7 @@ async def get_doctor_schedule(id_doctor: int, duration_minutes: int = 60, days: 
         days: Number of days ahead to query (1–30). Default is 7.
     """
     if id_doctor < 1 or id_doctor > 9999:
-        return json.dumps({"error": "invalid_doctor_id", "slots": []}, ensure_ascii=False)
+        return json.dumps({"error": "invalid_doctor_id", "schedule": []}, ensure_ascii=False)
     days = max(1, min(days, 30))
     duration_minutes = max(15, min(duration_minutes, 480))
 
@@ -263,9 +269,20 @@ async def get_doctor_schedule(id_doctor: int, duration_minutes: int = 60, days: 
                 days=days,
                 duration_minutes=duration_minutes,
             )
-            return json.dumps({"error": "invalid_parameters", "slots": []}, ensure_ascii=False)
+            return json.dumps({"error": "invalid_parameters", "schedule": []}, ensure_ascii=False)
         logger.exception("get_doctor_schedule_http_error", id_doctor=id_doctor, status=status)
-        return json.dumps({"error": f"API returned {status}", "slots": []}, ensure_ascii=False)
+        # A server error is transient — flag retry so the agent does NOT read it as "no slots".
+        return json.dumps({"retry": True, "error": f"API returned {status}", "schedule": []}, ensure_ascii=False)
+    except (httpx.TimeoutException, httpx.ConnectError) as e:
+        # A slow/unreachable availability service is transient. NEVER return an empty schedule
+        # here: the agent would treat it as "doctor fully booked" and skip a real doctor. The
+        # {"retry": true} contract makes the agent ask the patient to try again in a moment.
+        logger.warning("get_doctor_schedule_transient_error", id_doctor=id_doctor, error=type(e).__name__)
+        return json.dumps(
+            {"retry": True, "error": type(e).__name__, "message": "disponibilidad tardó en responder", "schedule": []},
+            ensure_ascii=False,
+        )
     except Exception as e:
+        # Never emit an empty error string (str(e) can be ""), which the agent misread as "no slots".
         logger.exception("get_doctor_schedule_failed", id_doctor=id_doctor, error=str(e))
-        return json.dumps({"error": str(e), "slots": []}, ensure_ascii=False)
+        return json.dumps({"error": str(e) or type(e).__name__, "schedule": []}, ensure_ascii=False)

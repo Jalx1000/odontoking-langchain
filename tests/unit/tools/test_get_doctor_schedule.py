@@ -291,7 +291,11 @@ class TestErrorHandling:
         assert result["error"] == "doctor_not_found"
 
     def test_422_returns_invalid_parameters_without_raising(self):
-        """422 must produce {"error": "invalid_parameters", "slots": []} — no exception."""
+        """422 must produce {"error": "invalid_parameters", "schedule": []} — no exception.
+
+        Error paths use the same "schedule" key as the success path (never "slots"): a mixed
+        key confused the agent, and every consumer reads "schedule".
+        """
         resp = _make_response(422, {"detail": "Invalid date format"})
 
         with patch("httpx.AsyncClient") as cls:
@@ -302,7 +306,7 @@ class TestErrorHandling:
             result = invoke(5)
 
         assert result["error"] == "invalid_parameters"
-        assert result["slots"] == []
+        assert result["schedule"] == []
 
     def test_500_retried_and_succeeds_on_third_attempt(self):
         """5xx errors must be retried; tool succeeds when third attempt returns 200."""
