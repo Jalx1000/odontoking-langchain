@@ -34,6 +34,8 @@ async def run_scenario(agent: OdontokingAgent, scenario: dict) -> dict:
                 is_new_patient=ctx.get("is_new_patient", True),
                 ci_paciente=ctx.get("ci_paciente"),
                 seguro_paciente=ctx.get("seguro_paciente"),
+                nombre_registrado=ctx.get("nombre_registrado"),
+                nombre_whatsapp=ctx.get("nombre_whatsapp"),
             )
         except Exception as e:
             logger.exception(

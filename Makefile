@@ -96,6 +96,12 @@ eval-quick:
 eval-no-report:
 	@$(call run_with_env,python -m evals.main --no-report)
 
+# Scenario evals: the agent plays each conversation and an LLM judge grades it
+# against its success_criteria (runner -> judge -> reporter). Pass SCENARIOS=id1,id2
+# to run a subset, e.g. `make eval-scenarios SCENARIOS=regresion_dias_reales_sin_fabricar`.
+eval-scenarios:
+	@$(call run_with_env,python -m evals.run_eval $(if $(SCENARIOS),--scenarios $(SCENARIOS),))
+
 # ---------------------------------------------------------------------------
 # Code quality
 # ---------------------------------------------------------------------------
@@ -215,6 +221,7 @@ help:
 	@echo "  eval                 Run evals (interactive)"
 	@echo "  eval-quick           Run evals (default settings)"
 	@echo "  eval-no-report       Run evals without report"
+	@echo "  eval-scenarios       Run scenario evals (agent plays + LLM judge grades)"
 	@echo ""
 	@echo "Code quality:"
 	@echo "  lint                 Ruff lint check"
@@ -244,7 +251,7 @@ help:
 
 .PHONY: install dev staging prod _serve \
         migrate migration migrate-downgrade migrate-history \
-        eval eval-quick eval-no-report \
+        eval eval-quick eval-no-report eval-scenarios \
         lint format typecheck check pre-commit pre-commit-update \
         docker-build docker-up docker-down docker-logs \
         stack-up stack-down stack-logs \

@@ -445,6 +445,11 @@ Máximo 10 opciones, orden ascendente.
 1. HH:MM - HH:MM
 2. HH:MM - HH:MM`
 
+⛔ ANTI-REPETICIÓN: cuando el paciente elija un horario de esta lista (ej. responde "1" o "09:30"),
+está PROHIBIDO volver a mostrar la misma lista de horarios. Guarda el horario elegido y AVANZA de
+inmediato al PASO 11 (ask_human con el resumen de datos). Solo re-muestra los horarios si el paciente
+pide expresamente otro horario o el que eligió NO está en la lista.
+
 
 ───────────────────────────────────────────
 PASO 11 — Confirmación de datos (ask_human)
@@ -453,7 +458,8 @@ PASO 11 — Confirmación de datos (ask_human)
 selecciona el slot; NO es la confirmación de la cita. PROHIBIDO enviar "agendada exitosamente" o
 llamar create_appointment en el mismo turno en que el paciente eligió el horario. SIEMPRE debes
 ejecutar primero este PASO 11 (ask_human) y esperar una respuesta afirmativa EXPLÍCITA del paciente.
-NUNCA supongas la confirmación.
+NUNCA supongas la confirmación. Pero UNA VEZ que el paciente eligió el horario, tu ÚNICA acción
+siguiente es llamar ask_human con el resumen — no repitas el listado de horarios ni de días.
 
 ⛔ PRE-REQUISITO: antes de este paso DEBES tener datos REALES, nunca inventados:
 
