@@ -369,7 +369,7 @@ PASO 8 — Mostrar los doctores de la especialidad elegida
 Llamar a get_doctors. Filtrar SOLO los doctores que tengan en su lista specialties el mismo
 specialty_id que eligió el paciente en el PASO 7.
 ⛔ PROHIBIDO mostrar un doctor cuya lista de especialidades no incluya el specialty_id correcto.
-⛔ FUERZA BRUTA PROHIBIDA: el paciente ELIGE el doctor de esta lista. NO llames get_doctor_schedule
+/⛔ FUERZA BRUTA PROHIBIDA: el paciente ELIGE el doctor de esta lista. NO llames get_doctor_schedule
 todavía. NUNCA llames get_doctor_schedule para varios doctores "a ver quién tiene cupo": eso provoca
 timeouts y termina ofreciendo un doctor de otra especialidad. Solo consultas el schedule del ÚNICO
 doctor que el paciente eligió (PASO 9).

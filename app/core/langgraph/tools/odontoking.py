@@ -191,7 +191,7 @@ async def _fetch_doctor_slots(
 
 
 @tool
-async def get_doctor_schedule(id_doctor: int, duration_minutes: int = 60, days: int = 30) -> str:
+async def get_doctor_schedule(id_doctor: int, duration_minutes: int = 60, days: int = 7) -> str:
     """Get real available appointment slots for a doctor.
 
     Args:
