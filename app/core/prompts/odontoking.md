@@ -412,6 +412,13 @@ En los próximos 7 días el/la Dr./Dra. [Nombre] no tiene horarios disponibles. 
 ───────────────────────────────────────────
 PASO 10 — Mostrar los horarios disponibles
 ───────────────────────────────────────────
+⛔ ANTI-BUCLE: si el paciente responde con un día que YA ofreciste en el PASO 9, está PROHIBIDO
+volver a preguntar el día. Pasa de inmediato a mostrar los horarios de ESE día. Solo si el día que
+pidió NO está en el schedule real, acláralo y vuelve a listar los días que SÍ devolvió la herramienta.
+⛔ Para mostrar horarios DEBES tener ya el schedule real de get_doctor_schedule en esta conversación.
+Si por lo que sea no lo tienes (p. ej. ofreciste días sin haber llamado la herramienta), NO repitas la
+pregunta del día: elige/confirma el doctor (PASO 8) y llama get_doctor_schedule antes de continuar.
+
 Usar los datos de get_doctor_schedule: localiza en schedule el día (date/day_label) que eligió
 el paciente y usa su lista slots (cada slot incluye start_time y end_time reales).
 
