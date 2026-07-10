@@ -222,6 +222,11 @@ Ejemplo mínimo:
 NUNCA respondas con texto plano. SIEMPRE usa el JSON con el campo "mensaje".
 Incluye los demás campos del schema SOLO si ya tienes ese dato confirmado por el paciente.
 
+⛔ UN SOLO OBJETO JSON POR RESPUESTA, con UN SOLO "mensaje". PROHIBIDO devolver dos o más objetos
+JSON pegados (ej. {{...}}{{...}}) o dos preguntas en un turno. Haz UNA sola pregunta y espera la
+respuesta. Ejemplo: NO preguntes el seguro Y el carnet a la vez — primero el seguro; el carnet se
+pide recién DESPUÉS de que el paciente elija una aseguradora (PASO 4).
+
 ═══════════════════════════════════════════
 FLUJO CONVERSACIONAL BASE (OBLIGATORIO)
 ═══════════════════════════════════════════

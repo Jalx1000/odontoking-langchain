@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os as _os
+import re
 from datetime import datetime
 from typing import (
     Optional,
@@ -177,6 +178,62 @@ def _load_odontoking_prompt(
 
 def _chat_session_id(wa_id: str) -> str:
     return f"{wa_id}@whatsapp.sofopolis.net"
+
+
+def _extract_mensaje(content: str) -> str:
+    """Pull the user-facing text out of the LLM's JSON response.
+
+    The model must reply with a single {"mensaje": "..."} object, but weaker models
+    (gpt-4.1-mini) sometimes emit TWO concatenated objects — which is invalid JSON, so a
+    plain json.loads() falls back to the raw string and the patient sees literal braces.
+    This tolerates that: single object → its mensaje; several concatenated objects → the
+    FIRST mensaje (the correct next step; a premature second message is dropped); malformed
+    but recognizable → regex the first mensaje; otherwise the raw text. Never leaks JSON.
+    """
+    text = (content or "").strip()
+    if not text:
+        return text
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict) and obj.get("mensaje"):
+            return str(obj["mensaje"])
+        if isinstance(obj, dict):
+            return text  # valid JSON without mensaje — leave as-is
+    except (json.JSONDecodeError, TypeError):
+        pass
+    # Concatenated JSON objects: decode them one by one and take the first mensaje.
+    decoder = json.JSONDecoder()
+    idx, n = 0, len(text)
+    found: list[str] = []
+    while idx < n:
+        while idx < n and text[idx] in " \t\r\n":
+            idx += 1
+        if idx >= n or text[idx] != "{":
+            break
+        try:
+            obj, idx = decoder.raw_decode(text, idx)
+        except json.JSONDecodeError:
+            break
+        if isinstance(obj, dict) and obj.get("mensaje"):
+            found.append(str(obj["mensaje"]))
+    if found:
+        if len(found) > 1:
+            logger.warning("odontoking_multiple_mensajes", count=len(found))
+        return found[0]
+    # Malformed JSON that still contains a mensaje field → recover it without the braces.
+    if '"mensaje"' in text:
+        m = re.search(r'"mensaje"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if m:
+            try:
+                return json.loads(f'"{m.group(1)}"')
+            except json.JSONDecodeError:
+                return m.group(1)
+        # Truncated/unterminated string: take from mensaje to the end, strip trailing }/".
+        m2 = re.search(r'"mensaje"\s*:\s*"(.+)', text, re.DOTALL)
+        if m2:
+            frag = re.sub(r'["}\s]+$', '', m2.group(1))
+            return frag.replace('\\n', '\n').replace('\\"', '"')
+    return text
 
 
 def _serialize_message(m: BaseMessage) -> str:
@@ -566,12 +623,8 @@ class OdontokingAgent:
                     block.get("text", "") for block in last_content if isinstance(block, dict)
                 )
 
-            # Try to extract "mensaje" from JSON
-            try:
-                parsed = json.loads(last_content)
-                mensaje = parsed.get("mensaje", last_content)
-            except (json.JSONDecodeError, AttributeError):
-                mensaje = last_content
+            # Extract the patient-facing text, tolerating malformed/multiple JSON objects.
+            mensaje = _extract_mensaje(last_content)
 
             # Fire-and-forget memory update (only when memory is enabled)
             if settings.ODONTOKING_MEMORY_ENABLED:
