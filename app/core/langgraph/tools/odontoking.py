@@ -43,7 +43,7 @@ def _is_retryable_slots_error(exc: BaseException) -> bool:
 
 
 @tool
-async def get_services(keyword: str = "") -> str:
+async} def get_services(keyword: str = "") -> str:
     """Get available dental services/products from Odontoking clinic.
 
     Args:
