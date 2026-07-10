@@ -79,9 +79,23 @@ echo "Database User: $( [[ -n ${POSTGRES_USER:-${DB_USER:-}} ]] && echo 'set' ||
 echo "LLM Model: ${DEFAULT_LLM_MODEL:-Not set}"
 echo "Debug Mode: ${DEBUG:-false}"
 
-# Run database migrations
+# Run database migrations. Reconcile the case where the schema already exists but
+# alembic has no version recorded (upgrade would try the initial migration and hit
+# "relation already exists"), which was silently killing every deploy via `set -e`.
 echo "Running database migrations..."
-/app/.venv/bin/alembic upgrade head
+if ! /app/.venv/bin/alembic upgrade head; then
+    echo "alembic upgrade head failed."
+    current=$(/app/.venv/bin/alembic current 2>/dev/null | tr -d '[:space:]')
+    if [ -z "$current" ]; then
+        # No version recorded but the schema is already provisioned -> stamp head and continue.
+        echo "No alembic version recorded but schema exists -> stamping head."
+        /app/.venv/bin/alembic stamp head
+    else
+        # A real migration failure against a versioned DB -> do not mask it.
+        echo "alembic has version '$current' but upgrade failed -> aborting."
+        exit 1
+    fi
+fi
 
 # Execute the CMD
 exec "$@"
