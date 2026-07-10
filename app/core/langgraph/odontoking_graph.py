@@ -61,6 +61,7 @@ from app.core.langgraph.tools.odontoking import (
     get_doctors,
     get_services,
     get_specialties,
+    get_specialty_doctors,
 )
 from app.core.langgraph.booking import advance_booking, start_reschedule
 from app.core.langgraph.intake import (
@@ -91,6 +92,7 @@ _ODONTOKING_TOOLS = [
     get_services,
     get_specialties,
     get_doctors,
+    get_specialty_doctors,
     get_doctor_schedule,
     verify_insurance,
     save_patient,

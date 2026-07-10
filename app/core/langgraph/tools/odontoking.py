@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime as _dt
+from urllib.parse import quote
 
 import httpx
 from langchain_core.tools import tool
@@ -161,6 +162,94 @@ async def get_doctors() -> str:
     except Exception as e:
         logger.exception("get_doctors_failed", error=str(e))
         return json.dumps({"error": str(e)})
+
+
+@tool
+async def get_specialty_doctors(specialty: str, patient_age: int = 0) -> str:
+    """Get bookable ACTIVE doctors for a dental specialty, pre-filtered server-side.
+
+    Use this in PASO 8 INSTEAD of get_doctors: the specialty filtering and the availability
+    check are done for you, so you never offer a doctor of the wrong specialty or one with no
+    free slots. Only doctors with real availability (some slot within 30 days) and — when
+    patient_age is given — who attend that age are returned.
+
+    Args:
+        specialty: The specialty id from get_specialties (preferred, e.g. "6"), or its slug
+            ("ortodoncia") or name ("Ortodoncia"). Names with spaces/accents are URL-encoded.
+        patient_age: The patient's real age. When > 0, doctors whose age range excludes it are
+            dropped. Leave 0 to skip the age filter.
+
+    Returns {"specialty": {...}, "data": [{id, name, age_range_min, age_range_max,
+    type_service_doctor, attendsPatientType, available_7d, available_14d, available_30d}]}.
+    available_* flags are cumulative (7d true implies 14d and 30d true). Prefer doctors with
+    available_7d when the patient wants a nearby date.
+    """
+    identifier = quote(str(specialty).strip(), safe="")
+    if not identifier:
+        return json.dumps({"error": "missing_specialty", "data": []}, ensure_ascii=False)
+
+    def _age_ok(d: dict) -> bool:
+        if patient_age <= 0:
+            return True
+        lo, hi = d.get("age_range_min"), d.get("age_range_max")
+        if lo is None or hi is None:
+            return True  # unknown range → do not exclude
+        try:
+            return int(lo) <= patient_age <= int(hi)
+        except (ValueError, TypeError):
+            return True
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{_BASE}/api/specialties/{identifier}/doctors",
+                headers={"accept": "application/json"},
+            )
+        if resp.status_code == 404:
+            logger.warning("specialty_doctors_not_found", specialty=str(specialty)[:40])
+            return json.dumps({"error": "specialty_not_found", "data": []}, ensure_ascii=False)
+        resp.raise_for_status()
+        payload = resp.json()
+        raw = payload.get("data", []) if isinstance(payload, dict) else []
+
+        doctors = [
+            {
+                "id": d.get("id"),
+                "name": d.get("name"),
+                "age_range_min": d.get("age_range_min"),
+                "age_range_max": d.get("age_range_max"),
+                "type_service_doctor": d.get("type_service_doctor"),
+                "attendsPatientType": d.get("attendsPatientType"),
+                "available_7d": d.get("available_7d"),
+                "available_14d": d.get("available_14d"),
+                "available_30d": d.get("available_30d"),
+            }
+            for d in raw
+            # Only bookable: has some availability within 30 days AND attends this age.
+            if isinstance(d, dict) and d.get("id") and d.get("available_30d") and _age_ok(d)
+        ]
+        # Doctors available sooner first; cap to WhatsApp's 10-row interactive-list limit.
+        doctors.sort(key=lambda x: (not x.get("available_7d"), not x.get("available_14d")))
+        doctors = doctors[:10]
+
+        specialty_info = payload.get("specialty") if isinstance(payload, dict) else None
+        logger.info(
+            "specialty_doctors_fetched",
+            specialty=str(specialty)[:40],
+            returned=len(doctors),
+            patient_age=patient_age,
+        )
+        return json.dumps({"specialty": specialty_info, "data": doctors}, ensure_ascii=False)
+
+    except (httpx.TimeoutException, httpx.ConnectError) as e:
+        logger.warning("specialty_doctors_transient", specialty=str(specialty)[:40], error=type(e).__name__)
+        return json.dumps({"retry": True, "error": type(e).__name__, "data": []}, ensure_ascii=False)
+    except httpx.HTTPStatusError as e:
+        logger.exception("specialty_doctors_http_error", status=e.response.status_code)
+        return json.dumps({"retry": True, "error": f"API returned {e.response.status_code}", "data": []}, ensure_ascii=False)
+    except Exception as e:
+        logger.exception("specialty_doctors_failed", error=str(e))
+        return json.dumps({"error": str(e) or type(e).__name__, "data": []}, ensure_ascii=False)
 
 
 @retry(
