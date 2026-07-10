@@ -13,8 +13,7 @@ SCENARIOS: list[dict] = [
             "Alianza",
             "14746087",
             "Tengo dolor en una muela del juicio",
-            "1",  # especialidad
-            "1",  # doctor
+            "1",  # doctor (PASO 7 ya sugiere especialidad + muestra sus doctores)
             "1",  # día
             "1",  # hora
             "SI",  # confirmación
@@ -33,8 +32,7 @@ SCENARIOS: list[dict] = [
             "Primera vez",
             "No tengo seguro",
             "Necesito una limpieza dental",
-            "1",  # especialidad
-            "1",  # doctor
+            "1",  # doctor (PASO 7 ya sugiere especialidad + muestra sus doctores)
             "1",  # día
             "1",  # hora
             "SI",  # confirmación
@@ -79,8 +77,7 @@ SCENARIOS: list[dict] = [
             "Primera vez",
             "No tengo seguro",
             "Dolor en una muela",
-            "1",  # especialidad
-            "1",  # doctor
+            "1",  # doctor (PASO 7 ya sugiere especialidad + muestra sus doctores)
             "1",  # día
             "1",  # hora
             "SI",  # confirmación
@@ -100,7 +97,7 @@ SCENARIOS: list[dict] = [
         "tags": ["informacion_clinica", "ubicacion"],
     },
     {
-        "id": "no_availability_extend_to_14_days",
+        "id": "encia_inflamada_flujo_completo",
         "wa_id": "eval_591700000007",
         "patient_context": {"is_new_patient": True},
         "turns": [
@@ -110,15 +107,13 @@ SCENARIOS: list[dict] = [
             "Primera vez",
             "No tengo seguro",
             "Encía inflamada",
-            "1",  # especialidad
-            "Si, revisar 2 semanas",  # aceptar extender la búsqueda
-            "1",  # doctor
+            "1",  # doctor (PASO 7 ya sugiere especialidad + muestra sus doctores)
             "1",  # día
             "1",  # hora
             "SI",  # confirmación
         ],
-        "success_criteria": "Cuando get_doctor_schedule devuelva schedule vacío, el agente debe ofrecer revisar 2 semanas antes de rendirse. Si el paciente acepta, debe llamar get_doctor_schedule con days=14.",
-        "tags": ["sin_disponibilidad", "extension_busqueda"],
+        "success_criteria": "El agente debe sugerir la especialidad adecuada para encía inflamada (Periodoncia/Periodontología) junto con sus doctores, y completar el agendamiento hasta confirmar la cita.",
+        "tags": ["sin_seguro", "flujo_completo"],
     },
     {
         "id": "out_of_scope_diagnosis_request",
@@ -147,8 +142,7 @@ SCENARIOS: list[dict] = [
             "Alianza",
             "14746087",
             "Limpieza",
-            "1",  # especialidad
-            "1",  # doctor
+            "1",  # doctor (PASO 7 ya sugiere especialidad + muestra sus doctores)
             "1",  # día
             "1",  # hora
             "SI",  # confirmación
@@ -157,7 +151,7 @@ SCENARIOS: list[dict] = [
             "Aunque el titular tenga seguro registrado en el contexto, como la cita es para OTRA persona "
             "el agente DEBE preguntar el seguro y pedir el carnet de esa persona, y validar con verify_insurance "
             "usando ese carnet (14746087). NO debe saltar la validación del seguro apoyándose en el seguro del "
-            "titular. Debe seguir el flujo hasta confirmar la cita con is_for_self=false y los datos de Ana Perez.",
+            "titular. Debe seguir el flujo hasta confirmar la cita con is_for_self=false y los datos de la otra persona (ALEXA GRUSCHENKA HERVAS ORELLANA).",
         ),
         "tags": ["regresion", "tercero", "seguro"],
     },
@@ -174,18 +168,16 @@ SCENARIOS: list[dict] = [
             "Primera vez",
             "No tengo seguro",
             "Quiero un tratamiento de ortodoncia",
-            "1",
-            "1",
-            "1",
-            "1",
-            "SI",
+            "1",  # doctor (PASO 7 ya sugiere Ortodoncia + muestra SUS doctores)
+            "1",  # día
+            "1",  # hora
+            "SI",  # confirmación
         ],
         "success_criteria": (
-            "El agente debe: (1) llamar get_services y get_specialties y mostrar la especialidad recomendada "
-            "para ortodoncia dejando que el paciente elija; (2) mostrar SOLO doctores de esa especialidad y "
-            "dejar elegir; (3) recién entonces mostrar los días, que deben provenir de get_doctor_schedule del "
-            "doctor elegido (NO una lista de días inventada a partir de la fecha actual). No debe ofrecer un "
-            "doctor de otra especialidad ni fabricar horarios.",
+            "El agente debe sugerir la especialidad de Ortodoncia y, en el mismo mensaje, mostrar SOLO "
+            "doctores de ortodoncia (via get_specialty_doctors) para que el paciente elija uno. Los días "
+            "deben provenir de get_doctor_schedule del doctor elegido (NO una lista inventada a partir de "
+            "la fecha actual). No debe ofrecer un doctor de otra especialidad ni fabricar horarios.",
         ),
         "tags": ["regresion", "sin_alucinaciones", "flujo_correcto"],
     },
@@ -202,8 +194,7 @@ SCENARIOS: list[dict] = [
             "Primera vez",
             "No tengo seguro",
             "Necesito una limpieza dental",
-            "1",  # especialidad
-            "1",  # doctor
+            "1",  # doctor (PASO 7 ya sugiere especialidad + muestra sus doctores)
             "1",  # día
             "1",  # hora
             "SI",  # confirmación

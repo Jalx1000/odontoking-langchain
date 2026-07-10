@@ -12,6 +12,12 @@ from app.schemas.chat import Message
 from app.core.langgraph.odontoking_graph import OdontokingAgent
 from evals.scenarios import SCENARIOS
 
+# Optional pause between turns/scenarios so a fast local run does not exhaust the OpenAI
+# per-minute token limit (which otherwise floods the run with 429s and skews results).
+# Default 0 keeps normal behavior; set EVAL_TURN_DELAY / EVAL_SCENARIO_DELAY (seconds) to throttle.
+_TURN_DELAY = float(os.getenv("EVAL_TURN_DELAY", "0"))
+_SCENARIO_DELAY = float(os.getenv("EVAL_SCENARIO_DELAY", "0"))
+
 
 async def run_scenario(agent: OdontokingAgent, scenario: dict) -> dict:
     """Execute a full scenario turn-by-turn and return the recorded conversation."""
@@ -49,6 +55,9 @@ async def run_scenario(agent: OdontokingAgent, scenario: dict) -> dict:
         conversation.append({"role": "user", "content": user_text})
         conversation.append({"role": "assistant", "content": agent_response})
 
+        if _TURN_DELAY:
+            await asyncio.sleep(_TURN_DELAY)
+
     return {
         "scenario_id": scenario["id"],
         "wa_id": wa_id,
@@ -84,6 +93,8 @@ async def run_all_scenarios(scenarios: list[dict] | None = None) -> list[dict]:
                 "error": str(e),
             }
         results.append(result)
+        if _SCENARIO_DELAY:
+            await asyncio.sleep(_SCENARIO_DELAY)
 
     await agent.close()
     return results
