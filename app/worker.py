@@ -28,7 +28,7 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.core.tenant import get_tenant
 from app.schemas import Message
-from app.services.whatsapp_client import send_response, send_text_message, send_typing_indicator
+from app.services.gateway import Destination, get_gateway
 
 # ── Agent registry ──────────────────────────────────────────────────────────
 # Phase 3 will replace this with a BaseAgent factory.
@@ -54,8 +54,11 @@ async def _handle_message(payload: dict, agent, tenant_slug: str) -> None:
 
     messages = [Message(role="user", content=text)]
     turn_id = sha256(f"{tenant_slug}:{wa_id}:{message_id}:{time.monotonic_ns()}:{text}".encode()).hexdigest()[:16]
+    gateway = get_gateway()
+    dest = Destination(wa_id=wa_id)
+    agent_task: asyncio.Task | None = None
     try:
-        asyncio.create_task(send_typing_indicator(wa_id))
+        asyncio.create_task(gateway.send_typing(dest))
         logger.info(
             "worker_agent_turn_started",
             tenant=tenant_slug,
@@ -83,15 +86,15 @@ async def _handle_message(payload: dict, agent, tenant_slug: str) -> None:
             )
         except asyncio.TimeoutError:
             logger.warning("worker_agent_soft_timeout", tenant=tenant_slug, wa_id=wa_id, turn_id=turn_id)
-            await send_text_message(
-                wa_id,
+            await gateway.send_text(
+                dest,
                 "La consulta está tardando un poco más de lo normal. Sigo revisando y le responderé en este mismo chat en un momento 🙏.",
             )
             response_text = await asyncio.wait_for(
                 asyncio.shield(agent_task),
                 timeout=settings.LLM_TOTAL_TIMEOUT + 30,
             )
-        await send_response(wa_id, response_text)
+        await gateway.send_response(dest, response_text)
         logger.info(
             "worker_response_sent",
             tenant=tenant_slug,
@@ -103,11 +106,11 @@ async def _handle_message(payload: dict, agent, tenant_slug: str) -> None:
         )
     except asyncio.TimeoutError:
         logger.warning("worker_agent_hard_timeout", tenant=tenant_slug, wa_id=wa_id, turn_id=turn_id)
-        if "agent_task" in locals():
+        if agent_task is not None:
             agent_task.cancel()
         try:
-            await send_text_message(
-                wa_id,
+            await gateway.send_text(
+                dest,
                 "Disculpe, la consulta no pudo completarse en este momento. Por favor intente de nuevo en unos minutos 🙏.",
             )
         except Exception:
@@ -115,7 +118,7 @@ async def _handle_message(payload: dict, agent, tenant_slug: str) -> None:
     except Exception as e:
         logger.exception("worker_agent_error", tenant=tenant_slug, wa_id=wa_id, turn_id=turn_id, error=str(e))
         try:
-            await send_text_message(wa_id, "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.")
+            await gateway.send_text(dest, "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.")
         except Exception:
             pass
 

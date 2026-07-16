@@ -241,6 +241,19 @@ class Settings:
         self.WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
         self.WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
 
+        # WhatsApp outbound gateway selection: "meta" (direct Cloud API, default) or
+        # "sofo-crm" (route through the Krayin CRM middleware, which itself delivers via
+        # Kommo salesbot / Cloud API). See planning/10-gateway-whatsapp-meta-sofocrm.md.
+        self.WHATSAPP_GATEWAY = os.getenv("WHATSAPP_GATEWAY", "meta").strip().lower()
+        # CRM middleware (used when WHATSAPP_GATEWAY=sofo-crm)
+        self.CRM_BASE_URL = os.getenv("CRM_BASE_URL", "https://imprimir.sofopolis.com").rstrip("/")
+        # Inbound auth: the CRM sends this as Bearer on every message.received event; we validate it.
+        self.WHATSAPP_AGENT_TOKEN = os.getenv("WHATSAPP_AGENT_TOKEN", "")
+        # Outbound auth: Sanctum API key of a dedicated CRM user (obtained once via POST /api/v1/login).
+        self.CRM_API_KEY = os.getenv("CRM_API_KEY", "")
+        # Auto-create the patient in the Odontoking CRM on first contact for the CRM inbound path.
+        self.WHATSAPP_AUTO_CREATE_PERSON = os.getenv("WHATSAPP_AUTO_CREATE_PERSON", "true").lower() in ("true", "1", "yes")
+
         # Odontoking API
         self.ODONTOKING_API_URL = os.getenv("ODONTOKING_API_URL", "https://odontoking.sofopolis.com")
         self.ODONTOKING_API_TOKEN = os.getenv("ODONTOKING_API_TOKEN", "")

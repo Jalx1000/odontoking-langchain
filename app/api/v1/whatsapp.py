@@ -32,13 +32,12 @@ from app.core.logging import logger
 from app.core.tenant import TenantConfig, get_tenant, get_tenant_async
 from app.schemas import Message
 from app.schemas.whatsapp import WhatsAppValue, WhatsAppWebhookPayload
+from app.services.gateway import Destination, get_gateway
 from app.services.message_buffer import MessageBufferService, ProcessFn, message_buffer_service
 from app.services.whatsapp_client import (
     download_media,
     mark_as_read,
-    send_response,
     send_text_message,
-    send_typing_indicator,
     transcribe_audio,
 )
 
@@ -130,13 +129,16 @@ def _make_process_fn(
     agent = _AGENT_REGISTRY.get(tenant.agent_type, odontoking_agent)
     pid = tenant.phone_number_id
     tok = tenant.wa_access_token
+    gateway = get_gateway()
 
     async def _process(wa_id: str, text: str) -> None:
         messages = [Message(role="user", content=text)]
         turn_id = sha256(f"{tenant.slug}:{wa_id}:{time.monotonic_ns()}:{text}".encode()).hexdigest()[:16]
         route = "webhook_direct"
+        dest = Destination(wa_id=wa_id, phone_number_id=pid, token=tok)
+        agent_task: asyncio.Task | None = None
         try:
-            asyncio.create_task(send_typing_indicator(wa_id, phone_number_id=pid, token=tok))
+            asyncio.create_task(gateway.send_typing(dest))
             logger.info(
                 "whatsapp_agent_turn_started",
                 tenant=tenant.slug,
@@ -163,12 +165,12 @@ def _make_process_fn(
                 )
             except asyncio.TimeoutError:
                 logger.warning("whatsapp_agent_soft_timeout", tenant=tenant.slug, wa_id=wa_id, turn_id=turn_id)
-                await send_text_message(wa_id, _WAITING_MSG, phone_number_id=pid, token=tok)
+                await gateway.send_text(dest, _WAITING_MSG)
                 response_text = await asyncio.wait_for(
                     asyncio.shield(agent_task),
                     timeout=settings.LLM_TOTAL_TIMEOUT + 30,
                 )
-            await send_response(wa_id, response_text, phone_number_id=pid, token=tok)
+            await gateway.send_response(dest, response_text)
             logger.info(
                 "whatsapp_response_sent",
                 tenant=tenant.slug,
@@ -179,16 +181,16 @@ def _make_process_fn(
             )
         except asyncio.TimeoutError:
             logger.warning("whatsapp_agent_hard_timeout", tenant=tenant.slug, wa_id=wa_id, turn_id=turn_id)
-            if "agent_task" in locals():
+            if agent_task is not None:
                 agent_task.cancel()
             try:
-                await send_text_message(wa_id, _HARD_TIMEOUT_MSG, phone_number_id=pid, token=tok)
+                await gateway.send_text(dest, _HARD_TIMEOUT_MSG)
             except Exception:
                 pass
         except Exception as e:
             logger.exception("whatsapp_agent_error", tenant=tenant.slug, wa_id=wa_id, turn_id=turn_id, error=str(e))
             try:
-                await send_text_message(wa_id, "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.", phone_number_id=pid, token=tok)
+                await gateway.send_text(dest, "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.")
             except Exception:
                 pass
 
@@ -211,6 +213,11 @@ async def _handle_webhook_payload(
     buffer: MessageBufferService,
 ) -> dict:
     """Parse a Meta webhook payload and enqueue/dispatch messages for the tenant."""
+    # When the active gateway is the CRM middleware, inbound arrives via /api/v1/crm/webhook
+    # instead; ignore Meta webhooks so get_gateway() stays consistent with the live path.
+    if settings.WHATSAPP_GATEWAY == "sofo-crm":
+        logger.info("whatsapp_meta_webhook_inactive_gateway", tenant=tenant.slug)
+        return {"status": "ignored"}
     try:
         data = json.loads(raw)
         payload = WhatsAppWebhookPayload(**data)

@@ -25,10 +25,7 @@ async def test_worker_passes_patient_context_to_agent():
         },
     }
 
-    with (
-        patch("app.worker.send_typing_indicator", AsyncMock()),
-        patch("app.worker.send_response", AsyncMock()),
-    ):
+    with patch("app.worker.get_gateway", return_value=AsyncMock()):
         await _handle_message(payload, agent, "odontoking")
 
     agent.get_response.assert_awaited_once()
