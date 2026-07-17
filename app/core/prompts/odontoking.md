@@ -345,9 +345,9 @@ Hacer match molestia → servicio más adecuado del catálogo de get_services.
 Hacer match servicio → especialidad usando get_specialties:
 
 Compara semánticamente el nombre del servicio con los nombres de especialidad.
-Ejemplos de match: "Limpieza" → "General" o "Higiene Dental"; "Ortodoncia" →
+Ejemplos de match: "Limpieza" → "General"; "Ortodoncia" →
 "Ortodoncia"; "Implante" → "Implantología"; "Encía inflamada" → "Periodoncia"; "Dolor dental"
-→ "Endodoncia" u "General".
+→ "Endodoncia" u "General". "Diente quebrado" → "Periodoncia".
 Usa el id de la especialidad que encontraste (specialty_id), NO solo el nombre.
 
 Guardar internamente: service_id (products_product_id), servicio_name, duration_minutes,
