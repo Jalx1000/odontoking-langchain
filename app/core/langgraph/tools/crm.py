@@ -339,7 +339,6 @@ async def _find_or_create_lead(
     Idempotent: reuses the most recent matching lead. Every write tool calls this so the
     person→lead substrate is resolved the same way regardless of which single action runs.
     """
-    person_email = _person_email_from_wa_id(wa_id)
     leads_resp = await client.get(
         f"{_BASE}/api/v1/leads/search",
         params={"search": str(person_id), "searchFields": "person_id:=;", "limit": 10},
@@ -347,11 +346,14 @@ async def _find_or_create_lead(
     )
     leads_resp.raise_for_status()
     all_leads = leads_resp.json().get("data", [])
+    # Match on the person's WhatsApp number (contact_numbers), not email: persons are created
+    # with emails: [] so the old email match never hit and a NEW lead was created on every
+    # write-tool call (save_patient → save_insurance → create_appointment = duplicate leads).
     matching = [
         ld for ld in all_leads
         if any(
-            (e.get("value", "")).lower() == person_email.lower()
-            for e in (ld.get("person", {}).get("emails") or [])
+            (e.get("value", "")).lower() == wa_id.lower()
+            for e in (ld.get("person", {}).get("contact_numbers") or [])
         )
     ]
     if matching:
@@ -716,14 +718,13 @@ async def create_appointment(
 async def _find_person_and_lead(
     client: httpx.AsyncClient, wa_id: str
 ) -> tuple[dict[str, Any] | None, int | None]:
-    """Return (person, lead_id) for a wa_id, matching the lead by the person's WhatsApp email."""
+    """Return (person, lead_id) for a wa_id, matching the lead by the person's WhatsApp number."""
     person = await find_person_by_wa_id(client, wa_id)
     if not person or not person.get("id"):
         return None, None
-    person_email = _person_email_from_wa_id(wa_id)
     leads_resp = await client.get(
-        f"{_BASE}/api/v1/leads",
-        params={"sort": "id", "limit": 10, "person_id": str(person["id"])},
+        f"{_BASE}/api/v1/leads/search",
+        params={"search": str(person["id"]), "searchFields": "person_id:=;", "limit": 10},
         headers=_HEADERS,
     )
     leads_resp.raise_for_status()
@@ -731,8 +732,8 @@ async def _find_person_and_lead(
     matching = [
         ld for ld in all_leads
         if any(
-            (e.get("value", "")).lower() == person_email.lower()
-            for e in (ld.get("person", {}).get("emails") or [])
+            (e.get("value", "")).lower() == wa_id.lower()
+            for e in (ld.get("person", {}).get("contact_numbers") or [])
         )
     ]
     return person, (matching[-1]["id"] if matching else None)
@@ -973,8 +974,8 @@ async def sync_transcript_to_crm(wa_id: str, max_messages: int = 50) -> str:
 
             person_id = person["id"]
             leads_resp = await client.get(
-                f"{_BASE}/api/v1/leads",
-                params={"sort": "id", "limit": 10, "person_id": str(person_id)},
+                f"{_BASE}/api/v1/leads/search",
+                params={"search": str(person_id), "searchFields": "person_id:=;", "limit": 10},
                 headers=_HEADERS,
             )
             leads_resp.raise_for_status()
@@ -982,8 +983,8 @@ async def sync_transcript_to_crm(wa_id: str, max_messages: int = 50) -> str:
             matching = [
                 ld for ld in all_leads
                 if any(
-                    (e.get("value", "")).lower() == person_email.lower()
-                    for e in (ld.get("person", {}).get("emails") or [])
+                    (e.get("value", "")).lower() == wa_id.lower()
+                    for e in (ld.get("person", {}).get("contact_numbers") or [])
                 )
             ]
             if not matching:
