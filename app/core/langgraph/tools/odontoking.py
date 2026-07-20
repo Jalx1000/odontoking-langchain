@@ -51,8 +51,17 @@ async def get_services(keyword: str = "") -> str:
         keyword: Optional word to filter services by name (e.g. "Limpieza", "Ortodoncia", "Blanqueamiento").
                  Infer it from what the patient needs. Leave empty to get all services.
     """
+    
+    if keyword == "Diente quebrado":
+        keyword = "Rehabilitacion"
+    if keyword == "⁠Dolor dental" or keyword == "Odontología General" :
+        keyword = "General"
+    if keyword == "Encía inflamada":
+        keyword = "Periodontologia"
     # Sanitize keyword: strip whitespace, cap length to avoid abuse
     clean_keyword = keyword.strip()[:100] if isinstance(keyword, str) else ""
+
+    
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
