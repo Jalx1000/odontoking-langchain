@@ -251,12 +251,12 @@ async def ensure_lead_registered(
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             leads_resp = await client.get(
-                f"{_BASE}/api/v1/leads/get",
-                params={"search": wa_id, "searchFields": "person.contact_numbers%3Alike%3B", "limit": 10, },
+                f"{_BASE}/api/v1/leads/search",
+                params={"search": str(person_id), "searchFields": "person_id:=;", "limit": 10},
                 headers=_HEADERS,
             )
 
-            print( 'leads_resp.json() holaa\n', leads_resp.json())
+            print( 'leads_resp.json() holaaa \n', leads_resp.json())
             leads_resp.raise_for_status()
             all_leads = leads_resp.json().get("data", [])
             matching = [
