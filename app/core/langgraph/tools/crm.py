@@ -341,8 +341,8 @@ async def _find_or_create_lead(
     """
     person_email = _person_email_from_wa_id(wa_id)
     leads_resp = await client.get(
-        f"{_BASE}/api/v1/leads",
-        params={"sort": "id", "limit": 10, "person_id": str(person_id)},
+        f"{_BASE}/api/v1/leads/search",
+        params={"search": str(person_id), "searchFields": "person_id:=;", "limit": 10},
         headers=_HEADERS,
     )
     leads_resp.raise_for_status()
