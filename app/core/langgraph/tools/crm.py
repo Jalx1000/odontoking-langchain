@@ -848,6 +848,8 @@ async def get_citas(wa_id: str) -> str:
                 params={"search": str(person_id), "searchFields": "person_id:=;", "limit": 10},
                 headers=_HEADERS,
             )
+
+            print( 'leads_resp get citas\n', leads_resp.json())
             leads_resp.raise_for_status()
             all_leads = leads_resp.json().get("data", [])
             matching = [
