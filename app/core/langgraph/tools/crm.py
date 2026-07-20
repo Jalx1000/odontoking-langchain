@@ -62,11 +62,11 @@ def _parse_appointment_datetime(horario_cita: str) -> tuple[str, str]:
 
 
 def _person_email_from_wa_id(wa_id: str) -> str:
-    print( 'person_email_from_wa_id for wa_id: \n' + wa_id)
     """Ensure the wa_id is a number."""
     wa_id = wa_id.strip()
     wa_id = wa_id.replace("+", "")
     wa_id = wa_id.replace(" ", "")
+    print( 'person_email_from_wa_id for wa_id: \n' + wa_id)
     return f"{wa_id}"
 
 
@@ -205,11 +205,21 @@ async def ensure_person_registered(
             "seguro_paciente": person.get("seguro_paciente"),
         }
 
+    payload = _person_payload(wa_id, clean_name, clean_phone)
     create_resp = await client.post(
         f"{_BASE}/api/v1/contacts/persons",
-        json=_person_payload(wa_id, clean_name, clean_phone),
+        json=payload,
         headers=_HEADERS,
     )
+    
+    if create_resp.status_code == 422:
+        try:
+            error_detail = create_resp.json()
+        except Exception:
+            error_detail = {"text": create_resp.text}
+        log.error("crm_person_422_error", payload=payload, response=error_detail)
+        create_resp.raise_for_status()
+    
     create_resp.raise_for_status()
     person_id = create_resp.json().get("data", {}).get("id")
     log.info("crm_person_created", person_id=person_id)
