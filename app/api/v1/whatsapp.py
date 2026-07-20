@@ -241,7 +241,12 @@ async def _handle_webhook_payload(
                 continue
 
             for msg in value.messages:
-                wa_id = msg.from_number
+                wa_id = msg.from_number.replace("+", "")
+                if not wa_id.isdigit():
+                    continue
+                wa_id = wa_id.strip()
+                if not wa_id:
+                    continue
                 msg_type = msg.type
 
                 if _is_duplicate_message(msg.id):
