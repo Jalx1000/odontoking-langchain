@@ -258,7 +258,7 @@ async def ensure_lead_registered(
 
             print( 'leads_resp.json() holaaa ensure_lead_registered\n', leads_resp.json())
             leads_resp.raise_for_status()
-            all_leads = leads_resp.json().get("data", [])
+            all_leads = leads_resp.json().get("data", [{}])
             print( 'all_leads ensure_lead_registered\n', all_leads)
 
             matching = [
