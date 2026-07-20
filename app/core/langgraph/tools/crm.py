@@ -114,7 +114,7 @@ def _person_payload(
     person_email = _person_email_from_wa_id(wa_id)
     payload: dict[str, Any] = {
         "name": clean_name,
-        "emails": [{"value": person_email, "label": "work"}],
+        "emails": [],
         "contact_numbers": [{"value": clean_phone, "label": "work"}],
         "entity_type": "persons",
     }
