@@ -62,7 +62,8 @@ def _parse_appointment_datetime(horario_cita: str) -> tuple[str, str]:
 
 
 def _person_email_from_wa_id(wa_id: str) -> str:
-    return f"{wa_id}@whatsapp.sofopolis.net"
+    print( 'person_email_from_wa_id for wa_id: \n' + wa_id)
+    return f"{wa_id}"
 
 
 def _real_name_or_none(name: str | None) -> str | None:
@@ -801,7 +802,7 @@ async def get_citas(wa_id: str) -> str:
     Args:
         wa_id: WhatsApp ID of the patient (e.g. '591XXXXXXXX').
     """
-    person_email = f"{wa_id}@whatsapp.sofopolis.net"
+    person_email = f"{wa_id}"
     log = logger.bind(wa_id=wa_id)
 
     try:
@@ -876,7 +877,7 @@ async def get_citas(wa_id: str) -> str:
 
 def _fetch_transcript(wa_id: str, max_messages: int) -> str:
     """Read and format the last N messages from chat_histories_odonto (sync)."""
-    sid = f"{wa_id}@whatsapp.sofopolis.net"
+    sid = f"{wa_id}"
     with Session(database_service.engine) as db:
         rows = db.exec(
             select(ChatHistoryOdonto)
@@ -921,7 +922,8 @@ async def sync_transcript_to_crm(wa_id: str, max_messages: int = 50) -> str:
         wa_id: WhatsApp ID of the patient (e.g. '591XXXXXXXX').
         max_messages: Maximum number of recent messages to include (default 50).
     """
-    person_email = f"{wa_id}@whatsapp.sofopolis.net"
+    person_email = f"{wa_id}"
+    print( 'sync_transcript_to_crm for wa_id: \n' + person_email)
     log = logger.bind(wa_id=wa_id)
 
     transcript = await asyncio.to_thread(_fetch_transcript, wa_id, max_messages)

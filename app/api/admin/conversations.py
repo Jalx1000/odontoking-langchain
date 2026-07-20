@@ -16,7 +16,7 @@ from app.services.database import database_service
 
 router = APIRouter(prefix="/tenants", tags=["admin-conversations"])
 
-_WA_SUFFIX = "@whatsapp.sofopolis.net"
+_WA_SUFFIX = ""
 
 
 def _wa_id(session_id: str) -> str:

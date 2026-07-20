@@ -179,7 +179,8 @@ def _load_odontoking_prompt(
 
 
 def _chat_session_id(wa_id: str) -> str:
-    return f"{wa_id}@whatsapp.sofopolis.net"
+    print( 'chat_session_id for wa_id: \n' + wa_id)
+    return f"{wa_id}"
 
 
 def _extract_mensaje(content: str) -> str:
