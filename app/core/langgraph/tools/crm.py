@@ -35,8 +35,8 @@ _LEAD_STAGE_CONSULTA = 1   # first contact
 _LEAD_STAGE_CANCELADO = 6  # cancelled
 _LEAD_STAGE_AGENDADO = 7   # appointment scheduled
 
-_AGENT_USERS_WEEKDAY = [1, 2, 3, 5, 6]
-_AGENT_USERS_SUNDAY = [6, 8]
+_AGENT_USERS_WEEKDAY = [2, 3, 5, 7]
+_AGENT_USERS_SUNDAY = [7,8]
 
 
 def _pick_agent_user() -> int:
@@ -261,10 +261,7 @@ async def ensure_lead_registered(
             all_leads = leads_resp.json().get("data", [])
             matching = [
                 ld for ld in all_leads
-                if any(
-                    (e.get("value", "")).lower() == person_email.lower()
-                    for e in (ld.get("person", {}).get("emails") or [])
-                )
+                if (ld.get("person") or {}).get("id") == person_id
             ]
             if matching:
                 lead_id = matching[-1]["id"]
