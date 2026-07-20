@@ -247,14 +247,16 @@ async def ensure_lead_registered(
     """
     log = logger.bind(wa_id=wa_id)
     name = _real_name_or_none(person_name) or "Paciente WhatsApp"
-    person_email = _person_email_from_wa_id(wa_id)
+    person_email = []
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             leads_resp = await client.get(
-                f"{_BASE}/api/v1/leads",
-                params={"sort": "id", "limit": 10, "person_id": str(person_id)},
+                f"{_BASE}/api/v1/leads/get",
+                params={"search": wa_id, "searchFields": "person.contact_numbers%3Alike%3B", "limit": 10, },
                 headers=_HEADERS,
             )
+
+            print( 'leads_resp.json() holaa\n', leads_resp.json())
             leads_resp.raise_for_status()
             all_leads = leads_resp.json().get("data", [])
             matching = [
