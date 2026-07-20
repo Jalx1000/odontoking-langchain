@@ -456,8 +456,23 @@ async def save_patient(
             return json.dumps({"success": True, "person_id": person_id, "lead_id": lead_id})
 
     except Exception as e:
-        log.exception("save_patient_failed", error=str(e))
-        return json.dumps({"success": False, "error": str(e)})
+        # str(e) is empty for timeouts (ReadTimeout) — capture the exception type and, when the
+        # CRM did respond with an error status, its actual status + body so we can see what the
+        # CRM returned instead of a blank error.
+        resp = getattr(e, "response", None)
+        crm_status = getattr(resp, "status_code", None) if resp is not None else None
+        try:
+            crm_body = resp.text[:1000] if resp is not None else ""
+        except Exception:
+            crm_body = "<unreadable>"
+        log.exception(
+            "save_patient_failed",
+            error_type=type(e).__name__,
+            error=repr(e),
+            crm_status=crm_status,
+            crm_body=crm_body,
+        )
+        return json.dumps({"success": False, "error": type(e).__name__, "crm_status": crm_status, "crm_body": crm_body})
 
 
 @tool

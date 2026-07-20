@@ -152,7 +152,7 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
 # ── Route ────────────────────────────────────────────────────────────────────
 
 @router.post("/webhook")
-@limiter.limit("100 per minute")
+@limiter.limit("200 per minute")
 async def receive_crm_event(request: Request) -> dict:
     """Receive and process a message.received event from the sofo-crm middleware."""
     if settings.WHATSAPP_GATEWAY != "sofo-crm":
