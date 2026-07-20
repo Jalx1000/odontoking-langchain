@@ -184,7 +184,10 @@ async def receive_crm_event(request: Request) -> dict:
         logger.info("crm_duplicate_message_skipped", conversation_id=event.conversation_id, msg_id=msg_key)
         return {"status": "ok"}
 
-    phone = event.contact.phone
+    phone = event.contact.phone.replace("+", "")
+    if not phone.isdigit():
+        logger.warning("crm_invalid_phone_number", phone=phone)
+        return {"status": "ok"}
     reply_url = event.reply.url if event.reply else ""
     dest = Destination(wa_id=phone, conversation_id=event.conversation_id, reply_url=reply_url)
 
