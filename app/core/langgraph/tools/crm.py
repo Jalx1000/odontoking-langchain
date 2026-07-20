@@ -854,9 +854,10 @@ async def get_citas(wa_id: str) -> str:
                 ld for ld in all_leads
                 if any(
                     (e.get("value", "")).lower() == person_email.lower()
-                    for e in (ld.get("person", {}).get("emails") or [])
+                    for e in (lfd.get("person", {}).get("contact_numbers") or [])
                 )
             ]
+            print( 'matching holaaaa\n', matching)
             if not matching:
                 log.info("get_citas_lead_not_found", email=person_email)
                 return json.dumps({"citas": [], "message": "no_lead_found_for_patient"})
