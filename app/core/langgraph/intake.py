@@ -133,16 +133,16 @@ def next_pending(state: dict) -> Optional[str]:
 def question_for(slot: str) -> str:
     """Canonical question text for a slot. Numbered options render as WhatsApp buttons."""
     return {
-        "nombre": "Para comenzar, ¿podría indicarme su nombre completo, por favor? 🦷",
+        "nombre": "Para comenzar, ¿podría indicarme su nombre completo, por favor?",
         "edad": "¿Podría indicarme su edad, por favor?",
         "para_quien": "¿Para quién es la cita?\n1) Para mí\n2) Para otra persona",
         "tercero_nombre": "¿Cuál es el nombre completo de la persona para quien es la cita?",
         "tercero_edad": "¿Qué edad tiene esa persona?",
         "antiguo": "¿Es su primera vez en la clínica o ya vino antes?\n1) Primera vez\n2) Ya he ido antes",
         "seguro": "¿Cuenta con algún seguro dental?\n1) Alianza\n2) Nacional Vida\n3) Membresía Odontoking\n4) No tengo seguro",
-        "ci": "Para validar su seguro, ¿podría compartir su número de carnet de identidad? 🪪",
+        "ci": "Para validar su seguro, ¿podría compartir su número de carnet de identidad? ",
         "motivo": "¿Qué molestia o servicio necesita?\n1) Dolor dental\n2) Diente quebrado\n3) Encía inflamada\n4) Limpieza\n5) Otro",
-        "motivo_detalle": "Para poder ayudarle mejor, ¿podría indicarme qué molestia o servicio necesita? 🦷💬",
+        "motivo_detalle": "Para poder ayudarle mejor, ¿podría indicarme qué molestia o servicio necesita?",
     }[slot]
 
 
@@ -256,7 +256,7 @@ _INVALID = {
     "para_quien": "Por favor responda: 1) Para mí  o  2) Para otra persona.",
     "antiguo": "Por favor responda: 1) Primera vez  o  2) Ya he ido antes.",
     "seguro": "Por favor elija: 1) Alianza  2) Nacional Vida  3) Membresía Odontoking  4) No tengo seguro.",
-    "ci": "El carnet debe ser numérico. ¿Podría reenviarlo, por favor? 🪪",
+    "ci": "El carnet debe ser numérico. ¿Podría reenviarlo, por favor? ",
 }
 
 
@@ -417,7 +417,7 @@ async def advance_intake(
         tercero = state["tercero_nombre"]
         return IntakeResult(
             state,
-            f"Para validar el seguro de {tercero}, ¿podría compartir el número de carnet de identidad de {tercero}? 🪪",
+            f"Para validar el seguro de {tercero}, ¿podría compartir el número de carnet de identidad de {tercero}? ",
             False,
         )
     return IntakeResult(state, question_for(nxt), False)

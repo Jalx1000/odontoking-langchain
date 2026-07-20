@@ -46,7 +46,6 @@ from pydantic import SecretStr
 
 from app.core.config import settings
 from app.services.database import database_service
-from app.core.langgraph.tools.ask_human import ask_human
 from app.core.langgraph.tools.crm import (
     cancel_appointment_tool,
     create_appointment,
@@ -101,7 +100,6 @@ _ODONTOKING_TOOLS = [
     cancel_appointment_tool,
     get_citas,
     sync_transcript_to_crm,
-    ask_human,
 ]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "odontoking.md")

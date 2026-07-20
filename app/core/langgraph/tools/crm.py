@@ -991,21 +991,21 @@ async def sync_transcript_to_crm(wa_id: str, max_messages: int = 50) -> str:
                 return json.dumps({"success": False, "message": "no_lead_found_for_patient"})
 
             lead_id = matching[-1]["id"]
-            note_title = f"Historial WhatsApp — {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-            note_resp = await client.post(
-                f"{_BASE}/api/v1/activities",
-                json={
-                    "lead_id": lead_id,
-                    "title": note_title,
-                    "type": "note",
-                    "comment": transcript,
-                },
-                headers=_HEADERS,
-            )
-            note_resp.raise_for_status()
-            activity_id = note_resp.json().get("data", {}).get("id")
-            log.info("crm_transcript_synced", lead_id=lead_id, activity_id=activity_id)
-            return json.dumps({"success": True, "lead_id": lead_id, "activity_id": activity_id})
+            # Nota de historial deshabilitada temporalmente (POST /activities comentado).
+            # note_title = f"Historial WhatsApp — {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+            # note_resp = await client.post(
+            #     f"{_BASE}/api/v1/activities",
+            #     json={
+            #         "lead_id": lead_id,
+            #         "title": note_title,
+            #         "type": "note",
+            #         "comment": transcript,
+            #     },
+            #     headers=_HEADERS,
+            # )
+            # note_resp.raise_for_status()
+            log.info("crm_transcript_sync_skipped", lead_id=lead_id)
+            return json.dumps({"success": True, "lead_id": lead_id, "note_created": False})
 
     except Exception as e:
         log.exception("sync_transcript_to_crm_failed", error=str(e))
