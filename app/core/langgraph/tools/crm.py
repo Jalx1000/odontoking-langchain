@@ -63,6 +63,7 @@ def _parse_appointment_datetime(horario_cita: str) -> tuple[str, str]:
 
 def _person_email_from_wa_id(wa_id: str) -> str:
     print( 'person_email_from_wa_id for wa_id: \n' + wa_id)
+    wa_id = await ensure_wa_id_number(wa_id)
     return f"{wa_id}"
 
 
@@ -219,6 +220,12 @@ async def ensure_person_registered(
         "seguro_paciente": None,
     }
 
+async def ensure_wa_id_number(wa_id: str) -> str:
+    """Ensure the wa_id is a number."""
+    wa_id = wa_id.strip()
+    wa_id = wa_id.replace("+", "")
+    wa_id = wa_id.replace(" ", "")
+    return wa_id.strip()
 
 async def ensure_lead_registered(
     wa_id: str, person_id: int, person_name: str | None = None
@@ -233,7 +240,7 @@ async def ensure_lead_registered(
     """
     log = logger.bind(wa_id=wa_id)
     name = _real_name_or_none(person_name) or "Paciente WhatsApp"
-    person_email = _person_email_from_wa_id(wa_id)
+    person_email = _person_email_from_wa_id(await ensure_wa_id_number(wa_id))
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             leads_resp = await client.get(
@@ -257,7 +264,7 @@ async def ensure_lead_registered(
 
             close_date = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
             lead_body = {
-                "title": f"Consulta - {name}",
+                "title": f"Nuevo paciente - {name}",
                 "description": "Primer contacto vía WhatsApp",
                 "lead_value": 0,
                 "lead_source_id": 6,

@@ -24,6 +24,7 @@ def _wa_id(session_id: str) -> str:
 
 
 def _session_id(wa_id: str) -> str:
+    
     return f"{wa_id}{_WA_SUFFIX}"
 
 
