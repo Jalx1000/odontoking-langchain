@@ -263,7 +263,7 @@ async def ensure_lead_registered(
 
             matching = [
                 ld for ld in all_leads
-                if (ld.get("person") or {}).get("id") == person_id
+                if str((ld.get("person") or {}).get("id")) == str(person_id)
             ]
 
             print( 'matching ensure_lead_registered\n', matching)
@@ -860,7 +860,7 @@ async def get_citas(wa_id: str) -> str:
                 ld for ld in all_leads
                 if any(
                     (e.get("value", "")).lower() == person_email.lower()
-                    for e in (lfd.get("person", {}).get("contact_numbers") or [])
+                    for e in (ld.get("person", {}).get("contact_numbers") or [])
                 )
             ]
             print( 'matching holaaaa\n', matching)
