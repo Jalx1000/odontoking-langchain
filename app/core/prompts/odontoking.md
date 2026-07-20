@@ -476,7 +476,7 @@ Si falta el nombre o la edad, pídelos PRIMERO y no continúes.
 PROHIBIDO enviar el texto con un literal "[Nombre]"/"[edad]", un nombre vacío o una edad inventada.
 
 
- OBLIGATORIO: envía como `{"mensaje": ...}` normal el siguiente texto (sustituyendo SIEMPRE los
+ OBLIGATORIO: envía como `{{"mensaje": ...}}` normal el siguiente texto (sustituyendo SIEMPRE los
 corchetes por los datos reales) y termina el turno esperando la respuesta del paciente:
 
 `Antes de continuar, por favor confirme si los siguientes datos son correctos:

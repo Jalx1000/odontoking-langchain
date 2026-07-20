@@ -59,7 +59,8 @@
       "Bash(grep -nA3 -E \"^\\(dev|run|docker-run|docker-up|logs\\):\" Makefile)",
       "Bash(railway --version)",
       "Bash(railway logs *)",
-      "Bash(railway ssh *)"
+      "Bash(railway ssh *)",
+      "Bash(awk '{print $1\" líneas\"}')"
     ]
   }
 }
