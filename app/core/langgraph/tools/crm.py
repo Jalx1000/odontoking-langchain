@@ -844,8 +844,8 @@ async def get_citas(wa_id: str) -> str:
             person_id = person["id"]
             # Step 2: find lead filtered by person_id — avoids full-table scan
             leads_resp = await client.get(
-                f"{_BASE}/api/v1/leads",
-                params={"sort": "id", "limit": 10, "person_id": str(person_id)},
+                f"{_BASE}/api/v1/leads/search",
+                params={"search": str(person_id), "searchFields": "person_id:=;", "limit": 10},
                 headers=_HEADERS,
             )
             leads_resp.raise_for_status()
