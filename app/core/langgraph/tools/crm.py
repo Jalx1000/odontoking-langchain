@@ -256,13 +256,17 @@ async def ensure_lead_registered(
                 headers=_HEADERS,
             )
 
-            print( 'leads_resp.json() holaaa \n', leads_resp.json())
+            print( 'leads_resp.json() holaaa ensure_lead_registered\n', leads_resp.json())
             leads_resp.raise_for_status()
             all_leads = leads_resp.json().get("data", [])
+            print( 'all_leads ensure_lead_registered\n', all_leads)
+
             matching = [
                 ld for ld in all_leads
                 if (ld.get("person") or {}).get("id") == person_id
             ]
+
+            print( 'matching ensure_lead_registered\n', matching)
             if matching:
                 lead_id = matching[-1]["id"]
                 log.info("crm_lead_exists_skip_create", lead_id=lead_id)
