@@ -49,6 +49,10 @@ class MessageGateway(Protocol):
         """Show a typing indicator. No-op for providers that lack it."""
         ...
 
+    async def send_handoff(self, dest: Destination, motivo: str, fuera_de_horario: bool) -> None:
+        """Emit a handoff signal so the provider hands the conversation to a human (CONTRATO B)."""
+        ...
+
     async def mark_read(self, dest: Destination, message_id: str) -> None:
         """Mark an incoming message as read. No-op for providers that lack it."""
         ...

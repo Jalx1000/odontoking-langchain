@@ -430,9 +430,8 @@ class TestThirdPartyPatientFlow:
 
         person_exists = _ok({"data": [{"id": 55, "name": "Madre que llama",
                                         "emails": [{"value": "591700000010@whatsapp.sofopolis.net"}]}]})
-        leads_with_match = _ok({"data": [{"id": 88, "person": {
-            "emails": [{"value": "591700000010@whatsapp.sofopolis.net"}]
-        }}]})
+        # Conversation lead matched by person.id (Consulta stage) — reused, not recreated.
+        leads_with_match = _ok({"data": [{"id": 88, "person": {"id": 55}, "lead_pipeline_stage_id": 1}]})
 
         with patch("httpx.AsyncClient") as cls:
             client = _ctx(AsyncMock())
@@ -595,7 +594,8 @@ class TestConfirmedAppointmentModificationRules:
             client = _ctx(AsyncMock())
             client.get = AsyncMock(side_effect=[self._PERSON, self._LEADS, self._ACTIVITIES_EMPTY])
             client.put = AsyncMock(return_value=_ok({}))
-            client.post = AsyncMock(return_value=conflict_resp)
+            # POST /leads (new cita lead id 55) succeeds; POST /activities hits the 422 conflict.
+            client.post = AsyncMock(side_effect=[_resp(201, {"data": {"id": 55}}), conflict_resp])
             cls.return_value = client
 
             result = json.loads(_run(create_appointment.coroutine(**self._confirmed_args())))
@@ -628,13 +628,14 @@ class TestConfirmedAppointmentModificationRules:
             args["products_name"] = "Ortodoncia"
             result = json.loads(_run(create_appointment.coroutine(**args)))
 
-        # Tool succeeds but product_id is absent from the lead update body
+        # Tool succeeds but the service is not attached without a product_id.
         assert result["success"] is True
-        # The lead PUT body must NOT include products when product_id is missing
-        put_calls = client.put.call_args_list
-        lead_put_body = put_calls[-1][1].get("json", {})
-        # products key should be absent or empty if only name (no id) was supplied
-        products = lead_put_body.get("products", {})
+        # products live on the cita-lead POST body now; it must NOT include products when the
+        # product_id is missing (only the name was supplied).
+        lead_posts = [c for c in client.post.call_args_list if c[0][0].endswith("/api/v1/leads")]
+        assert lead_posts, "a cita lead must be created"
+        lead_body = lead_posts[-1][1].get("json", {})
+        products = lead_body.get("products", {})
         assert products == {} or "product_0" not in products
 
     def test_invalid_datetime_on_confirmed_appointment_returns_error(self):

@@ -32,19 +32,22 @@ def _r(data) -> MagicMock:
     return _make_response(200, data)
 
 
-# Reusable API response stubs (must be response objects, not plain dicts)
+# Reusable API response stubs (must be response objects, not plain dicts).
+# Leads are matched by person.id (not the number string), so every lead stub carries person.id.
 PERSON_NEW = _r({"data": []})
 PERSON_EXISTS = _r({"data": [{"id": 99, "name": "Ana López", "emails": [{"value": "591700000000@whatsapp.sofopolis.net"}]}]})
 PERSON_CREATED = _make_response(201, {"data": {"id": 99}})
 LEADS_EMPTY = _r({"data": []})
-LEADS_WITH_MATCH = _r({
-    "data": [
-        {
-            "id": 77,
-            "person": {"emails": [{"value": "591700000000@whatsapp.sofopolis.net"}]},
-        }
-    ]
+# Conversation lead (Consulta stage) — reused by save_patient / save_insurance / ensure_lead_registered.
+LEADS_CONSULTA = _r({
+    "data": [{"id": 77, "person": {"id": 99}, "lead_pipeline_stage_id": 1}]
 })
+# An active cita lead (Agendado stage) — used by cancel / get_citas / create_appointment idempotency.
+LEADS_AGENDADO = _r({
+    "data": [{"id": 77, "person": {"id": 99}, "lead_pipeline_stage_id": 7}]
+})
+# Back-compat alias: most reuse tests expect the conversation lead.
+LEADS_WITH_MATCH = LEADS_CONSULTA
 LEAD_CREATED = _make_response(201, {"data": {"id": 77}})
 LEAD_UPDATED = _r({"data": {"id": 77}})
 ACTIVITY_CREATED = _make_response(201, {"data": {"id": 1}})
@@ -357,7 +360,8 @@ class TestCreateAppointment:
             client = _async_client_ctx(AsyncMock())
             client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, ACTIVITIES_EMPTY])
             client.put = AsyncMock(return_value=_make_response(200, {}))
-            client.post = AsyncMock(return_value=conflict_resp)
+            # POST /leads (new cita lead) succeeds; POST /activities returns the 422 conflict.
+            client.post = AsyncMock(side_effect=[LEAD_CREATED, conflict_resp])
             cls.return_value = client
 
             result = json.loads(await create_appointment.ainvoke(self._args()))
@@ -382,7 +386,7 @@ class TestCreateAppointment:
             client = _async_client_ctx(AsyncMock())
             client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, ACTIVITIES_EMPTY])
             client.put = AsyncMock(return_value=_make_response(200, {}))
-            client.post = AsyncMock(return_value=conflict_resp)
+            client.post = AsyncMock(side_effect=[LEAD_CREATED, conflict_resp])
             cls.return_value = client
 
             result = json.loads(await create_appointment.ainvoke(self._args()))
@@ -417,7 +421,8 @@ class TestCreateAppointmentIdempotency:
         ]})
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, existing])
+            # The patient already has an Agendado cita-lead holding a meeting at this slot.
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_AGENDADO, existing])
             client.put = AsyncMock(return_value=_make_response(200, {}))
             client.post = AsyncMock(return_value=ACTIVITY_CREATED)
             cls.return_value = client
@@ -427,9 +432,10 @@ class TestCreateAppointmentIdempotency:
         assert result["success"] is True
         assert result["appointment_registered"] is True
         assert result["idempotent"] is True
-        assert result["activity_id"] == 42
-        # No activity POST — the slot was already booked.
-        assert not any("activities" in c[0][0] for c in client.post.call_args_list)
+        # Reuses the existing cita-lead instead of creating a second one.
+        assert result["lead_id"] == 77
+        # No new lead and no activity POST — the slot was already booked.
+        assert client.post.call_count == 0
 
     @pytest.mark.asyncio
     async def test_existing_meeting_different_slot_still_creates(self):
@@ -441,7 +447,7 @@ class TestCreateAppointmentIdempotency:
         ]})
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, other])
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_AGENDADO, other])
             client.put = AsyncMock(return_value=_make_response(200, {}))
             client.post = AsyncMock(return_value=ACTIVITY_CREATED)
             cls.return_value = client
@@ -462,7 +468,7 @@ class TestCreateAppointmentIdempotency:
         ]})
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, done])
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_AGENDADO, done])
             client.put = AsyncMock(return_value=_make_response(200, {}))
             client.post = AsyncMock(return_value=ACTIVITY_CREATED)
             cls.return_value = client
@@ -480,7 +486,7 @@ class TestCreateAppointmentIdempotency:
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, Exception("boom")])
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_AGENDADO, Exception("boom")])
             client.put = AsyncMock(return_value=_make_response(200, {}))
             client.post = AsyncMock(return_value=ACTIVITY_CREATED)
             cls.return_value = client
@@ -570,12 +576,13 @@ class TestGetCitas:
         from app.core.langgraph.tools.crm import get_citas
 
         person = {"data": [{"id": 99}]}
+        # Each cita is its OWN lead. Here the patient has an Agendado cita lead (a real cita) and a
+        # Consulta lead (the conversation lead — must be excluded from citas).
         leads = {
             "data": [
-                {
-                    "id": 77,
-                    "person": {"emails": [{"value": "591700000000@whatsapp.sofopolis.net"}]},
-                }
+                {"id": 77, "person": {"id": 99}, "lead_pipeline_stage_id": 7,
+                 "products": {"product_0": {"name": "Limpieza"}}, "description": "Limpieza - Dra. Paz"},
+                {"id": 10, "person": {"id": 99}, "lead_pipeline_stage_id": 1},  # Consulta → excluded
             ]
         }
         activities = {
@@ -587,12 +594,12 @@ class TestGetCitas:
                     "schedule_from": "2026-05-15 09:00:00",
                     "schedule_to": "2026-05-15 10:00:00",
                     "is_done": 0,
-                    "comment": "Limpieza",
+                    "comment": "Doctor: Dra. Paz",
                     "participants": [{"person": {"name": "Ana López"}}],
                 },
                 {
                     "id": 2,
-                    "type": "call",  # must be filtered out
+                    "type": "call",  # not a meeting — ignored for the datetime
                     "title": "Llamada",
                     "schedule_from": "2026-05-16 09:00:00",
                     "schedule_to": "2026-05-16 09:30:00",
@@ -613,8 +620,14 @@ class TestGetCitas:
             cls.return_value = client
 
             result = json.loads(await get_citas.ainvoke({"wa_id": "591700000000"}))
-            assert len(result["citas"]) == 1  # only meeting, not call
-            assert result["citas"][0]["title"] == "Ana - Limpieza"
+            # Only the Agendado cita lead is returned — the Consulta lead is excluded.
+            assert len(result["citas"]) == 1
+            cita = result["citas"][0]
+            assert cita["lead_id"] == 77
+            assert cita["estado"] == "Agendado"
+            assert cita["servicio"] == "Limpieza"
+            assert cita["fecha"] == "2026-05-15"
+            assert cita["hora"] == "09:00"
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_person_not_found(self):
@@ -723,7 +736,7 @@ class TestCancelAppointmentTool:
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, self._ACTIVITIES])
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_AGENDADO, self._ACTIVITIES])
             client.delete = AsyncMock(return_value=_make_response(200, {}))
             client.put = AsyncMock(return_value=_make_response(200, {}))
             cls.return_value = client
@@ -781,7 +794,7 @@ class TestCancelAppointment:
 
         with patch("httpx.AsyncClient") as cls:
             client = _async_client_ctx(AsyncMock())
-            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_WITH_MATCH, self._ACTIVITIES])
+            client.get = AsyncMock(side_effect=[PERSON_EXISTS, LEADS_AGENDADO, self._ACTIVITIES])
             client.delete = AsyncMock(return_value=_make_response(200, {}))
             client.put = AsyncMock(return_value=_make_response(200, {}))
             cls.return_value = client

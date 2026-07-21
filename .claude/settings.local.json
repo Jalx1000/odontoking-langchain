@@ -60,7 +60,8 @@
       "Bash(railway --version)",
       "Bash(railway logs *)",
       "Bash(railway ssh *)",
-      "Bash(awk '{print $1\" líneas\"}')"
+      "Bash(awk '{print $1\" líneas\"}')",
+      "Bash(grep -oE \"[A-Z][0-9]{3,4}\")"
     ]
   }
 }

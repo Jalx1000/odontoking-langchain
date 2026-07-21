@@ -25,15 +25,31 @@ _BASE = settings.ODONTOKING_API_URL
 _INSURANCE_ID_MAP = {
     "alianza": 1,
     "nacional vida": 2,
+    # "Nacional Seguros" is the same insurer as "Nacional Vida" — alias it to the same id so the
+    # LLM/tool path registers it correctly (the deterministic intake already normalizes the name).
+    "nacional seguros": 2,
+    "nacional": 2,
     "membresía odontoking": 3,
     "membresia odontoking": 3,
     "no tengo seguro": 65,
 }
 
 # CRM lead pipeline stages.
-_LEAD_STAGE_CONSULTA = 1   # first contact
+_LEAD_STAGE_CONSULTA = 1   # first contact (the conversation lead — NOT a cita)
 _LEAD_STAGE_CANCELADO = 6  # cancelled
 _LEAD_STAGE_AGENDADO = 7   # appointment scheduled
+
+# Stage id → human label for get_citas. Unknown ids fall back to the stage name carried on the
+# lead payload (Krayin returns lead_pipeline_stage.name), else "Desconocido".
+_STAGE_LABELS = {
+    1: "Consulta",
+    6: "Cancelado",
+    7: "Agendado",
+}
+
+# Stages that are NOT a real cita: the Consulta lead is the conversation lead, every other lead
+# (Agendado / Cancelado / Atendida / …) is one cita. Model: 1 lead-cita = 1 cita.
+_NON_CITA_STAGES = {_LEAD_STAGE_CONSULTA}
 
 _AGENT_USERS_WEEKDAY = [2, 3, 5, 7]
 _AGENT_USERS_SUNDAY = [7,8]
@@ -66,7 +82,6 @@ def _person_email_from_wa_id(wa_id: str) -> str:
     wa_id = wa_id.strip()
     wa_id = wa_id.replace("+", "")
     wa_id = wa_id.replace(" ", "")
-    print( 'person_email_from_wa_id for wa_id: \n' + wa_id)
     return f"{wa_id}"
 
 
@@ -102,6 +117,169 @@ async def find_person_by_wa_id(client: httpx.AsyncClient, wa_id: str) -> dict[st
         raise
 
 
+# ── Lead helpers (matched by person.id, not by the raw wa_id string) ──────────
+#
+# The lead↔person link is resolved by person.id — matching on the contact number string failed
+# whenever the number carried a "+" or spaces (root cause of ~1/3 of leads never linked).
+
+def _lead_person_id(ld: dict[str, Any]) -> Optional[int]:
+    """Return the person id attached to a lead, as int, or None."""
+    pid = (ld.get("person") or {}).get("id")
+    try:
+        return int(pid) if pid is not None else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _lead_stage_id(ld: dict[str, Any]) -> Optional[int]:
+    """Return the lead's pipeline-stage id, from the flat field or the nested object."""
+    sid = ld.get("lead_pipeline_stage_id")
+    if sid is None:
+        sid = (ld.get("lead_pipeline_stage") or {}).get("id")
+    try:
+        return int(sid) if sid is not None else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _lead_stage_label(ld: dict[str, Any]) -> str:
+    """Human status for a cita: known stage id → label, else the payload's stage name."""
+    sid = _lead_stage_id(ld)
+    if sid in _STAGE_LABELS:
+        return _STAGE_LABELS[sid]
+    name = (ld.get("lead_pipeline_stage") or {}).get("name")
+    return name if isinstance(name, str) and name.strip() else "Desconocido"
+
+
+def _lead_product_name(ld: dict[str, Any]) -> str:
+    """First product/service name on the lead (products may be a dict or a list)."""
+    products = ld.get("products")
+    values = products.values() if isinstance(products, dict) else products
+    for v in values if isinstance(values, (list, type({}.values()))) else []:
+        if isinstance(v, dict) and v.get("name"):
+            return str(v["name"])
+    return ""
+
+
+def _lead_doctor_name(ld: dict[str, Any]) -> str:
+    """Doctor name stored on the cita lead: description is '<servicio> - <doctor>'."""
+    desc = ld.get("description") or ""
+    if " - " in desc:
+        return desc.split(" - ", 1)[1].strip()
+    return ""
+
+
+async def _search_leads_by_person(client: httpx.AsyncClient, person_id: int) -> list[dict[str, Any]]:
+    """All leads whose person.id == person_id (server-filtered, then verified by person.id)."""
+    resp = await client.get(
+        f"{_BASE}/api/v1/leads/search",
+        params={"search": str(person_id), "searchFields": "person_id:=;", "limit": 50},
+        headers=_HEADERS,
+    )
+    resp.raise_for_status()
+    data = resp.json().get("data", [])
+    return [ld for ld in data if isinstance(ld, dict) and _lead_person_id(ld) == int(person_id)]
+
+
+async def _latest_meeting(client: httpx.AsyncClient, lead_id: int) -> Optional[dict[str, Any]]:
+    """Latest meeting activity on a lead (by schedule_from), or None."""
+    resp = await client.get(f"{_BASE}/api/v1/leads/{lead_id}/activities", headers=_HEADERS)
+    resp.raise_for_status()
+    raw = resp.json()
+    activities = raw.get("data", raw) if isinstance(raw, dict) else raw
+    meetings = [
+        a for a in (activities if isinstance(activities, list) else [])
+        if isinstance(a, dict) and a.get("type") == "meeting"
+    ]
+    if not meetings:
+        return None
+    meetings.sort(key=lambda a: a.get("schedule_from") or "")
+    return meetings[-1]
+
+
+def _doctor_from_comment(comment: Optional[str]) -> str:
+    """Pull the 'Doctor: X' line out of an appointment comment."""
+    for line in (comment or "").splitlines():
+        if line.lower().startswith("doctor:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _service_from_title(title: Optional[str]) -> str:
+    """Meeting title is '<paciente> - <servicio>' → return the servicio part."""
+    if title and " - " in title:
+        return title.split(" - ", 1)[1].strip()
+    return ""
+
+
+async def _summarize_cita(client: httpx.AsyncClient, ld: dict[str, Any]) -> dict[str, Any]:
+    """Build one cita summary {lead_id, fecha, hora, doctor, servicio, estado} from a cita-lead."""
+    lead_id = ld.get("id")
+    servicio = _lead_product_name(ld)
+    doctor = _lead_doctor_name(ld)
+    estado = _lead_stage_label(ld)
+    fecha = hora = ""
+    try:
+        meeting = await _latest_meeting(client, lead_id) if lead_id is not None else None
+    except Exception as e:
+        logger.warning("cita_meeting_fetch_failed", lead_id=lead_id, error=str(e))
+        meeting = None
+    if meeting:
+        sf = meeting.get("schedule_from") or ""
+        fecha, _, hora = sf.partition(" ")
+        hora = hora[:5]
+        if not doctor:
+            doctor = _doctor_from_comment(meeting.get("comment"))
+        if not servicio:
+            servicio = _service_from_title(meeting.get("title"))
+    return {
+        "lead_id": lead_id,
+        "fecha": fecha,
+        "hora": hora,
+        "doctor": doctor,
+        "servicio": servicio,
+        "estado": estado,
+    }
+
+
+async def _collect_citas(client: httpx.AsyncClient, person_id: int) -> list[dict[str, Any]]:
+    """Return ALL of a person's citas (one per cita-lead), excluding the conversation lead.
+
+    Model: 1 lead-cita = 1 cita. Shared by get_citas (on-demand tool) and the pre-chat context
+    preload so both read the full history the same way — never just the most recent lead.
+    """
+    all_leads = await _search_leads_by_person(client, int(person_id))
+    cita_leads = [ld for ld in all_leads if _lead_stage_id(ld) not in _NON_CITA_STAGES]
+    citas = [await _summarize_cita(client, ld) for ld in cita_leads]
+    citas.sort(key=lambda c: (c.get("fecha") or "", c.get("hora") or ""))
+    return citas
+
+
+async def preload_patient_citas(
+    wa_id: str,
+) -> tuple[Optional[int], list[dict[str, Any]], Optional[int]]:
+    """Best-effort: resolve (person_id, all citas, active cita lead_id) for a wa_id.
+
+    Injected into the system prompt BEFORE chatting so the agent already knows the patient's full
+    appointment history (past + upcoming) and never re-asks what it can see. Returns (None, [],
+    None) on any failure — the conversation must never break because the CRM was slow.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            person = await find_person_by_wa_id(client, wa_id)
+            if not person or not person.get("id"):
+                return None, [], None
+            person_id = int(person["id"])
+            citas = await _collect_citas(client, person_id)
+            active_label = _STAGE_LABELS[_LEAD_STAGE_AGENDADO]
+            activas = [c for c in citas if c.get("estado") == active_label]
+            cita_activa = activas[-1]["lead_id"] if activas else None
+            return person_id, citas, cita_activa
+    except Exception as e:
+        logger.warning("preload_patient_citas_failed", wa_id=wa_id, error=str(e))
+        return None, [], None
+
+
 def _person_payload(
     wa_id: str,
     person_name: str,
@@ -111,7 +289,6 @@ def _person_payload(
 ) -> dict[str, Any]:
     clean_name = person_name.strip() if isinstance(person_name, str) and person_name.strip() else "Paciente WhatsApp"
     clean_phone = person_phone.strip() if isinstance(person_phone, str) and person_phone.strip() else wa_id
-    person_email = _person_email_from_wa_id(wa_id)
     payload: dict[str, Any] = {
         "name": clean_name,
         "emails": [],
@@ -247,38 +424,23 @@ async def ensure_lead_registered(
     """
     log = logger.bind(wa_id=wa_id)
     name = _real_name_or_none(person_name) or "Paciente WhatsApp"
-    person_email = []
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            leads_resp = await client.get(
-                f"{_BASE}/api/v1/leads/search",
-                params={"search": str(person_id), "searchFields": "person_id:=;", "limit": 10},
-                headers=_HEADERS,
-            )
-
-            print( 'leads_resp.json() holaaa ensure_lead_registered\n', leads_resp.json())
-            leads_resp.raise_for_status()
-            all_leads = leads_resp.json().get("data", [{}])
-            print( 'all_leads ensure_lead_registered\n', all_leads)
-
-            matching = [
-                ld for ld in all_leads
-                if str((ld.get("person") or {}).get("id")) == str(person_id)
-            ]
-
-            print( 'matching ensure_lead_registered\n', matching)
-            if matching:
-                lead_id = matching[-1]["id"]
+            all_leads = await _search_leads_by_person(client, int(person_id))
+            # Idempotent: if the person is already in the pipeline (any lead) do not create a
+            # second conversation lead. Safe against Meta/CRM webhook retries.
+            if all_leads:
+                lead_id = all_leads[-1]["id"]
                 log.info("crm_lead_exists_skip_create", lead_id=lead_id)
                 return {"success": True, "lead_id": lead_id, "created": False}
 
             close_date = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
             lead_body = {
-                "title": f"Nuevo paciente - {name}",
+                "title": f"Consulta - {name}",
                 "description": "Primer contacto vía WhatsApp",
                 "lead_value": 0,
                 "lead_source_id": 6,
-                "lead_pipeline_stage_id": 1,
+                "lead_pipeline_stage_id": _LEAD_STAGE_CONSULTA,
                 "lead_type_id": 1,
                 "user_id": _pick_agent_user(),
                 "expected_close_date": close_date,
@@ -329,35 +491,78 @@ async def _find_duplicate_meeting_id(
     return None
 
 
+async def _find_cita_lead_for_slot(
+    client: httpx.AsyncClient, person_id: int, schedule_from: str
+) -> Optional[int]:
+    """Return the id of an existing cita-lead already holding a not-done meeting at this slot.
+
+    Idempotency for the 1-lead-per-cita model: scans the person's Agendado leads and reuses the
+    one that already has a meeting at the same minute, so a retried confirmation does not create a
+    second lead-cita. Fails open (returns None) so a legitimate new booking is never blocked.
+    """
+    if not (schedule_from or "").strip():
+        return None
+    try:
+        all_leads = await _search_leads_by_person(client, int(person_id))
+        for ld in all_leads:
+            if _lead_stage_id(ld) != _LEAD_STAGE_AGENDADO:
+                continue
+            lead_id = ld.get("id")
+            if lead_id is not None and await _find_duplicate_meeting_id(client, lead_id, schedule_from) is not None:
+                return lead_id
+    except Exception as e:
+        logger.warning("crm_cita_slot_check_failed", person_id=person_id, error=str(e))
+    return None
+
+
+async def _write_cita_attributes(
+    client: httpx.AsyncClient,
+    lead_id: int,
+    *,
+    numero_carnet: Optional[str],
+    seguro_de_vida: Optional[str],
+    estado_seguro: Optional[str],
+    patient_age: Optional[int],
+) -> None:
+    """Copy carnet / insurance / estado / edad onto a cita-lead via the attributes endpoint."""
+    lead_attrs: dict[str, Any] = {}
+    if numero_carnet:
+        lead_attrs["ci"] = numero_carnet
+    if estado_seguro:
+        lead_attrs["estado_seguro_paciente_cita"] = estado_seguro
+    if patient_age is not None:
+        lead_attrs["edad_lead"] = str(patient_age)
+    if lead_attrs:
+        await client.put(
+            f"{_BASE}/api/v1/leads/attributes/edit/{lead_id}",
+            json=lead_attrs,
+            headers=_HEADERS,
+        )
+    insurance_id = _INSURANCE_ID_MAP.get((seguro_de_vida or "").lower().strip())
+    if insurance_id:
+        await client.put(
+            f"{_BASE}/api/v1/leads/attributes/edit/{lead_id}",
+            json={"insurance": [insurance_id]},
+            headers=_HEADERS,
+        )
+
+
 # ── Shared person/lead resolution (used by every write tool) ──────────────────
 
 async def _find_or_create_lead(
     client: httpx.AsyncClient, wa_id: str, person_id: int, person_name: str | None
 ) -> Optional[int]:
-    """Return the person's lead id, creating one in the 'Consulta' stage if none exists.
+    """Return the person's CONVERSATION lead id (Consulta stage), creating it if none exists.
 
-    Idempotent: reuses the most recent matching lead. Every write tool calls this so the
-    person→lead substrate is resolved the same way regardless of which single action runs.
+    This resolves the substrate for save_patient / save_insurance — the CI/insurance the patient
+    gives during intake live here. It intentionally does NOT reuse a cita lead (Agendado/Cancelado):
+    each cita is its own lead created by create_appointment (model: 1 lead-cita = 1 cita). Matched
+    by person.id so a "+"/spaces in the number never breaks the link.
     """
-    leads_resp = await client.get(
-        f"{_BASE}/api/v1/leads/search",
-        params={"search": str(person_id), "searchFields": "person_id:=;", "limit": 10},
-        headers=_HEADERS,
-    )
-    leads_resp.raise_for_status()
-    all_leads = leads_resp.json().get("data", [])
-    # Match on the person's WhatsApp number (contact_numbers), not email: persons are created
-    # with emails: [] so the old email match never hit and a NEW lead was created on every
-    # write-tool call (save_patient → save_insurance → create_appointment = duplicate leads).
-    matching = [
-        ld for ld in all_leads
-        if any(
-            (e.get("value", "")).lower() == wa_id.lower()
-            for e in (ld.get("person", {}).get("contact_numbers") or [])
-        )
-    ]
-    if matching:
-        return matching[-1]["id"]
+    all_leads = await _search_leads_by_person(client, int(person_id))
+    conversation = [ld for ld in all_leads if _lead_stage_id(ld) == _LEAD_STAGE_CONSULTA]
+    if conversation:
+        return conversation[-1]["id"]
 
     name = _real_name_or_none(person_name) or "Paciente WhatsApp"
     close_date = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
@@ -553,6 +758,7 @@ async def create_appointment(
     motivo_consulta: Optional[str] = None,
     seguro_de_vida: Optional[str] = None,
     estado_seguro: Optional[str] = None,
+    numero_carnet: Optional[str] = None,
     is_for_self: bool = True,
     nombre_paciente_de_otra_persona: Optional[str] = None,
     edad_paciente: Optional[int] = None,
@@ -560,11 +766,16 @@ async def create_appointment(
     person_name: Optional[str] = None,
     person_phone: Optional[str] = None,
 ) -> str:
-    """Create the appointment (meeting activity) in the CRM. ONE action: book the cita.
+    """Create ONE appointment as its OWN lead-cita in the CRM. ONE action: book the cita.
 
-    Only call this AFTER the patient explicitly confirmed. It moves the lead to the scheduled
-    stage and creates the meeting for the chosen doctor and slot. It is idempotent: a retried
-    call for a slot already booked on the lead does not create a duplicate.
+    Model: 1 lead-cita = 1 cita. Every call creates a NEW lead in the Agendado stage (it does NOT
+    reuse the conversation lead), so booking twice — or for two different people — yields two
+    independent citas that never overwrite each other's doctor/slot/service. The chosen service is
+    attached as the lead's product, and the carnet/seguro/estado/edad are copied onto the lead as
+    attributes; the doctor and datetime live on the lead's meeting activity.
+
+    Only call this AFTER the patient explicitly confirmed. Idempotent: a retried call for a slot
+    the patient already has booked (a cita-lead with a meeting at that time) does not duplicate it.
 
     Args:
         wa_id: WhatsApp ID of the contact (e.g. '591XXXXXXXX').
@@ -574,8 +785,9 @@ async def create_appointment(
         products_name: Service/product name chosen by patient.
         products_product_id: Numeric ID of the product from get_services().
         motivo_consulta: Patient's reason for visit or main complaint.
-        seguro_de_vida: Insurance name (for the appointment comment).
-        estado_seguro: Insurance status (for the appointment comment).
+        seguro_de_vida: Insurance name (copied to the cita-lead + comment).
+        estado_seguro: Insurance status (copied to the cita-lead + comment).
+        numero_carnet: Patient ID card number (CI), copied to the cita-lead.
         is_for_self: True if the appointment is for the WhatsApp sender; False if for another person.
         nombre_paciente_de_otra_persona: Name if booking for someone else.
         edad_paciente: Age of the person writing (primary patient).
@@ -605,16 +817,34 @@ async def create_appointment(
 
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            person_id, lead_id = await _resolve_person_and_lead(client, wa_id, person_name, person_phone)
-            if not (person_id and lead_id):
+            person_result = await ensure_person_registered(
+                client, wa_id, person_name, person_phone, update_existing_name=True
+            )
+            person_id = person_result["person_id"]
+            if not person_id:
                 return json.dumps({
                     "success": False,
                     "appointment_registered": False,
-                    "error": "could not obtain person/lead id",
+                    "error": "could not obtain person_id",
                 })
 
-            # Move the lead to the scheduled stage and attach the chosen product.
-            update_body: dict[str, Any] = {
+            # Idempotency guard: if the patient already has a cita-lead with a not-done meeting at
+            # this exact slot, reuse it instead of creating a second cita. Protects against a
+            # retried confirmation whose previous POST succeeded but response was lost ("SÍ" again).
+            existing = await _find_cita_lead_for_slot(client, person_id, schedule_from)
+            if existing is not None:
+                log.info("crm_cita_duplicate_skipped", lead_id=existing, schedule=schedule_from)
+                return json.dumps({
+                    "success": True,
+                    "person_id": person_id,
+                    "lead_id": existing,
+                    "appointment_registered": True,
+                    "idempotent": True,
+                })
+
+            # Create a NEW lead for THIS cita (Agendado stage). Never reuse the conversation lead:
+            # each cita is independent, so booking twice / for two people yields two lead-citas.
+            lead_body: dict[str, Any] = {
                 "title": person_name,
                 "description": f"{products_name or ''} - {nombre_doctor or ''}",
                 "lead_value": 0,
@@ -627,7 +857,7 @@ async def create_appointment(
                 "entity_type": "leads",
             }
             if products_name and products_product_id:
-                update_body["products"] = {
+                lead_body["products"] = {
                     "product_0": {
                         "name": products_name,
                         "product_id": str(products_product_id),
@@ -635,24 +865,27 @@ async def create_appointment(
                         "quantity": 1,
                     }
                 }
-            upd_resp = await client.put(f"{_BASE}/api/v1/leads/{lead_id}", json=update_body, headers=_HEADERS)
-            upd_resp.raise_for_status()
-            log.info("crm_lead_updated", lead_id=lead_id)
-
-            # Idempotency guard: if a meeting for this exact slot already exists on the lead,
-            # do not create a second one. Protects against a retried confirmation where the
-            # previous POST succeeded but its response was lost (patient re-sent "SÍ").
-            duplicate_id = await _find_duplicate_meeting_id(client, lead_id, schedule_from)
-            if duplicate_id is not None:
-                log.info("crm_activity_duplicate_skipped", lead_id=lead_id, activity_id=duplicate_id, schedule=schedule_from)
+            lead_resp = await client.post(f"{_BASE}/api/v1/leads", json=lead_body, headers=_HEADERS)
+            lead_resp.raise_for_status()
+            lead_id = lead_resp.json().get("data", {}).get("id")
+            if not lead_id:
                 return json.dumps({
-                    "success": True,
+                    "success": False,
+                    "appointment_registered": False,
+                    "error": "could not create cita lead",
                     "person_id": person_id,
-                    "lead_id": lead_id,
-                    "appointment_registered": True,
-                    "activity_id": duplicate_id,
-                    "idempotent": True,
                 })
+            log.info("crm_cita_lead_created", lead_id=lead_id)
+
+            # Copy carnet / seguro / estado / edad onto the cita-lead as attribute_values.
+            await _write_cita_attributes(
+                client,
+                lead_id,
+                numero_carnet=numero_carnet,
+                seguro_de_vida=seguro_de_vida,
+                estado_seguro=estado_seguro,
+                patient_age=(edad_paciente_de_otra_persona if not is_for_self else edad_paciente),
+            )
 
             appointment_patient = nombre_paciente_de_otra_persona if not is_for_self else person_name
             patient_type_label = "Tercero" if not is_for_self else "Mismo paciente"
@@ -666,9 +899,6 @@ async def create_appointment(
             ]
             if not is_for_self and nombre_paciente_de_otra_persona:
                 comment_lines.append(f"Solicitado por: {person_name}")
-            # edad params are accepted for a complete signature; the age lives on the person/lead
-            # via save_patient, so it is not duplicated in the appointment body.
-            _ = (edad_paciente, edad_paciente_de_otra_persona)
 
             activity_body: dict = {
                 "lead_id": lead_id,
@@ -715,41 +945,32 @@ async def create_appointment(
         return json.dumps({"success": False, "appointment_registered": False, "error": str(e)})
 
 
-async def _find_person_and_lead(
-    client: httpx.AsyncClient, wa_id: str
-) -> tuple[dict[str, Any] | None, int | None]:
-    """Return (person, lead_id) for a wa_id, matching the lead by the person's WhatsApp number."""
+async def _latest_active_cita_lead(client: httpx.AsyncClient, wa_id: str) -> Optional[int]:
+    """Return the most recent still-active (Agendado) cita-lead id for a wa_id, or None."""
     person = await find_person_by_wa_id(client, wa_id)
     if not person or not person.get("id"):
-        return None, None
-    leads_resp = await client.get(
-        f"{_BASE}/api/v1/leads/search",
-        params={"search": str(person["id"]), "searchFields": "person_id:=;", "limit": 10},
-        headers=_HEADERS,
-    )
-    leads_resp.raise_for_status()
-    all_leads = leads_resp.json().get("data", [])
-    matching = [
-        ld for ld in all_leads
-        if any(
-            (e.get("value", "")).lower() == wa_id.lower()
-            for e in (ld.get("person", {}).get("contact_numbers") or [])
-        )
-    ]
-    return person, (matching[-1]["id"] if matching else None)
+        return None
+    all_leads = await _search_leads_by_person(client, int(person["id"]))
+    active = [ld for ld in all_leads if _lead_stage_id(ld) == _LEAD_STAGE_AGENDADO]
+    if not active:
+        return None
+    active.sort(key=lambda ld: ld.get("id") or 0)
+    return active[-1].get("id")
 
 
-async def cancel_appointment(wa_id: str) -> dict[str, Any]:
-    """Cancel a patient's latest appointment.
+async def cancel_appointment(wa_id: str, lead_id: Optional[int] = None) -> dict[str, Any]:
+    """Cancel ONE cita — the one identified by lead_id, or the latest active cita if omitted.
 
-    Deletes the most recent not-done meeting activity (DELETE /api/v1/activities/{id}) and moves
-    the lead to the cancelled pipeline stage. Used by the deterministic post-booking flow.
+    Deletes that cita-lead's not-done meeting (DELETE /api/v1/activities/{id}) and moves ONLY that
+    lead to the cancelled stage — other citas of the same patient are untouched. When lead_id is
+    omitted (deterministic post-booking / reschedule flow) it targets the latest active cita.
     """
-    log = logger.bind(wa_id=wa_id)
+    log = logger.bind(wa_id=wa_id, lead_id=lead_id)
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            person, lead_id = await _find_person_and_lead(client, wa_id)
-            if not person or not lead_id:
+            if lead_id is None:
+                lead_id = await _latest_active_cita_lead(client, wa_id)
+            if not lead_id:
                 return {"success": False, "error": "no_appointment_found"}
 
             acts_resp = await client.get(f"{_BASE}/api/v1/leads/{lead_id}/activities", headers=_HEADERS)
@@ -782,16 +1003,114 @@ async def cancel_appointment(wa_id: str) -> dict[str, Any]:
 
 
 @tool
-async def cancel_appointment_tool(wa_id: str) -> str:
-    """Cancel the patient's latest appointment. ONE action: cancel the cita.
+async def cancel_appointment_tool(wa_id: str, lead_id: Optional[int] = None) -> str:
+    """Cancel ONE cita. ONE action: cancel the cita.
 
-    Deletes the most recent upcoming meeting and moves the lead to the cancelled stage. Only
-    call this when the patient explicitly asked to cancel and confirmed.
+    Moves that specific cita-lead to the cancelled stage and deletes its meeting — other citas of
+    the patient are untouched. Only call this when the patient explicitly asked to cancel and
+    confirmed. When the patient has 2+ active citas, first call get_citas and pass the chosen
+    cita's lead_id here so the right one is cancelled.
 
     Args:
         wa_id: WhatsApp ID of the patient (e.g. '591XXXXXXXX').
+        lead_id: The cita's lead_id from get_citas. Omit only when the patient has a single active
+            cita (then the latest active one is cancelled).
     """
-    result = await cancel_appointment(wa_id)
+    result = await cancel_appointment(wa_id, lead_id=lead_id)
+    return json.dumps(result, ensure_ascii=False)
+
+
+async def reschedule_appointment(
+    wa_id: str,
+    lead_id: int,
+    horario_cita: str,
+    doctor_id: Optional[int] = None,
+    nombre_doctor: Optional[str] = None,
+) -> dict[str, Any]:
+    """Move ONE existing cita-lead to a new datetime (and optionally a new doctor).
+
+    Rebuilds the cita's meeting at the new slot on the SAME lead (keeping stage Agendado), so the
+    cita keeps its identity and history. Other citas are untouched.
+    """
+    log = logger.bind(wa_id=wa_id, lead_id=lead_id)
+    schedule_from, schedule_to = _parse_appointment_datetime(horario_cita)
+    if not schedule_from:
+        return {"success": False, "error": "invalid_appointment_datetime"}
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            # Idempotency: if the meeting is already at the requested slot, do nothing.
+            if await _find_duplicate_meeting_id(client, lead_id, schedule_from) is not None:
+                return {"success": True, "lead_id": lead_id, "idempotent": True}
+
+            old_meeting = await _latest_meeting(client, lead_id)
+            person_ids: list[str] = []
+            doctor_ids: list[str] = []
+            title = "Cita"
+            comment = ""
+            if old_meeting:
+                title = old_meeting.get("title") or title
+                comment = old_meeting.get("comment") or ""
+                for p in (old_meeting.get("participants") or []):
+                    if isinstance(p, dict) and p.get("person"):
+                        person_ids.append(str(p["person"].get("id")))
+                    if isinstance(p, dict) and p.get("doctor"):
+                        doctor_ids.append(str(p["doctor"].get("id")))
+                if not old_meeting.get("is_done"):
+                    await client.delete(f"{_BASE}/api/v1/activities/{old_meeting.get('id')}", headers=_HEADERS)
+
+            if doctor_id is not None:
+                doctor_ids = [str(doctor_id)]
+            activity_body: dict[str, Any] = {
+                "lead_id": lead_id,
+                "title": title,
+                "type": "meeting",
+                "schedule_from": schedule_from,
+                "schedule_to": schedule_to,
+                "location": "Consultorio",
+                "comment": comment,
+                "participants": {
+                    "persons": person_ids or [],
+                    "users": ["1"],
+                    "doctors": doctor_ids or [],
+                },
+            }
+            act_resp = await client.post(f"{_BASE}/api/v1/activities", json=activity_body, headers=_HEADERS)
+            act_resp.raise_for_status()
+            # Ensure the lead is back in the Agendado stage after a reschedule.
+            await client.put(
+                f"{_BASE}/api/v1/leads/stage/edit/{lead_id}",
+                json={"lead_pipeline_stage_id": [_LEAD_STAGE_AGENDADO]},
+                headers=_HEADERS,
+            )
+            log.info("crm_cita_rescheduled", lead_id=lead_id, schedule=schedule_from)
+            return {"success": True, "lead_id": lead_id, "schedule_from": schedule_from}
+    except Exception as e:
+        log.exception("reschedule_appointment_failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+@tool
+async def reschedule_appointment_tool(
+    wa_id: str,
+    lead_id: int,
+    horario_cita: str,
+    doctor_id: Optional[int] = None,
+    nombre_doctor: Optional[str] = None,
+) -> str:
+    """Reschedule ONE cita to a new day/time. ONE action: move the cita.
+
+    Points a specific cita (its lead_id from get_citas) to a new datetime on the same lead. With
+    2+ active citas, call get_citas first and pass the chosen cita's lead_id. Only call after the
+    patient confirmed the new slot.
+
+    Args:
+        wa_id: WhatsApp ID of the patient (e.g. '591XXXXXXXX').
+        lead_id: The cita's lead_id from get_citas.
+        horario_cita: New appointment datetime in format 'DD/MM/YYYY HH:MM'.
+        doctor_id: New doctor id, only if the doctor changes. Omit to keep the same doctor.
+        nombre_doctor: New doctor display name, if the doctor changes.
+    """
+    result = await reschedule_appointment(wa_id, lead_id, horario_cita, doctor_id, nombre_doctor)
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -826,89 +1145,38 @@ async def rename_person(wa_id: str, new_name: str) -> dict[str, Any]:
 
 @tool
 async def get_citas(wa_id: str) -> str:
-    """Get all appointments (meetings) for a patient by their WhatsApp ID.
+    """Get ALL of a patient's citas by their WhatsApp ID (one per cita-lead).
 
-    Searches the CRM for the lead associated with the WhatsApp number and
-    returns all meeting activities (past and upcoming). Use this to check
-    what appointments a patient already has before scheduling a new one.
+    Model: each cita is its own lead, so this returns the FULL history — every visit, past and
+    upcoming — not just the latest. Use it to review what the patient already booked/attended
+    before scheduling, and to pick which cita to cancel/reschedule when there are several.
+
+    Returns {"citas": [{lead_id, fecha, hora, doctor, servicio, estado}, ...]} sorted by date.
+    `estado` is the pipeline stage label (Agendado / Cancelado / …). Pass a cita's `lead_id` to
+    cancel_appointment_tool / reschedule_appointment_tool to act on that specific cita.
 
     Args:
         wa_id: WhatsApp ID of the patient (e.g. '591XXXXXXXX').
     """
-    person_email = f"{wa_id}"
     log = logger.bind(wa_id=wa_id)
-
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            # Step 1: find person by wa_id
             person = await find_person_by_wa_id(client, wa_id)
-            if not person:
-                log.info("get_citas_person_not_found", wa_id=wa_id)
+            if not person or not person.get("id"):
+                log.info("get_citas_person_not_found")
                 return json.dumps({"citas": [], "message": "patient_not_found_in_crm"})
 
-            person_id = person["id"]
-            # Step 2: find lead filtered by person_id — avoids full-table scan
-            leads_resp = await client.get(
-                f"{_BASE}/api/v1/leads/search",
-                params={"search": str(person_id), "searchFields": "person_id:=;", "limit": 10},
-                headers=_HEADERS,
-            )
-
-            print( 'leads_resp get citas\n', leads_resp.json())
-            leads_resp.raise_for_status()
-            all_leads = leads_resp.json().get("data", [])
-            matching = [
-                ld for ld in all_leads
-                if any(
-                    (e.get("value", "")).lower() == person_email.lower()
-                    for e in (ld.get("person", {}).get("contact_numbers") or [])
-                )
-            ]
-            print( 'matching holaaaa\n', matching)
-            if not matching:
-                log.info("get_citas_lead_not_found", email=person_email)
-                return json.dumps({"citas": [], "message": "no_lead_found_for_patient"})
-
-            lead_id = matching[-1]["id"]
-
-            # Step 3: fetch activities for the lead
-            acts_resp = await client.get(
-                f"{_BASE}/api/v1/leads/{lead_id}/activities",
-                headers=_HEADERS,
-            )
-            acts_resp.raise_for_status()
-            raw = acts_resp.json()
-            # API may return {"data": [...]} or directly [...]
-            activities: list = raw.get("data", raw) if isinstance(raw, dict) else raw
-
-            # Step 4: filter meetings only, return minimal fields
-            meetings = [
-                {
-                    "id": a["id"],
-                    "title": a.get("title", ""),
-                    "schedule_from": a.get("schedule_from", ""),
-                    "schedule_to": a.get("schedule_to", ""),
-                    "is_done": a.get("is_done", 0),
-                    "comment": a.get("comment", ""),
-                    "participants": [
-                        p.get("person", {}).get("name", "")
-                        for p in (a.get("participants") or [])
-                        if p.get("person")
-                    ],
-                }
-                for a in (activities if isinstance(activities, list) else [])
-                if a.get("type") == "meeting"
-            ]
-
-            log.info("get_citas_fetched", lead_id=lead_id, count=len(meetings))
-            return json.dumps({"citas": meetings, "lead_id": lead_id}, ensure_ascii=False)
+            person_id = int(person["id"])
+            citas = await _collect_citas(client, person_id)
+            log.info("get_citas_fetched", person_id=person_id, count=len(citas))
+            return json.dumps({"citas": citas}, ensure_ascii=False)
 
     except httpx.HTTPStatusError as e:
         log.exception("get_citas_http_error", status=e.response.status_code, error=str(e))
-        return json.dumps({"error": f"API returned {e.response.status_code}"})
+        return json.dumps({"error": f"API returned {e.response.status_code}", "citas": []})
     except Exception as e:
         log.exception("get_citas_failed", error=str(e))
-        return json.dumps({"error": str(e)})
+        return json.dumps({"error": str(e), "citas": []})
 
 
 def _fetch_transcript(wa_id: str, max_messages: int) -> str:
@@ -958,8 +1226,6 @@ async def sync_transcript_to_crm(wa_id: str, max_messages: int = 50) -> str:
         wa_id: WhatsApp ID of the patient (e.g. '591XXXXXXXX').
         max_messages: Maximum number of recent messages to include (default 50).
     """
-    person_email = f"{wa_id}"
-    print( 'sync_transcript_to_crm for wa_id: \n' + person_email)
     log = logger.bind(wa_id=wa_id)
 
     transcript = await asyncio.to_thread(_fetch_transcript, wa_id, max_messages)

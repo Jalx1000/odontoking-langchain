@@ -106,6 +106,13 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
         messages = [Message(role="user", content=text)]
         turn_id = sha256(f"sofo-crm:{wa_id}:{time.monotonic_ns()}:{text}".encode()).hexdigest()[:16]
         agent_task: asyncio.Task | None = None
+        # CONTRATO B: the agent fills this when it signals a handoff; we forward it to the CRM
+        # after the text reply so the CRM can pause the AI (ai_enabled=false).
+        handoff: dict = {}
+
+        async def _on_handoff(signal: dict) -> None:
+            handoff.update(signal)
+
         try:
             logger.info("crm_agent_turn_started", wa_id=wa_id, turn_id=turn_id, text_preview=text[:120])
             agent_task = asyncio.create_task(
@@ -117,6 +124,7 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
                     seguro_paciente=patient_ctx.get("seguro_paciente"),
                     nombre_registrado=patient_ctx.get("nombre_registrado"),
                     nombre_whatsapp=patient_ctx.get("nombre_whatsapp"),
+                    handoff_callback=_on_handoff,
                 )
             )
             try:
@@ -131,6 +139,11 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
                 )
             await gateway.send_response(dest, response_text)
             logger.info("crm_response_sent", wa_id=wa_id, turn_id=turn_id, preview=response_text[:120])
+            # CONTRATO B: forward the handoff signal so the CRM pauses the AI for this conversation.
+            if handoff.get("action") == "handoff":
+                await gateway.send_handoff(
+                    dest, handoff.get("motivo", ""), bool(handoff.get("fuera_de_horario", False))
+                )
         except asyncio.TimeoutError:
             logger.warning("crm_agent_hard_timeout", wa_id=wa_id, turn_id=turn_id)
             if agent_task is not None:

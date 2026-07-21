@@ -162,6 +162,7 @@ async def _book_crm(state: dict) -> dict:
             "motivo_consulta": state.get("motivo"),
             "seguro_de_vida": state.get("seguro") if has_seguro else None,
             "estado_seguro": state.get("seguro_estado"),
+            "numero_carnet": state.get("ci") if has_seguro else None,
             "is_for_self": is_for_self,
             "nombre_paciente_de_otra_persona": tercero_nombre,
             "edad_paciente": state.get("edad"),

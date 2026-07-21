@@ -4,8 +4,10 @@ import asyncio
 import json
 import os as _os
 import re
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import (
+    Any,
     Optional,
     cast,
 )
@@ -50,6 +52,8 @@ from app.core.langgraph.tools.crm import (
     cancel_appointment_tool,
     create_appointment,
     get_citas,
+    preload_patient_citas,
+    reschedule_appointment_tool,
     save_insurance,
     save_patient,
     sync_transcript_to_crm,
@@ -98,6 +102,7 @@ _ODONTOKING_TOOLS = [
     save_insurance,
     create_appointment,
     cancel_appointment_tool,
+    reschedule_appointment_tool,
     get_citas,
     sync_transcript_to_crm,
 ]
@@ -112,6 +117,28 @@ with open(_PROMPT_FILE, "r") as _f:
     _PROMPT_TEMPLATE = _f.read()
 
 
+def _format_citas_context(citas: list[dict] | None, cita_activa: int | None) -> list[str]:
+    """Render the patient's cita history as context lines (CONTRATO A: preloaded, don't re-ask)."""
+    if not citas:
+        return ["citas_previas: []  # el paciente no tiene citas registradas en el CRM"]
+    lines = ["citas_previas:  # historial completo — cada lead-cita es UNA cita (no vuelvas a preguntar)"]
+    for c in citas:
+        fecha = f"{c.get('fecha') or 's/fecha'} {c.get('hora') or ''}".strip()
+        lines.append(
+            f"  - lead_id={c.get('lead_id')} | {fecha} | {c.get('servicio') or 's/servicio'} | "
+            f"Dr. {c.get('doctor') or 's/doctor'} | estado={c.get('estado')}"
+        )
+    if cita_activa:
+        lines.append(
+            f"cita_activa_lead_id: {cita_activa}  # cita vigente; para cancelar/reprogramar usa este lead_id"
+        )
+    lines.append(
+        "# Para cancelar/reprogramar una cita concreta pasa su lead_id a la tool. "
+        "Con 2+ citas vigentes, pregunta cuál antes de actuar."
+    )
+    return lines
+
+
 def _load_odontoking_prompt(
     wa_id: str,
     *,
@@ -120,6 +147,9 @@ def _load_odontoking_prompt(
     seguro_paciente: str | None = None,
     nombre_registrado: str | None = None,
     nombre_whatsapp: str | None = None,
+    person_id: int | None = None,
+    citas: list[dict] | None = None,
+    cita_activa: int | None = None,
 ) -> str:
     """Render the odontoking system prompt with Bolivia local datetime and patient context."""
     now = datetime.now(_TZ_BOLIVIA)
@@ -131,12 +161,17 @@ def _load_odontoking_prompt(
     # flow (name, age, insurance) runs even if they already exist in the CRM.
     if not nombre_registrado:
         is_new_patient = True
+    # A patient with at least one cita is, by definition, not new (CONTRATO A).
+    if citas:
+        is_new_patient = False
 
     context_lines = [
         "# Contexto del paciente",
         f"wa_id: {wa_id}",
-        f"paciente_nuevo: {'true' if is_new_patient else 'false'}",
     ]
+    if person_id:
+        context_lines.append(f"person_id: {person_id}")
+    context_lines.append(f"paciente_nuevo: {'true' if is_new_patient else 'false'}")
     # Name resolution: registered CRM name → WhatsApp profile name → ask the patient.
     # (verify_insurance.patient_name takes priority during the flow, per the prompt.)
     if nombre_registrado:
@@ -172,12 +207,15 @@ def _load_odontoking_prompt(
             "Si la verificación NO da VIGENTE, NO agendes. Solo 'No tengo seguro' puede agendar como particular."
         )
 
+    # Pre-loaded cita history (CONTRATO A): the agent reviews every past/upcoming cita before
+    # replying, so it never re-asks "¿ya vino? ¿qué cita tuvo?" — it reads them here.
+    context_lines.extend(_format_citas_context(citas, cita_activa))
+
     context = "\n".join(context_lines)
     return _PROMPT_TEMPLATE.format(current_datetime=current_datetime) + f"\n\n{context}"
 
 
 def _chat_session_id(wa_id: str) -> str:
-    print( 'chat_session_id for wa_id: \n' + wa_id)
     return f"{wa_id}"
 
 
@@ -235,6 +273,36 @@ def _extract_mensaje(content: str) -> str:
             frag = re.sub(r'["}\s]+$', '', m2.group(1))
             return frag.replace('\\n', '\n').replace('\\"', '"')
     return text
+
+
+def _extract_handoff(content: str) -> Optional[dict[str, Any]]:
+    """Parse the LLM reply for a CONTRATO B handoff signal, or None.
+
+    The agent only EMITS the signal (the CRM executes the pause). A handoff object looks like
+    {"mensaje": "...", "action": "handoff", "motivo": "<breve>", "fuera_de_horario": <bool>};
+    tolerates it being one of several concatenated JSON objects.
+    """
+    text = (content or "").strip()
+    if '"handoff"' not in text:
+        return None
+    decoder = json.JSONDecoder()
+    idx, n = 0, len(text)
+    while idx < n:
+        while idx < n and text[idx] in " \t\r\n":
+            idx += 1
+        if idx >= n or text[idx] != "{":
+            break
+        try:
+            obj, idx = decoder.raw_decode(text, idx)
+        except json.JSONDecodeError:
+            break
+        if isinstance(obj, dict) and obj.get("action") == "handoff":
+            return {
+                "action": "handoff",
+                "motivo": str(obj.get("motivo") or ""),
+                "fuera_de_horario": bool(obj.get("fuera_de_horario", False)),
+            }
+    return None
 
 
 def _serialize_message(m: BaseMessage) -> str:
@@ -318,6 +386,9 @@ class OdontokingAgent:
             seguro_paciente=metadata.get("seguro_paciente"),
             nombre_registrado=metadata.get("nombre_registrado"),
             nombre_whatsapp=metadata.get("nombre_whatsapp"),
+            person_id=metadata.get("person_id"),
+            citas=metadata.get("citas"),
+            cita_activa=metadata.get("cita_activa"),
         )
         # When the deterministic intake already collected steps 1-6, inject that data so the
         # LLM continues from step 7 and never re-asks.
@@ -539,11 +610,17 @@ class OdontokingAgent:
         seguro_paciente: str | None = None,
         nombre_registrado: str | None = None,
         nombre_whatsapp: str | None = None,
+        person_id: int | None = None,
+        citas: list[dict] | None = None,
+        cita_activa: int | None = None,
+        handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
         """Process a WhatsApp message and return the agent's texto response.
 
         Returns the content of the 'mensaje' JSON field from the LLM response,
-        or the raw text if the response is not a valid JSON.
+        or the raw text if the response is not a valid JSON. When `citas` is not supplied by the
+        caller (CONTRATO A), the patient's full cita history is preloaded here before the LLM runs
+        so the agent reviews it up front instead of re-asking.
         """
         last_user_text = messages[-1].content if messages else ""
 
@@ -561,6 +638,11 @@ class OdontokingAgent:
             if intake_reply is not None:
                 return intake_reply
 
+        # CONTRATO A: preload the patient's full cita history before invoking the LLM so it is in
+        # the system prompt from the first token. Best-effort — never blocks the reply on failure.
+        if citas is None:
+            person_id, citas, cita_activa = await preload_patient_citas(wa_id)
+
         graph = await self._get_graph()
         callbacks: list[BaseCallbackHandler] = [langfuse_callback_handler] if settings.LANGFUSE_TRACING_ENABLED else []
         config: RunnableConfig = {
@@ -573,6 +655,9 @@ class OdontokingAgent:
                 "seguro_paciente": seguro_paciente,
                 "nombre_registrado": nombre_registrado,
                 "nombre_whatsapp": nombre_whatsapp,
+                "person_id": person_id,
+                "citas": citas,
+                "cita_activa": cita_activa,
                 "intake_handoff": intake_handoff,
             },
             "recursion_limit": 50,
@@ -626,6 +711,22 @@ class OdontokingAgent:
 
             # Extract the patient-facing text, tolerating malformed/multiple JSON objects.
             mensaje = _extract_mensaje(last_content)
+
+            # CONTRATO B: if the LLM signalled a handoff, surface it to the caller (the CRM
+            # executes the actual pause). The agent never pauses itself — it only emits.
+            handoff = _extract_handoff(last_content)
+            if handoff:
+                logger.info(
+                    "agent_handoff_signaled",
+                    wa_id=wa_id,
+                    motivo=handoff["motivo"],
+                    fuera_de_horario=handoff["fuera_de_horario"],
+                )
+                if handoff_callback is not None:
+                    try:
+                        await handoff_callback(handoff)
+                    except Exception as ho_err:
+                        logger.warning("agent_handoff_callback_failed", wa_id=wa_id, error=str(ho_err))
 
             # Fire-and-forget memory update (only when memory is enabled)
             if settings.ODONTOKING_MEMORY_ENABLED:
