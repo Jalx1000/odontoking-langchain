@@ -61,7 +61,8 @@
       "Bash(railway logs *)",
       "Bash(railway ssh *)",
       "Bash(awk '{print $1\" líneas\"}')",
-      "Bash(grep -oE \"[A-Z][0-9]{3,4}\")"
+      "Bash(grep -oE \"[A-Z][0-9]{3,4}\")",
+      "Bash(APP_ENV=development uv run python -c ' *)"
     ]
   }
 }

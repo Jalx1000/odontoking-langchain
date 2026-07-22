@@ -6,7 +6,7 @@ authenticated with `Authorization: Bearer <WHATSAPP_AGENT_TOKEN>`.
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class CrmContact(BaseModel):
@@ -32,9 +32,22 @@ class CrmHistoryItem(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    role: str
+    role: str = "user"
     content: str = ""
     type: str = "text"
+
+    @field_validator("role", "content", "type", mode="before")
+    @classmethod
+    def _null_to_empty(cls, v: object) -> object:
+        """Coerce null history fields to empty strings.
+
+        Kommo/CRM sends `content: null` (and sometimes role/type) for non-text history items
+        (images, audio, system notes). Since `content` is typed `str`, a literal null used to
+        raise a ValidationError that rejected the WHOLE `message.received` event — so the agent
+        never ran and never replied. History is context-only (not the trigger), so a null there
+        must never break the event.
+        """
+        return "" if v is None else v
 
 
 class CrmWindow(BaseModel):
