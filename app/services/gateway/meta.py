@@ -30,10 +30,6 @@ class MetaGateway:
         """Show the WhatsApp typing indicator (best-effort)."""
         await send_typing_indicator(dest.wa_id, phone_number_id=dest.phone_number_id, token=dest.token)
 
-    async def send_handoff(self, dest: Destination, motivo: str, fuera_de_horario: bool) -> None:
-        """No-op: Meta Cloud API has no human-handoff channel; handled at the CRM layer only."""
-        pass
-
     async def mark_read(self, dest: Destination, message_id: str) -> None:
         """Mark an incoming message as read (blue ticks)."""
         await mark_as_read(dest.wa_id, message_id, phone_number_id=dest.phone_number_id, token=dest.token)

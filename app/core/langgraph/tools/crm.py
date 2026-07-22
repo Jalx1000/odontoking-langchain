@@ -34,10 +34,13 @@ _INSURANCE_ID_MAP = {
     "no tengo seguro": 65,
 }
 
-# CRM lead pipeline stages.
-_LEAD_STAGE_CONSULTA = 1   # first contact (the conversation lead — NOT a cita)
-_LEAD_STAGE_CANCELADO = 6  # cancelled
-_LEAD_STAGE_AGENDADO = 7   # appointment scheduled
+# CRM lead pipeline stages (pipeline "Pacientes").
+_LEAD_STAGE_CONSULTA = 1       # first contact (the conversation lead — NOT a cita)
+_LEAD_STAGE_ATENDIDO = 5       # "Paciente (Atendido)"
+_LEAD_STAGE_CANCELADO = 6      # cancelled
+_LEAD_STAGE_AGENDADO = 7       # "Cita confirmadas" — appointment scheduled
+_LEAD_STAGE_NO_ASISTIO = 8     # "Cita Perdida"
+_LEAD_STAGE_RECEPCIONISTA = 9  # human handoff — CRM stops forwarding events while a lead is here
 
 # Stage id → human label for get_citas. Unknown ids fall back to the stage name carried on the
 # lead payload (Krayin returns lead_pipeline_stage.name), else "Desconocido".
@@ -999,6 +1002,40 @@ async def cancel_appointment(wa_id: str, lead_id: Optional[int] = None) -> dict[
             return {"success": True, "lead_id": lead_id, "deleted_activity_id": deleted_id}
     except Exception as e:
         log.exception("cancel_appointment_failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+async def move_lead_to_reception(wa_id: str, lead_id: Optional[int] = None) -> dict[str, Any]:
+    """Move the conversation lead to the Recepcionista stage (human handoff — CONTRATO B).
+
+    The agent's ONLY action on a handoff: put the conversation's lead in stage Recepcionista (9).
+    The CRM then stops forwarding this conversation's messages to the agent until a human moves the
+    lead back to a normal stage — so the agent never has to self-silence or check anything. Uses the
+    lead_id carried by the inbound event when available, else resolves the conversation (Consulta)
+    lead from the wa_id.
+    """
+    log = logger.bind(wa_id=wa_id, lead_id=lead_id)
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            if not lead_id:
+                person = await find_person_by_wa_id(client, wa_id)
+                if person and person.get("id"):
+                    all_leads = await _search_leads_by_person(client, int(person["id"]))
+                    conversation = [ld for ld in all_leads if _lead_stage_id(ld) == _LEAD_STAGE_CONSULTA]
+                    pool = conversation or all_leads
+                    if pool:
+                        lead_id = pool[-1].get("id")
+            if not lead_id:
+                return {"success": False, "error": "no_lead_found"}
+            await client.put(
+                f"{_BASE}/api/v1/leads/stage/edit/{lead_id}",
+                json={"lead_pipeline_stage_id": [_LEAD_STAGE_RECEPCIONISTA]},
+                headers=_HEADERS,
+            )
+            log.info("crm_lead_handed_off_to_reception", lead_id=lead_id)
+            return {"success": True, "lead_id": lead_id, "stage": _LEAD_STAGE_RECEPCIONISTA}
+    except Exception as e:
+        log.exception("move_lead_to_reception_failed", error=str(e))
         return {"success": False, "error": str(e)}
 
 

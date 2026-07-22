@@ -61,40 +61,6 @@ class CrmGateway:
         """Send a plain text message through the CRM."""
         await _post_text(dest, _strip_body_markdown(text))
 
-    async def send_handoff(self, dest: Destination, motivo: str, fuera_de_horario: bool) -> None:
-        """Emit a CONTRATO B handoff signal to the CRM (the CRM sets ai_enabled=false).
-
-        POSTs {action, motivo, fuera_de_horario} to the same conversation reply endpoint. The
-        agent only signals — pausing the AI + routing to a recepcionista is the CRM's job. Never
-        raises: a failed handoff must not break the turn (the text reply already went out).
-        """
-        url = _reply_url(dest)
-        payload = {"action": "handoff", "motivo": motivo, "fuera_de_horario": fuera_de_horario}
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {settings.CRM_API_KEY}",
-        }
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                if not resp.is_success:
-                    logger.warning(
-                        "crm_handoff_rejected",
-                        wa_id=dest.wa_id,
-                        status=resp.status_code,
-                        body=resp.text[:300],
-                    )
-                    return
-                logger.info(
-                    "crm_handoff_sent",
-                    wa_id=dest.wa_id,
-                    conversation_id=dest.conversation_id,
-                    fuera_de_horario=fuera_de_horario,
-                )
-        except Exception as e:
-            logger.warning("crm_handoff_failed", wa_id=dest.wa_id, error=str(e))
-
     async def send_typing(self, dest: Destination) -> None:
         """No-op: the CRM has no typing-indicator API."""
         logger.debug("crm_typing_noop", wa_id=dest.wa_id)

@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.core.config import settings
 from app.core.langgraph.odontoking_graph import odontoking_agent
-from app.core.langgraph.tools.crm import ensure_lead_registered, ensure_person_registered
+from app.core.langgraph.tools.crm import ensure_lead_registered, ensure_person_registered, move_lead_to_reception
 from app.core.limiter import limiter
 from app.core.logging import logger
 from app.schemas import Message
@@ -98,7 +98,7 @@ async def _register_patient(phone: str, name: str | None) -> dict:
         return {}
 
 
-def _make_process_fn(dest: Destination, patient_ctx: dict):
+def _make_process_fn(dest: Destination, patient_ctx: dict, contact_lead_id: int | None = None):
     """Return a ProcessFn closure bound to the CRM destination + patient context."""
     gateway = get_gateway()
 
@@ -139,10 +139,19 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
                 )
             await gateway.send_response(dest, response_text)
             logger.info("crm_response_sent", wa_id=wa_id, turn_id=turn_id, preview=response_text[:120])
-            # CONTRATO B: forward the handoff signal so the CRM pauses the AI for this conversation.
+            # CONTRATO B: on a handoff, move the conversation lead to the Recepcionista stage (9).
+            # The CRM then stops forwarding this conversation's messages to the agent — the agent
+            # does nothing else (no self-silence, no signal endpoint).
             if handoff.get("action") == "handoff":
-                await gateway.send_handoff(
-                    dest, handoff.get("motivo", ""), bool(handoff.get("fuera_de_horario", False))
+                result = await move_lead_to_reception(wa_id, lead_id=contact_lead_id)
+                logger.info(
+                    "crm_handoff_to_reception",
+                    wa_id=wa_id,
+                    turn_id=turn_id,
+                    lead_id=result.get("lead_id"),
+                    motivo=handoff.get("motivo", ""),
+                    fuera_de_horario=bool(handoff.get("fuera_de_horario", False)),
+                    success=result.get("success"),
                 )
         except asyncio.TimeoutError:
             logger.warning("crm_agent_hard_timeout", wa_id=wa_id, turn_id=turn_id)
@@ -210,7 +219,7 @@ async def receive_crm_event(request: Request) -> dict:
 
     logger.info("crm_message_received", conversation_id=event.conversation_id, wa_id=phone, preview=text[:60])
 
-    process_fn = _make_process_fn(dest, patient_ctx)
+    process_fn = _make_process_fn(dest, patient_ctx, contact_lead_id=event.contact.lead_id)
     if settings.BUFFER_ENABLED:
         await message_buffer_service.enqueue(phone, text, process_fn)
     else:
