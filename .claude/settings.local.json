@@ -62,7 +62,11 @@
       "Bash(railway ssh *)",
       "Bash(awk '{print $1\" líneas\"}')",
       "Bash(grep -oE \"[A-Z][0-9]{3,4}\")",
-      "Bash(APP_ENV=development uv run python -c ' *)"
+      "Bash(APP_ENV=development uv run python -c ' *)",
+      "Bash(railway add *)",
+      "Bash(railway redeploy *)",
+      "Bash(grep -iA1 \"dbgate\")",
+      "Bash(railway domain *)"
     ]
   }
 }
