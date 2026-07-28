@@ -66,7 +66,8 @@
       "Bash(railway add *)",
       "Bash(railway redeploy *)",
       "Bash(grep -iA1 \"dbgate\")",
-      "Bash(railway domain *)"
+      "Bash(railway domain *)",
+      "Bash(git rm *)"
     ]
   }
 }

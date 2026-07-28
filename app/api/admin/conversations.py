@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 from app.api.admin.deps import require_admin
 from app.core.broker import RedisStreamBroker, broker
-from app.core.langgraph.odontoking_graph import odontoking_agent
+from app.core.langgraph.imprimir_graph import imprimir_agent
 from app.core.logging import logger
 from app.models.chat_history_odonto import ChatHistoryOdonto
 from app.models.tenant import Tenant
@@ -182,7 +182,7 @@ async def clear_conversation(slug: str, wa_id: str):
         db.commit()
 
     try:
-        await odontoking_agent.clear_history(wa_id)
+        await imprimir_agent.clear_history(wa_id)
     except Exception as e:
         logger.warning("admin_langgraph_checkpoint_clear_failed", wa_id=wa_id, error=str(e))
 

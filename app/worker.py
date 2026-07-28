@@ -33,9 +33,11 @@ from app.services.gateway import Destination, get_gateway
 # ── Agent registry ──────────────────────────────────────────────────────────
 # Phase 3 will replace this with a BaseAgent factory.
 def _build_agent_registry():
-    from app.core.langgraph.odontoking_graph import OdontokingAgent
+    from app.core.langgraph.imprimir_graph import ImprimirAgent
+    agent = ImprimirAgent()
     return {
-        "odontoking": OdontokingAgent(),
+        "odontoking": agent,
+        "imprimir": agent,
     }
 
 
@@ -71,10 +73,7 @@ async def _handle_message(payload: dict, agent, tenant_slug: str) -> None:
         agent_task = asyncio.create_task(
             agent.get_response(
                 messages,
-                wa_id=wa_id,
-                is_new_patient=patient_ctx.get("is_new_patient", True),
-                ci_paciente=patient_ctx.get("ci_paciente"),
-                seguro_paciente=patient_ctx.get("seguro_paciente"),
+                wa_id,
                 nombre_registrado=patient_ctx.get("nombre_registrado"),
                 nombre_whatsapp=patient_ctx.get("nombre_whatsapp"),
             )

@@ -15,8 +15,8 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core.config import settings
-from app.core.langgraph.odontoking_graph import odontoking_agent
-from app.core.langgraph.tools.crm import ensure_lead_registered, ensure_person_registered, move_lead_to_reception
+from app.core.langgraph.imprimir_graph import imprimir_agent
+from app.core.langgraph.tools.crm import find_person_by_wa_id, _real_name_or_none
 from app.core.limiter import limiter
 from app.core.logging import logger
 from app.schemas import Message
@@ -69,62 +69,38 @@ def _is_duplicate_message(msg_id: str) -> bool:
     return False
 
 
-async def _register_patient(phone: str, name: str | None) -> dict:
-    """Find or create the patient in the Odontoking CRM (best-effort). Returns patient ctx."""
+async def _resolve_contact_name(phone: str) -> str | None:
+    """Best-effort: return the contact's real registered name from the CRM, or None.
+
+    We do NOT pre-create the person/lead here — the agent's resolve_person / create_lead tools own
+    that during the quotation flow. This only lets Valentina greet a returning contact by name.
+    """
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            reg = await ensure_person_registered(
-                client,
-                wa_id=phone,
-                person_name=name or "",
-                person_phone=phone,
-                update_existing_name=False,
-            )
-        ctx = {
-            "is_new_patient": reg.get("is_new_patient", True),
-            "ci_paciente": reg.get("ci_paciente"),
-            "seguro_paciente": reg.get("seguro_paciente"),
-            "nombre_registrado": reg.get("nombre_registrado"),
-            "nombre_whatsapp": name or None,
-        }
-        if reg.get("person_id"):
-            lead_task = asyncio.create_task(ensure_lead_registered(phone, reg["person_id"], name or None))
-            _background_tasks.add(lead_task)
-            lead_task.add_done_callback(_background_tasks.discard)
-        logger.info("crm_patient_registered", wa_id=phone, is_new_patient=ctx["is_new_patient"])
-        return ctx
+            person = await find_person_by_wa_id(client, phone)
+        return _real_name_or_none(person.get("name")) if person else None
     except Exception as e:
-        logger.exception("crm_patient_registration_failed", wa_id=phone, error=str(e))
-        return {}
+        logger.warning("crm_contact_name_lookup_failed", wa_id=phone, error=str(e))
+        return None
 
 
-def _make_process_fn(dest: Destination, patient_ctx: dict, contact_lead_id: int | None = None):
-    """Return a ProcessFn closure bound to the CRM destination + patient context."""
+def _make_process_fn(dest: Destination, patient_ctx: dict):
+    """Return a ProcessFn closure bound to the CRM destination + contact context."""
     gateway = get_gateway()
 
     async def _process(wa_id: str, text: str) -> None:
         messages = [Message(role="user", content=text)]
         turn_id = sha256(f"sofo-crm:{wa_id}:{time.monotonic_ns()}:{text}".encode()).hexdigest()[:16]
         agent_task: asyncio.Task | None = None
-        # CONTRATO B: the agent fills this when it signals a handoff; we forward it to the CRM
-        # after the text reply so the CRM can pause the AI (ai_enabled=false).
-        handoff: dict = {}
-
-        async def _on_handoff(signal: dict) -> None:
-            handoff.update(signal)
-
         try:
             logger.info("crm_agent_turn_started", wa_id=wa_id, turn_id=turn_id, text_preview=text[:120])
             agent_task = asyncio.create_task(
-                odontoking_agent.get_response(
+                imprimir_agent.get_response(
                     messages,
-                    wa_id=wa_id,
-                    is_new_patient=patient_ctx.get("is_new_patient", True),
-                    ci_paciente=patient_ctx.get("ci_paciente"),
-                    seguro_paciente=patient_ctx.get("seguro_paciente"),
+                    wa_id,
+                    conversation_id=dest.conversation_id,
                     nombre_registrado=patient_ctx.get("nombre_registrado"),
                     nombre_whatsapp=patient_ctx.get("nombre_whatsapp"),
-                    handoff_callback=_on_handoff,
                 )
             )
             try:
@@ -139,20 +115,6 @@ def _make_process_fn(dest: Destination, patient_ctx: dict, contact_lead_id: int 
                 )
             await gateway.send_response(dest, response_text)
             logger.info("crm_response_sent", wa_id=wa_id, turn_id=turn_id, preview=response_text[:120])
-            # CONTRATO B: on a handoff, move the conversation lead to the Recepcionista stage (9).
-            # The CRM then stops forwarding this conversation's messages to the agent — the agent
-            # does nothing else (no self-silence, no signal endpoint).
-            if handoff.get("action") == "handoff":
-                result = await move_lead_to_reception(wa_id, lead_id=contact_lead_id)
-                logger.info(
-                    "crm_handoff_to_reception",
-                    wa_id=wa_id,
-                    turn_id=turn_id,
-                    lead_id=result.get("lead_id"),
-                    motivo=handoff.get("motivo", ""),
-                    fuera_de_horario=bool(handoff.get("fuera_de_horario", False)),
-                    success=result.get("success"),
-                )
         except asyncio.TimeoutError:
             logger.warning("crm_agent_hard_timeout", wa_id=wa_id, turn_id=turn_id)
             if agent_task is not None:
@@ -213,13 +175,13 @@ async def receive_crm_event(request: Request) -> dict:
     reply_url = event.reply.url if event.reply else ""
     dest = Destination(wa_id=phone, conversation_id=event.conversation_id, reply_url=reply_url)
 
-    patient_ctx: dict = {}
+    patient_ctx: dict = {"nombre_whatsapp": event.contact.name or None}
     if settings.WHATSAPP_AUTO_CREATE_PERSON:
-        patient_ctx = await _register_patient(phone, event.contact.name)
+        patient_ctx["nombre_registrado"] = await _resolve_contact_name(phone)
 
     logger.info("crm_message_received", conversation_id=event.conversation_id, wa_id=phone, preview=text[:60])
 
-    process_fn = _make_process_fn(dest, patient_ctx, contact_lead_id=event.contact.lead_id)
+    process_fn = _make_process_fn(dest, patient_ctx)
     if settings.BUFFER_ENABLED:
         await message_buffer_service.enqueue(phone, text, process_fn)
     else:

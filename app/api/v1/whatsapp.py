@@ -25,8 +25,8 @@ from fastapi.responses import PlainTextResponse
 
 from app.core.broker import broker
 from app.core.config import settings
-from app.core.langgraph.odontoking_graph import odontoking_agent
-from app.core.langgraph.tools.crm import ensure_lead_registered, ensure_person_registered
+from app.core.langgraph.imprimir_graph import imprimir_agent
+from app.core.langgraph.tools.crm import _real_name_or_none, find_person_by_wa_id
 from app.core.limiter import limiter
 from app.core.logging import logger
 from app.core.tenant import TenantConfig, get_tenant, get_tenant_async
@@ -74,7 +74,8 @@ _UNSUPPORTED_MSG = (
 # Maps agent_type → internal agent instance.
 # External agents (agent_endpoint_url set) bypass this registry entirely.
 _AGENT_REGISTRY: dict[str, Any] = {
-    "odontoking": odontoking_agent,
+    "odontoking": imprimir_agent,
+    "imprimir": imprimir_agent,
 }
 
 
@@ -119,14 +120,11 @@ def _extract_profile_name(value: WhatsAppValue) -> str:
 def _make_process_fn(
     tenant: TenantConfig,
     *,
-    is_new_patient: bool = True,
-    ci_paciente: str | None = None,
-    seguro_paciente: str | None = None,
     nombre_registrado: str | None = None,
     nombre_whatsapp: str | None = None,
 ) -> ProcessFn:
     """Return a ProcessFn closure bound to the given tenant's agent and WA credentials."""
-    agent = _AGENT_REGISTRY.get(tenant.agent_type, odontoking_agent)
+    agent = _AGENT_REGISTRY.get(tenant.agent_type, imprimir_agent)
     pid = tenant.phone_number_id
     tok = tenant.wa_access_token
     gateway = get_gateway()
@@ -150,10 +148,7 @@ def _make_process_fn(
             agent_task = asyncio.create_task(
                 agent.get_response(
                     messages,
-                    wa_id=wa_id,
-                    is_new_patient=is_new_patient,
-                    ci_paciente=ci_paciente,
-                    seguro_paciente=seguro_paciente,
+                    wa_id,
                     nombre_registrado=nombre_registrado,
                     nombre_whatsapp=nombre_whatsapp,
                 )
@@ -254,53 +249,32 @@ async def _handle_webhook_payload(
                     continue
 
                 if wa_id not in registered_wa_ids:
+                    profile_name = _extract_profile_name(value)
+                    nombre_registrado: str | None = None
+                    # Best-effort: greet a returning contact by their registered name. The agent's
+                    # resolve_person / create_lead tools own person + lead creation during the
+                    # quotation flow, so nothing is pre-created here.
                     try:
-                        profile_name = _extract_profile_name(value)
-                        # Seed the CRM with the WhatsApp profile name on first contact so the
-                        # record is never empty. The intake still asks for the real name and the
-                        # CRM name becomes "<perfil WhatsApp> - <nombre solicitado>" afterwards.
                         async with httpx.AsyncClient(timeout=20) as client:
-                            reg = await ensure_person_registered(
-                                client,
-                                wa_id=wa_id,
-                                person_name=profile_name,
-                                person_phone=wa_id,
-                                update_existing_name=False,
-                            )
-                        registered_wa_ids[wa_id] = {
-                            "is_new_patient": reg.get("is_new_patient", True),
-                            "ci_paciente": reg.get("ci_paciente"),
-                            "seguro_paciente": reg.get("seguro_paciente"),
-                            "nombre_registrado": reg.get("nombre_registrado"),
-                            "nombre_whatsapp": profile_name or None,
-                        }
-                        logger.info(
-                            "whatsapp_patient_registered",
-                            tenant=tenant.slug,
-                            wa_id=wa_id,
-                            name=profile_name or "Paciente WhatsApp",
-                            is_new_patient=registered_wa_ids[wa_id]["is_new_patient"],
-                        )
-                        # Ensure the patient has a lead in the "Consulta" pipeline stage from the
-                        # first message — even a plain greeting, and even for someone who already
-                        # exists as a Person but has no lead yet (returning patients, recycled test
-                        # numbers). ensure_lead_registered is idempotent (it reuses an existing
-                        # lead), so this is safe to attempt on every contact; it runs as a
-                        # background task so it never delays the reply.
-                        if reg.get("person_id"):
-                            lead_task = asyncio.create_task(
-                                ensure_lead_registered(wa_id, reg["person_id"], profile_name or None)
-                            )
-                            _background_tasks.add(lead_task)
-                            lead_task.add_done_callback(_background_tasks.discard)
+                            person = await find_person_by_wa_id(client, wa_id)
+                        nombre_registrado = _real_name_or_none(person.get("name")) if person else None
                     except Exception as e:
-                        registered_wa_ids[wa_id] = {}
-                        logger.exception(
-                            "whatsapp_patient_registration_failed",
+                        logger.warning(
+                            "whatsapp_contact_name_lookup_failed",
                             tenant=tenant.slug,
                             wa_id=wa_id,
                             error=str(e),
                         )
+                    registered_wa_ids[wa_id] = {
+                        "nombre_registrado": nombre_registrado,
+                        "nombre_whatsapp": profile_name or None,
+                    }
+                    logger.info(
+                        "whatsapp_contact_seen",
+                        tenant=tenant.slug,
+                        wa_id=wa_id,
+                        name=profile_name or "Cliente WhatsApp",
+                    )
 
                 text_content: str = ""
 
