@@ -203,6 +203,7 @@ async def _ensure_organization(
 
 async def _create_lead(
     client: httpx.AsyncClient,
+    person_id: Optional[int],
     wa_id: str,
     nombre: Optional[str],
     nombre_empresa: Optional[str],
@@ -211,10 +212,20 @@ async def _create_lead(
     resumen: str,
     es_postventa: bool,
 ) -> Optional[int]:
-    """Create the lead; return lead_id."""
+    """Create the lead linked to the existing person; return lead_id."""
     etiqueta = (nombre_empresa or nombre or "Cliente").strip()
     prefix = "Postventa WhatsApp" if es_postventa else "Cotización WhatsApp"
     descripcion = " — ".join(p for p in (categoria, resumen) if p and p.strip()) or "Vía WhatsApp"
+    # Link the EXISTING person by id. Sending contact_numbers for a number Krayin already has makes
+    # the lead-create 422 ("person.contact_numbers.0.value has already been taken"). Only fall back
+    # to contact_numbers if we somehow have no person_id.
+    person: dict[str, Any] = {"name": _clean_name(nombre)}
+    if person_id:
+        person["id"] = person_id
+    else:
+        person["contact_numbers"] = [{"value": wa_id, "label": "work"}]
+    if organization_id:
+        person["organization_id"] = organization_id
     body: dict[str, Any] = {
         "title": f"{prefix} - {etiqueta}",
         "description": descripcion,
@@ -222,11 +233,7 @@ async def _create_lead(
         "lead_source_id": _SOURCE_WHATSAPP,
         "lead_type_id": _LEAD_TYPE_POSTVENTA if es_postventa else _LEAD_TYPE_VENTA,
         "user_id": _OWNER_USER_ID,
-        "person": {
-            "name": _clean_name(nombre),
-            "contact_numbers": [{"value": wa_id, "label": "work"}],
-            "organization_id": organization_id,
-        },
+        "person": person,
         "entity_type": "leads",
     }
     if es_postventa and _POSTVENTA_STAGE_ID is not None:
@@ -333,7 +340,7 @@ async def register_cotizacion(
             person_id = await _resolve_person(client, wa, contacto)
             org_id = await _ensure_organization(client, person_id, nombre_empresa) if nombre_empresa else None
             lead_id = await _create_lead(
-                client, wa, contacto, nombre_empresa, org_id, categoria, resumen, es_postventa
+                client, person_id, wa, contacto, nombre_empresa, org_id, categoria, resumen, es_postventa
             )
             if not lead_id:
                 log.error("register_cotizacion_no_lead_id")
@@ -424,7 +431,7 @@ async def registrar_consulta_postventa(
             person_id = await _resolve_person(client, wa, contacto)
             org_id = await _ensure_organization(client, person_id, nombre_empresa) if nombre_empresa else None
             lead_id = await _create_lead(
-                client, wa, contacto, nombre_empresa, org_id, "Postventa", (detalle or "").strip(), True
+                client, person_id, wa, contacto, nombre_empresa, org_id, "Postventa", (detalle or "").strip(), True
             )
             if not lead_id:
                 return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
