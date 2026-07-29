@@ -1,16 +1,20 @@
 """IMPRIMIR CRM tool — Krayin contacts, leads, products, activities and tags.
 
-Flow: WhatsApp → Krayin CRM → agent. The agent receives conversation_id + wa_id, reads
-context and replies through the CrmGateway (reply.url), NOT through a tool here. These tools
-only perform the CRM writes for a B2B quotation ("cotización"):
+Flow: WhatsApp → Krayin CRM → agent → CrmGateway. The agent receives conversation_id + wa_id,
+drives the quotation, and replies in plain text (the gateway sends it).
 
-    resolve_person → ensure_organization → create_lead → add_lead_product(×n)
-    → add_lead_note → tag_lead(temperatura) → [postventa: set_lead_stage]
+Design note — ONE coarse tool per action:
+The naive design (resolve_person → ensure_organization → create_lead → add_lead_product →
+add_lead_note → tag_lead as six separate LLM tools) forces the model to thread person_id / lead_id
+between calls. Weaker models call them in parallel in a single turn and hallucinate those ids
+(e.g. person_id=0). So the LLM-facing surface is just:
 
-Saving is incremental: create the lead early (create_lead returns lead_id) and enrich it as the
-data arrives. Every new quotation is a NEW lead. The agent keeps lead_id in its conversation
-state and passes it back to the enrichment tools, which also makes the writes idempotent against
-Meta/CRM webhook retries.
+    register_cotizacion(...)          — ventas: does the whole resolve→org→lead→product→note→tag
+    registrar_consulta_postventa(...) — postventa: creates a lead in the postventa pipeline
+    get_person_leads(wa_id)           — what this contact already has
+
+Each takes only wa_id (always in context) plus plain fields — no ids to thread. The step functions
+below are internal helpers, not tools.
 
 Reuses the ODONTOKING_API_URL / ODONTOKING_API_TOKEN settings — those env vars point at the
 IMPRIMIR Krayin instance (https://imprimir.sofopolis.com), authenticated with a sanctum_admin
@@ -39,22 +43,19 @@ _SOURCE_WHATSAPP = 6          # lead_source_id "WhatsApp"
 _LEAD_TYPE_VENTA = 1          # New Business
 _LEAD_TYPE_POSTVENTA = 2      # Existing Business
 _OWNER_USER_ID = 1            # default lead owner
-# Initial stage of the postventa/legacy pipeline (pipeline 3). Confirm the real stage id in
-# Krayin (Settings → Pipelines) and fill it here. While None, a postventa lead stays in the
-# default pipeline until a human moves it — create_lead never guesses a stage id.
+# Initial stage of the postventa/legacy pipeline (pipeline 3). Confirm the real stage id in Krayin
+# and fill it here; while None, a postventa lead stays in the default pipeline until a human moves it.
 _POSTVENTA_STAGE_ID: Optional[int] = None
 
 # Lead temperature → tag id (internal only; never shown to the client).
 _TAG_IDS = {"caliente": 1, "tibio": 2, "frio": 3}
-# Aliases the LLM might pass, normalized to the keys above.
 _TEMP_ALIASES = {
     "🔥": "caliente", "caliente": "caliente",
     "🌤️": "tibio", "☁️": "tibio", "tibio": "tibio", "cálido": "tibio", "calido": "tibio",
     "❄️": "frio", "frío": "frio", "frio": "frio",
 }
 
-# Static catalog → product_id map (spec §4.3). Used as a fallback when the live product search
-# does not resolve a product yet.
+# Static catalog → product_id map (spec §4.3): fallback when the live product search misses.
 _PRODUCT_IDS = {
     "bolsa pouch": 1,
     "bolsa flow pack": 2,
@@ -70,7 +71,7 @@ _PRODUCT_IDS = {
 _PLACEHOLDER_NAME = "Cliente WhatsApp"
 
 
-# ── Low-level helpers ─────────────────────────────────────────────────────────
+# ── Low-level HTTP ────────────────────────────────────────────────────────────
 
 def _is_transient(exc: BaseException) -> bool:
     """Retry on transient failures only: 429, 5xx, and network timeouts/connection errors."""
@@ -89,11 +90,7 @@ def _is_transient(exc: BaseException) -> bool:
     reraise=True,
 )
 async def _request(client: httpx.AsyncClient, method: str, path: str, **kwargs: Any) -> httpx.Response:
-    """Call the Krayin API with the shared headers, retrying only on transient errors.
-
-    Non-transient responses (4xx such as 422 validation) are raised immediately so the calling
-    tool can inspect the body; transient ones (429/5xx/timeout) are retried with backoff.
-    """
+    """Call the Krayin API with shared headers, retrying only on transient errors."""
     resp = await client.request(method, f"{_BASE}{path}", headers=_HEADERS, **kwargs)
     resp.raise_for_status()
     return resp
@@ -155,135 +152,71 @@ async def _resolve_product_id(client: httpx.AsyncClient, name: str) -> Optional[
     return _PRODUCT_IDS.get(clean.lower())
 
 
-# ── CRM write tools (one Krayin call each) ────────────────────────────────────
+# ── Internal step functions (share one httpx client; NOT exposed as tools) ─────
 
-@tool
-async def resolve_person(wa_id: str, nombre: Optional[str] = None) -> str:
-    """Buscar o crear el contacto (Person) del cliente a partir de su número de WhatsApp.
-
-    Llama a esto al inicio para obtener el person_id. Si el contacto ya existe se reutiliza; si no,
-    se crea con el nombre indicado (o "Cliente WhatsApp" si aún no lo conoces).
-
-    Args:
-        wa_id: Número de WhatsApp del cliente (p. ej. '591XXXXXXXX').
-        nombre: Nombre real del contacto si ya lo conoces. Omítelo para usar el placeholder.
-
-    Devuelve {"person_id", "nombre_registrado" (null si es placeholder), "created"}.
-    """
-    wa = _normalize_wa_id(wa_id)
-    log = logger.bind(wa_id=wa)
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            person = await find_person_by_wa_id(client, wa)
-            if person and person.get("id"):
-                log.info("imprimir_person_found", person_id=person["id"])
-                return json.dumps(
-                    {
-                        "person_id": person["id"],
-                        "nombre_registrado": _real_name_or_none(person.get("name")),
-                        "created": False,
-                    },
-                    ensure_ascii=False,
-                )
-
-            payload = {
-                "name": _clean_name(nombre),
-                "contact_numbers": [{"value": wa, "label": "work"}],
-                "entity_type": "persons",
-            }
-            resp = await _request(client, "POST", "/api/v1/contacts/persons", json=payload)
-            data = _data(resp)
-            person_id = data.get("id") if isinstance(data, dict) else None
-            log.info("imprimir_person_created", person_id=person_id)
-            return json.dumps(
-                {"person_id": person_id, "nombre_registrado": _real_name_or_none(nombre), "created": True},
-                ensure_ascii=False,
-            )
-    except Exception as e:
-        log.exception("resolve_person_failed", error=str(e))
-        return json.dumps({"person_id": None, "error": str(e) or type(e).__name__}, ensure_ascii=False)
+async def _resolve_person(client: httpx.AsyncClient, wa_id: str, nombre: Optional[str]) -> Optional[int]:
+    """Find or create the person; return person_id."""
+    person = await find_person_by_wa_id(client, wa_id)
+    if person and person.get("id"):
+        return person["id"]
+    payload = {
+        "name": _clean_name(nombre),
+        "contact_numbers": [{"value": wa_id, "label": "work"}],
+        "entity_type": "persons",
+    }
+    resp = await _request(client, "POST", "/api/v1/contacts/persons", json=payload)
+    data = _data(resp)
+    return data.get("id") if isinstance(data, dict) else None
 
 
-@tool
-async def ensure_organization(person_id: int, nombre_empresa: str) -> str:
-    """Crear la empresa (Organization) del cliente y vincularla a su contacto.
-
-    Args:
-        person_id: id del contacto obtenido de resolve_person.
-        nombre_empresa: Nombre de la empresa del cliente.
-
-    Devuelve {"organization_id", "linked"}.
-    """
+async def _ensure_organization(
+    client: httpx.AsyncClient, person_id: Optional[int], nombre_empresa: str
+) -> Optional[int]:
+    """Create the organization and link it to the person; return organization_id."""
     empresa = (nombre_empresa or "").strip()
-    log = logger.bind(person_id=person_id)
     if not empresa:
-        return json.dumps({"organization_id": None, "error": "missing_organization_name"}, ensure_ascii=False)
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await _request(client, "POST", "/api/v1/contacts/organizations", json={"name": empresa})
-            org = _data(resp)
-            org_id = org.get("id") if isinstance(org, dict) else None
-            log.info("imprimir_organization_created", organization_id=org_id, empresa=empresa[:60])
-
-            linked = False
-            if org_id:
-                try:
-                    # Krayin's person PUT validates name/entity_type, so rebuild the payload from the
-                    # existing record and merge the organization_id rather than PUTting a bare field.
-                    person = await _request(client, "GET", f"/api/v1/contacts/persons/{person_id}")
-                    pdata = _data(person)
-                    pdata = pdata if isinstance(pdata, dict) else {}
-                    put_payload = {
-                        "name": _clean_name(pdata.get("name")),
-                        "contact_numbers": pdata.get("contact_numbers") or [],
-                        "organization_id": org_id,
-                        "entity_type": "persons",
-                    }
-                    await _request(client, "PUT", f"/api/v1/contacts/persons/{person_id}", json=put_payload)
-                    linked = True
-                    log.info("imprimir_organization_linked", organization_id=org_id)
-                except Exception as link_err:  # noqa: BLE001 — org exists even if the link failed
-                    log.warning("imprimir_organization_link_failed", organization_id=org_id, error=str(link_err))
-
-            return json.dumps({"organization_id": org_id, "linked": linked}, ensure_ascii=False)
-    except Exception as e:
-        log.exception("ensure_organization_failed", error=str(e))
-        return json.dumps({"organization_id": None, "error": str(e) or type(e).__name__}, ensure_ascii=False)
+        return None
+    resp = await _request(client, "POST", "/api/v1/contacts/organizations", json={"name": empresa})
+    org = _data(resp)
+    org_id = org.get("id") if isinstance(org, dict) else None
+    if org_id and person_id:
+        try:
+            # Krayin's person PUT validates name/entity_type, so rebuild the payload from the record.
+            person = await _request(client, "GET", f"/api/v1/contacts/persons/{person_id}")
+            pdata = _data(person)
+            pdata = pdata if isinstance(pdata, dict) else {}
+            await _request(
+                client,
+                "PUT",
+                f"/api/v1/contacts/persons/{person_id}",
+                json={
+                    "name": _clean_name(pdata.get("name")),
+                    "contact_numbers": pdata.get("contact_numbers") or [],
+                    "organization_id": org_id,
+                    "entity_type": "persons",
+                },
+            )
+        except Exception as e:  # noqa: BLE001 — org exists even if linking failed
+            logger.warning("imprimir_organization_link_failed", organization_id=org_id, error=str(e))
+    return org_id
 
 
-@tool
-async def create_lead(
+async def _create_lead(
+    client: httpx.AsyncClient,
     wa_id: str,
-    nombre: Optional[str] = None,
-    nombre_empresa: Optional[str] = None,
-    organization_id: Optional[int] = None,
-    categoria: Optional[str] = None,
-    resumen: Optional[str] = None,
-    es_postventa: bool = False,
-) -> str:
-    """Crear la cotización como Lead en el CRM (paso 1 del guardado incremental).
-
-    Crea el lead apenas haya intención + producto y devuelve su lead_id (el número de referencia
-    "Solicitud #<lead_id>"). Enriquece ese MISMO lead con add_lead_product / add_lead_note /
-    tag_lead. IDEMPOTENCIA: si ya tienes un lead_id de esta cotización, NO vuelvas a llamar aquí.
-
-    Args:
-        wa_id: Número de WhatsApp del cliente.
-        nombre: Nombre del contacto.
-        nombre_empresa: Empresa del cliente (para el título del lead).
-        organization_id: id de empresa de ensure_organization, si existe.
-        categoria: Categoría del catálogo (p. ej. "Envases Flexibles").
-        resumen: Resumen breve de la solicitud.
-        es_postventa: True si es un cliente existente ("Soy cliente"); usa lead_type postventa.
-
-    Devuelve {"lead_id"}.
-    """
-    wa = _normalize_wa_id(wa_id)
-    log = logger.bind(wa_id=wa)
+    nombre: Optional[str],
+    nombre_empresa: Optional[str],
+    organization_id: Optional[int],
+    categoria: Optional[str],
+    resumen: str,
+    es_postventa: bool,
+) -> Optional[int]:
+    """Create the lead; return lead_id."""
     etiqueta = (nombre_empresa or nombre or "Cliente").strip()
-    descripcion = " — ".join(p for p in (categoria, resumen) if p and p.strip()) or "Cotización vía WhatsApp"
+    prefix = "Postventa WhatsApp" if es_postventa else "Cotización WhatsApp"
+    descripcion = " — ".join(p for p in (categoria, resumen) if p and p.strip()) or "Vía WhatsApp"
     body: dict[str, Any] = {
-        "title": f"Cotización WhatsApp - {etiqueta}",
+        "title": f"{prefix} - {etiqueta}",
         "description": descripcion,
         "lead_value": "0",
         "lead_source_id": _SOURCE_WHATSAPP,
@@ -291,185 +224,231 @@ async def create_lead(
         "user_id": _OWNER_USER_ID,
         "person": {
             "name": _clean_name(nombre),
-            "contact_numbers": [{"value": wa, "label": "work"}],
+            "contact_numbers": [{"value": wa_id, "label": "work"}],
             "organization_id": organization_id,
         },
         "entity_type": "leads",
     }
-    # Venta: omit the stage so the lead lands in the default pipeline's initial stage. Postventa:
-    # only set it when the id is known (see _POSTVENTA_STAGE_ID), otherwise leave it for a human.
     if es_postventa and _POSTVENTA_STAGE_ID is not None:
         body["lead_pipeline_stage_id"] = _POSTVENTA_STAGE_ID
+    resp = await _request(client, "POST", "/api/v1/leads", json=body)
+    data = _data(resp)
+    return data.get("id") if isinstance(data, dict) else None
+
+
+async def _add_lead_product(
+    client: httpx.AsyncClient, lead_id: int, producto: str, cantidad: int
+) -> bool:
+    """Attach the catalog product to the lead; return True if attached."""
+    nombre = (producto or "").strip()
+    product_id = await _resolve_product_id(client, nombre)
+    if not product_id:
+        return False
+    await _request(
+        client,
+        "PUT",
+        f"/api/v1/leads/product/{lead_id}",
+        json={
+            "product_id": product_id,
+            "name": nombre,
+            "price": 0,
+            "quantity": cantidad,
+            "amount": 0,
+            "is_new": False,
+            "id": None,
+        },
+    )
+    return True
+
+
+async def _add_lead_note(client: httpx.AsyncClient, lead_id: int, title: str, fields: list[tuple[str, Any]]) -> None:
+    """Post a note activity on the lead from (label, value) pairs (blank values skipped)."""
+    lines = [f"{label}: {value}" for label, value in fields if value not in (None, "", [])]
+    if not lines:
+        return
+    await _request(
+        client,
+        "POST",
+        "/api/v1/activities",
+        json={"lead_id": lead_id, "type": "note", "title": title, "comment": "\n".join(lines)},
+    )
+
+
+async def _tag_lead(client: httpx.AsyncClient, lead_id: int, temperatura: str) -> Optional[int]:
+    """Attach the temperature tag to the lead; return tag_id or None."""
+    key = _TEMP_ALIASES.get(str(temperatura).strip().lower())
+    tag_id = _TAG_IDS.get(key) if key else None
+    if not tag_id:
+        return None
+    await _request(client, "POST", f"/api/v1/leads/{lead_id}/tags", json={"tag_id": tag_id})
+    return tag_id
+
+
+# ── LLM-facing tools (one call per action; only wa_id + plain fields) ──────────
+
+@tool
+async def register_cotizacion(
+    wa_id: str,
+    categoria: str,
+    producto: str,
+    cantidad: int,
+    nombre_empresa: Optional[str] = None,
+    contacto: Optional[str] = None,
+    medida: Optional[str] = None,
+    impresion: Optional[str] = None,
+    plazo: Optional[str] = None,
+    temperatura: str = "tibio",
+    adjunto: Optional[str] = None,
+    detalle: Optional[str] = None,
+    es_postventa: bool = False,
+) -> str:
+    """Registra la cotización COMPLETA en el CRM en una sola llamada. Llámala UNA vez, solo DESPUÉS
+    de que el cliente confirme el resumen con un "sí".
+
+    Hace todo internamente (contacto, empresa, lead, producto, specs y temperatura) — tú solo pasas
+    los datos, no manejas ids. Devuelve el número de referencia "Solicitud #<lead_id>".
+
+    Args:
+        wa_id: Número de WhatsApp del cliente (está en el contexto).
+        categoria: Categoría del catálogo (p. ej. "Envases Flexibles").
+        producto: Nombre EXACTO del producto del catálogo (p. ej. "Bolsa Pouch").
+        cantidad: Cantidad solicitada (entero).
+        nombre_empresa: Empresa del cliente.
+        contacto: Nombre de la persona de contacto.
+        medida: Medida / capacidad / dimensiones.
+        impresion: Detalle de impresión o arte ("sí, con arte" / "no lleva").
+        plazo: "Urgente" / "Este mes" / "Solo cotizando".
+        temperatura: Temperatura INTERNA del lead: "caliente" | "tibio" | "frio".
+        adjunto: "sí" si el cliente ya envió un archivo, si aplica.
+        detalle: Cualquier detalle adicional en texto libre.
+        es_postventa: True solo si es un cliente existente con una consulta de postventa.
+
+    Devuelve {"lead_id", "solicitud", "temperatura", "producto_adjuntado"}.
+    """
+    wa = _normalize_wa_id(wa_id)
+    log = logger.bind(wa_id=wa)
+    resumen = " ".join(str(p) for p in (cantidad, producto) if p)
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await _request(client, "POST", "/api/v1/leads", json=body)
-            data = _data(resp)
-            lead_id = data.get("id") if isinstance(data, dict) else None
-            log.info("imprimir_lead_created", lead_id=lead_id, es_postventa=es_postventa)
-            return json.dumps({"lead_id": lead_id, "es_postventa": es_postventa}, ensure_ascii=False)
+        async with httpx.AsyncClient(timeout=30) as client:
+            person_id = await _resolve_person(client, wa, contacto)
+            org_id = await _ensure_organization(client, person_id, nombre_empresa) if nombre_empresa else None
+            lead_id = await _create_lead(
+                client, wa, contacto, nombre_empresa, org_id, categoria, resumen, es_postventa
+            )
+            if not lead_id:
+                log.error("register_cotizacion_no_lead_id")
+                return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
+
+            # Best-effort enrichment — a failure here must not lose the lead already created.
+            attached = False
+            try:
+                attached = await _add_lead_product(client, lead_id, producto, cantidad)
+            except Exception as e:  # noqa: BLE001
+                log.warning("register_cotizacion_product_failed", lead_id=lead_id, error=str(e))
+            try:
+                await _add_lead_note(
+                    client,
+                    lead_id,
+                    "Datos de cotización",
+                    [
+                        ("Producto", producto if not attached else None),  # producto ya está como line item si se adjuntó
+                        ("Categoría", categoria),
+                        ("Medida", medida),
+                        ("Impresión/arte", impresion),
+                        ("Cantidad", cantidad),
+                        ("Plazo", plazo),
+                        ("Adjunto", adjunto),
+                        ("Detalle", detalle),
+                    ],
+                )
+            except Exception as e:  # noqa: BLE001
+                log.warning("register_cotizacion_note_failed", lead_id=lead_id, error=str(e))
+            tag_id = None
+            try:
+                tag_id = await _tag_lead(client, lead_id, temperatura)
+            except Exception as e:  # noqa: BLE001
+                log.warning("register_cotizacion_tag_failed", lead_id=lead_id, error=str(e))
+
+            log.info(
+                "imprimir_cotizacion_registered",
+                lead_id=lead_id,
+                producto=producto[:40],
+                cantidad=cantidad,
+                producto_adjuntado=attached,
+                tag_id=tag_id,
+                es_postventa=es_postventa,
+            )
+            return json.dumps(
+                {
+                    "lead_id": lead_id,
+                    "solicitud": f"#{lead_id}",
+                    "temperatura": _TEMP_ALIASES.get(str(temperatura).strip().lower(), "tibio"),
+                    "producto_adjuntado": attached,
+                },
+                ensure_ascii=False,
+            )
     except httpx.HTTPStatusError as e:
-        body_text = e.response.text[:1000] if e.response is not None else ""
-        log.exception("create_lead_http_error", status=e.response.status_code, body=body_text)
+        body_text = e.response.text[:800] if e.response is not None else ""
+        log.exception("register_cotizacion_http_error", status=e.response.status_code, body=body_text)
         return json.dumps({"lead_id": None, "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
     except Exception as e:
-        log.exception("create_lead_failed", error=str(e))
+        log.exception("register_cotizacion_failed", error=str(e))
         return json.dumps({"lead_id": None, "error": str(e) or type(e).__name__}, ensure_ascii=False)
 
 
 @tool
-async def add_lead_product(lead_id: int, producto: str, cantidad: int = 1) -> str:
-    """Adjuntar un producto del catálogo al lead (paso 2). Llámalo una vez por producto.
-
-    Args:
-        lead_id: id del lead devuelto por create_lead.
-        producto: Nombre EXACTO del producto del catálogo (p. ej. "Bolsa Pouch").
-        cantidad: Cantidad solicitada.
-
-    Si el producto aún no existe en el CRM, no se adjunta y debe quedar en add_lead_note.
-    Devuelve {"attached", "product_id"}.
-    """
-    log = logger.bind(lead_id=lead_id)
-    nombre = (producto or "").strip()
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            product_id = await _resolve_product_id(client, nombre)
-            if not product_id:
-                log.info("imprimir_product_unresolved", producto=nombre[:60])
-                return json.dumps(
-                    {"attached": False, "product_id": None, "reason": "product_not_found_use_note"},
-                    ensure_ascii=False,
-                )
-            body = {
-                "product_id": product_id,
-                "name": nombre,
-                "price": 0,
-                "quantity": cantidad,
-                "amount": 0,
-                "is_new": False,
-                "id": None,
-            }
-            await _request(client, "PUT", f"/api/v1/leads/product/{lead_id}", json=body)
-            log.info("imprimir_product_attached", product_id=product_id, cantidad=cantidad)
-            return json.dumps({"attached": True, "product_id": product_id}, ensure_ascii=False)
-    except Exception as e:
-        log.exception("add_lead_product_failed", error=str(e))
-        return json.dumps({"attached": False, "error": str(e) or type(e).__name__}, ensure_ascii=False)
-
-
-@tool
-async def add_lead_note(
-    lead_id: int,
-    producto: Optional[str] = None,
-    medida: Optional[str] = None,
-    impresion: Optional[str] = None,
-    cantidad: Optional[str] = None,
-    plazo: Optional[str] = None,
-    adjunto: Optional[str] = None,
-    detalle: Optional[str] = None,
+async def registrar_consulta_postventa(
+    wa_id: str,
+    detalle: str,
+    nombre_empresa: Optional[str] = None,
+    contacto: Optional[str] = None,
+    nro_pedido: Optional[str] = None,
 ) -> str:
-    """Guardar las especificaciones de la cotización como nota en el lead (paso 3).
+    """Registra la consulta de un CLIENTE EXISTENTE (postventa) como lead en el pipeline de postventa.
+
+    Úsala en la rama "Soy cliente y tengo una consulta". No mezcla con ventas nuevas. Llámala UNA vez.
 
     Args:
-        lead_id: id del lead de create_lead.
-        producto: Producto solicitado.
-        medida: Medida / dimensiones.
-        impresion: Detalle de impresión o arte.
-        cantidad: Cantidad.
-        plazo: Plazo (Urgente / Este mes / Solo cotizando).
-        adjunto: "sí"/"no" — indica si el cliente ya envió un adjunto (queda en la conversación).
-        detalle: Cualquier detalle adicional en texto libre.
+        wa_id: Número de WhatsApp del cliente.
+        detalle: Descripción breve de la consulta del cliente.
+        nombre_empresa: Empresa del cliente.
+        contacto: Nombre de contacto.
+        nro_pedido: Nº de pedido o cotización previa, si lo tiene.
 
-    Devuelve {"success"}.
+    Devuelve {"lead_id", "solicitud"}.
     """
-    log = logger.bind(lead_id=lead_id)
-    fields = [
-        ("Producto", producto),
-        ("Medida", medida),
-        ("Impresión/arte", impresion),
-        ("Cantidad", cantidad),
-        ("Plazo", plazo),
-        ("Adjunto", adjunto),
-    ]
-    lines = [f"{label}: {value}" for label, value in fields if value and str(value).strip()]
-    if detalle and detalle.strip():
-        lines.append(detalle.strip())
-    if not lines:
-        return json.dumps({"success": False, "error": "empty_note"}, ensure_ascii=False)
-    body = {
-        "lead_id": lead_id,
-        "type": "note",
-        "title": "Datos de cotización",
-        "comment": "\n".join(lines),
-    }
+    wa = _normalize_wa_id(wa_id)
+    log = logger.bind(wa_id=wa)
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            await _request(client, "POST", "/api/v1/activities", json=body)
-            log.info("imprimir_lead_note_added", fields=[label for label, value in fields if value])
-            return json.dumps({"success": True}, ensure_ascii=False)
-    except Exception as e:
-        log.exception("add_lead_note_failed", error=str(e))
-        return json.dumps({"success": False, "error": str(e) or type(e).__name__}, ensure_ascii=False)
-
-
-@tool
-async def tag_lead(lead_id: int, temperatura: str) -> str:
-    """Etiquetar la temperatura (interna) del lead. NUNCA se muestra al cliente.
-
-    Temperatura: 🔥 "caliente" (cantidad relevante + plazo Urgente/Este mes), 🌤️ "tibio"
-    (producto y cantidad con plazo flexible), ❄️ "frio" ("solo cotizando"/sin datos).
-
-    Args:
-        lead_id: id del lead de create_lead.
-        temperatura: "caliente", "tibio" o "frio".
-
-    Devuelve {"success", "tag_id"}.
-    """
-    log = logger.bind(lead_id=lead_id)
-    key = _TEMP_ALIASES.get(str(temperatura).strip().lower())
-    tag_id = _TAG_IDS.get(key) if key else None
-    if not tag_id:
-        return json.dumps({"success": False, "error": "unknown_temperatura"}, ensure_ascii=False)
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            await _request(client, "POST", f"/api/v1/leads/{lead_id}/tags", json={"tag_id": tag_id})
-            log.info("imprimir_lead_tagged", tag_id=tag_id, temperatura=key)
-            return json.dumps({"success": True, "tag_id": tag_id}, ensure_ascii=False)
-    except Exception as e:
-        log.exception("tag_lead_failed", error=str(e))
-        return json.dumps({"success": False, "error": str(e) or type(e).__name__}, ensure_ascii=False)
-
-
-@tool
-async def set_lead_stage(lead_id: int, stage_id: int) -> str:
-    """Mover el lead a otra etapa del embudo (opcional; p. ej. postventa a pipeline 3).
-
-    Args:
-        lead_id: id del lead.
-        stage_id: id de la etapa destino en Krayin.
-
-    Devuelve {"success", "stage_id"}.
-    """
-    log = logger.bind(lead_id=lead_id)
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            await _request(
-                client,
-                "PUT",
-                f"/api/v1/leads/stage/edit/{lead_id}",
-                json={"lead_pipeline_stage_id": stage_id},
+        async with httpx.AsyncClient(timeout=30) as client:
+            person_id = await _resolve_person(client, wa, contacto)
+            org_id = await _ensure_organization(client, person_id, nombre_empresa) if nombre_empresa else None
+            lead_id = await _create_lead(
+                client, wa, contacto, nombre_empresa, org_id, "Postventa", (detalle or "").strip(), True
             )
-            log.info("imprimir_lead_stage_set", stage_id=stage_id)
-            return json.dumps({"success": True, "stage_id": stage_id}, ensure_ascii=False)
+            if not lead_id:
+                return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
+            try:
+                await _add_lead_note(
+                    client,
+                    lead_id,
+                    "Consulta postventa",
+                    [("Nº pedido/cotización", nro_pedido), ("Consulta", detalle)],
+                )
+            except Exception as e:  # noqa: BLE001
+                log.warning("postventa_note_failed", lead_id=lead_id, error=str(e))
+            log.info("imprimir_postventa_registered", lead_id=lead_id)
+            return json.dumps({"lead_id": lead_id, "solicitud": f"#{lead_id}"}, ensure_ascii=False)
     except Exception as e:
-        log.exception("set_lead_stage_failed", error=str(e))
-        return json.dumps({"success": False, "error": str(e) or type(e).__name__}, ensure_ascii=False)
+        log.exception("registrar_consulta_postventa_failed", error=str(e))
+        return json.dumps({"lead_id": None, "error": str(e) or type(e).__name__}, ensure_ascii=False)
 
 
 @tool
 async def get_person_leads(wa_id: str) -> str:
-    """Listar las cotizaciones (leads) que ya tiene este contacto.
+    """Lista las cotizaciones (leads) que ya tiene este contacto.
 
-    Úsalo para no duplicar y para responder "¿en qué va mi cotización?".
+    Úsala para no duplicar y para responder "¿en qué va mi cotización?".
 
     Args:
         wa_id: Número de WhatsApp del cliente.

@@ -30,14 +30,9 @@ from pydantic import SecretStr
 
 from app.core.config import settings
 from app.core.langgraph.tools.crm import (
-    add_lead_note,
-    add_lead_product,
-    create_lead,
-    ensure_organization,
     get_person_leads,
-    resolve_person,
-    set_lead_stage,
-    tag_lead,
+    register_cotizacion,
+    registrar_consulta_postventa,
 )
 from app.core.logging import logger
 from app.core.observability import langfuse_callback_handler
@@ -48,13 +43,8 @@ from app.utils import dump_messages, process_llm_response
 PostgresConnPool = AsyncConnectionPool[AsyncConnection[DictRow]]
 
 _IMPRIMIR_TOOLS = [
-    resolve_person,
-    ensure_organization,
-    create_lead,
-    add_lead_product,
-    add_lead_note,
-    tag_lead,
-    set_lead_stage,
+    register_cotizacion,
+    registrar_consulta_postventa,
     get_person_leads,
 ]
 
