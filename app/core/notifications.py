@@ -44,9 +44,13 @@ def _build_email(subject: str, body_html: str, body_text: str) -> MIMEMultipart:
 
 
 def _smtp_send(msg: MIMEMultipart) -> None:
-    """Send email synchronously via SMTP SSL. Runs in a thread pool."""
+    """Send email synchronously via SMTP SSL. Runs in a thread pool (fire-and-forget).
+
+    Short timeout: many PaaS (Railway) block outbound SMTP, so the connect would otherwise hang a
+    pool thread. This alert is best-effort and never on the request path, so failing fast is fine.
+    """
     context = ssl.create_default_context()
-    with smtplib.SMTP_SSL(settings.MAIL_HOST, settings.MAIL_PORT, context=context, timeout=10) as server:
+    with smtplib.SMTP_SSL(settings.MAIL_HOST, settings.MAIL_PORT, context=context, timeout=5) as server:
         server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
         server.sendmail(settings.MAIL_FROM_ADDRESS, settings.MAIL_TO_ADDRESS, msg.as_string())
 

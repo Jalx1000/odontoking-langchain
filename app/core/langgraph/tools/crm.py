@@ -59,17 +59,19 @@ _TEMP_ALIASES = {
     "❄️": "frio", "frío": "frio", "frio": "frio",
 }
 
-# Static catalog → product_id map (spec §4.3): fallback when the live product search misses.
+# Static catalog → product_id map: fallback when the live product search misses. These are the
+# REAL ids from the IMPRIMIR Krayin catalog (verified via GET /api/v1/products) — the live
+# products/search is still tried first, this is only the last resort.
 _PRODUCT_IDS = {
-    "bolsa pouch": 1,
-    "bolsa flow pack": 2,
-    "bolsa sachet": 3,
-    "bolsa almohada": 4,
-    "bolsa wicket": 5,
-    "bolsa sello lateral": 6,
-    "etiqueta sleeve": 7,
-    "etiqueta roll feed": 8,
-    "tapa plástica 1881 short finish": 9,
+    "bolsa pouch": 12,
+    "bolsa flow pack": 6,
+    "bolsa sachet": 8,
+    "bolsa almohada": 9,
+    "bolsa wicket": 11,
+    "bolsa sello lateral": 7,
+    "etiqueta sleeve": 15,
+    "etiqueta roll feed": 16,
+    "tapa plástica 1881 short finish": 14,
 }
 
 _PLACEHOLDER_NAME = "Cliente WhatsApp"
@@ -381,7 +383,7 @@ async def register_cotizacion(
     log = logger.bind(wa_id=wa)
     resumen = " ".join(str(p) for p in (cantidad, producto) if p)
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=15) as client:
             person_id = await _resolve_person(client, wa, contacto)
             org_id = await _ensure_organization(client, person_id, nombre_empresa) if nombre_empresa else None
             lead_id = await _create_lead(
@@ -472,7 +474,7 @@ async def registrar_consulta_postventa(
     wa = _normalize_wa_id(wa_id)
     log = logger.bind(wa_id=wa)
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=15) as client:
             person_id = await _resolve_person(client, wa, contacto)
             org_id = await _ensure_organization(client, person_id, nombre_empresa) if nombre_empresa else None
             lead_id = await _create_lead(
