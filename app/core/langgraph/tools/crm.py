@@ -429,9 +429,9 @@ async def registrar_consulta_postventa(
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             person_id = await _resolve_person(client, wa, contacto)
-            org_id = await _ensure_organization(client, person_id, nombre_empresa) if nombre_empresa else None
+            # org_id = await _ensure_organization(client, person_id, nombre_empresa) if nombre_empresa else None
             lead_id = await _create_lead(
-                client, person_id, wa, contacto, nombre_empresa, org_id, "Postventa", (detalle or "").strip(), True
+                client, person_id, wa, contacto, nombre_empresa, "Postventa", (detalle or "").strip(), True
             )
             if not lead_id:
                 return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)

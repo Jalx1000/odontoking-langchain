@@ -68,7 +68,8 @@
       "Bash(grep -iA1 \"dbgate\")",
       "Bash(railway domain *)",
       "Bash(git rm *)",
-      "Bash(PYTHONPATH=/Users/javier/proyectos/02.agentes/01.odontoking uv run python /tmp/trace_imprimir.py)"
+      "Bash(PYTHONPATH=/Users/javier/proyectos/02.agentes/01.odontoking uv run python /tmp/trace_imprimir.py)",
+      "Bash(git rev-list *)"
     ]
   }
 }
