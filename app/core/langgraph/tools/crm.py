@@ -169,16 +169,50 @@ async def _resolve_person(client: httpx.AsyncClient, wa_id: str, nombre: Optiona
     return data.get("id") if isinstance(data, dict) else None
 
 
+async def _find_organization_by_name(client: httpx.AsyncClient, name: str) -> Optional[int]:
+    """Return the id of an organization whose name matches exactly, or None. Best-effort."""
+    try:
+        resp = await _request(
+            client,
+            "GET",
+            "/api/v1/contacts/organizations/search",
+            params={"search": name, "searchFields": "name:like;"},
+        )
+        data = _data(resp)
+        for item in data if isinstance(data, list) else []:
+            if isinstance(item, dict) and str(item.get("name", "")).strip().lower() == name.strip().lower():
+                return item.get("id")
+    except Exception as e:  # noqa: BLE001 — search is best-effort
+        logger.warning("imprimir_org_search_failed", empresa=name[:60], error=str(e))
+    return None
+
+
 async def _ensure_organization(
     client: httpx.AsyncClient, person_id: Optional[int], nombre_empresa: str
 ) -> Optional[int]:
-    """Create the organization and link it to the person; return organization_id."""
+    """Reuse an existing organization by name (or create it) and link it to the person.
+
+    Fully best-effort: the organization is optional enrichment, so any failure here returns None
+    (or an already-resolved id) and NEVER aborts the lead creation. Krayin rejects a duplicate
+    organization name with a 422 ("name has already been taken"), so we look it up first and only
+    create when missing; a create conflict falls back to the lookup.
+    """
     empresa = (nombre_empresa or "").strip()
     if not empresa:
         return None
-    resp = await _request(client, "POST", "/api/v1/contacts/organizations", json={"name": empresa})
-    org = _data(resp)
-    org_id = org.get("id") if isinstance(org, dict) else None
+    org_id = await _find_organization_by_name(client, empresa)
+    if org_id is None:
+        try:
+            resp = await _request(client, "POST", "/api/v1/contacts/organizations", json={"name": empresa})
+            org = _data(resp)
+            org_id = org.get("id") if isinstance(org, dict) else None
+        except httpx.HTTPStatusError as e:
+            # 409/422 usually means the name was taken between our lookup and create — resolve it.
+            logger.warning("imprimir_org_create_conflict", empresa=empresa[:60], status=e.response.status_code)
+            org_id = await _find_organization_by_name(client, empresa)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("imprimir_org_create_failed", empresa=empresa[:60], error=str(e))
+            return None
     if org_id and person_id:
         try:
             # Krayin's person PUT validates name/entity_type, so rebuild the payload from the record.
@@ -429,9 +463,9 @@ async def registrar_consulta_postventa(
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             person_id = await _resolve_person(client, wa, contacto)
-            # org_id = await _ensure_organization(client, person_id, nombre_empresa) if nombre_empresa else None
+            org_id = await _ensure_organization(client, person_id, nombre_empresa) if nombre_empresa else None
             lead_id = await _create_lead(
-                client, person_id, wa, contacto, nombre_empresa, "Postventa", (detalle or "").strip(), True
+                client, person_id, wa, contacto, nombre_empresa, org_id, "Postventa", (detalle or "").strip(), True
             )
             if not lead_id:
                 return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
