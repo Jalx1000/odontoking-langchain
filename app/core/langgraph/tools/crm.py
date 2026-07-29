@@ -43,8 +43,12 @@ _SOURCE_WHATSAPP = 6          # lead_source_id "WhatsApp"
 _LEAD_TYPE_VENTA = 1          # New Business
 _LEAD_TYPE_POSTVENTA = 2      # Existing Business
 _OWNER_USER_ID = 1            # default lead owner
+# Initial stage of the sales pipeline. Krayin's REST lead-create REQUIRES lead_pipeline_stage_id —
+# omitting it 500s with "Undefined array key lead_pipeline_stage_id". Krayin's default first stage
+# is id 1; adjust if the IMPRIMIR sales pipeline's initial stage differs.
+_VENTA_STAGE_ID = 1
 # Initial stage of the postventa/legacy pipeline (pipeline 3). Confirm the real stage id in Krayin
-# and fill it here; while None, a postventa lead stays in the default pipeline until a human moves it.
+# and fill it here; while None, postventa leads use the sales initial stage (so the key is present).
 _POSTVENTA_STAGE_ID: Optional[int] = None
 
 # Lead temperature → tag id (internal only; never shown to the client).
@@ -270,8 +274,11 @@ async def _create_lead(
         "person": person,
         "entity_type": "leads",
     }
-    if es_postventa and _POSTVENTA_STAGE_ID is not None:
-        body["lead_pipeline_stage_id"] = _POSTVENTA_STAGE_ID
+    # Always send a stage id — Krayin's REST lead-create 500s ("Undefined array key
+    # lead_pipeline_stage_id") when it is omitted. Postventa uses its own stage when known.
+    body["lead_pipeline_stage_id"] = (
+        _POSTVENTA_STAGE_ID if (es_postventa and _POSTVENTA_STAGE_ID is not None) else _VENTA_STAGE_ID
+    )
     resp = await _request(client, "POST", "/api/v1/leads", json=body)
     data = _data(resp)
     return data.get("id") if isinstance(data, dict) else None
