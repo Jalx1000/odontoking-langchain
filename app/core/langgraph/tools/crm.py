@@ -174,20 +174,24 @@ async def _resolve_person(client: httpx.AsyncClient, wa_id: str, nombre: Optiona
 
 
 async def _find_organization_by_name(client: httpx.AsyncClient, name: str) -> Optional[int]:
-    """Return the id of an organization whose name matches exactly, or None. Best-effort."""
+    """Return the id of an organization whose name matches exactly, or None. Best-effort.
+
+    This Krayin build has NO /organizations/search route (calling it 500s — `/search` is caught by
+    `/organizations/{id}` and hits show("search")). The index endpoint instead filters by column,
+    so `?name=<value>` does an exact `where name in (<value>)`. That gives us reliable reuse without
+    the broken search route.
+    """
+    clean = (name or "").strip()
+    if not clean:
+        return None
     try:
-        resp = await _request(
-            client,
-            "GET",
-            "/api/v1/contacts/organizations/search",
-            params={"search": name, "searchFields": "name:like;"},
-        )
+        resp = await _request(client, "GET", "/api/v1/contacts/organizations", params={"name": clean})
         data = _data(resp)
         for item in data if isinstance(data, list) else []:
-            if isinstance(item, dict) and str(item.get("name", "")).strip().lower() == name.strip().lower():
+            if isinstance(item, dict) and str(item.get("name", "")).strip().lower() == clean.lower():
                 return item.get("id")
-    except Exception as e:  # noqa: BLE001 — search is best-effort
-        logger.warning("imprimir_org_search_failed", empresa=name[:60], error=str(e))
+    except Exception as e:  # noqa: BLE001 — lookup is best-effort
+        logger.warning("imprimir_org_lookup_failed", empresa=clean[:60], error=str(e))
     return None
 
 
