@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.core.config import settings
 from app.core.langgraph.imprimir_graph import imprimir_agent
-from app.core.langgraph.tools.crm import find_person_by_wa_id, _real_name_or_none
+from app.core.langgraph.tools.crm import find_person_by_wa_id, request_handoff, _real_name_or_none
 from app.core.limiter import limiter
 from app.core.logging import logger
 from app.schemas import Message
@@ -92,6 +92,12 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
         messages = [Message(role="user", content=text)]
         turn_id = sha256(f"sofo-crm:{wa_id}:{time.monotonic_ns()}:{text}".encode()).hexdigest()[:16]
         agent_task: asyncio.Task | None = None
+        # Filled by the agent (via handoff_callback) when it calls derivar_a_asesor this turn.
+        handoff: dict = {}
+
+        async def _on_handoff(signal: dict) -> None:
+            handoff.update(signal)
+
         try:
             logger.info("crm_agent_turn_started", wa_id=wa_id, turn_id=turn_id, text_preview=text[:120])
             agent_task = asyncio.create_task(
@@ -101,6 +107,7 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
                     conversation_id=dest.conversation_id,
                     nombre_registrado=patient_ctx.get("nombre_registrado"),
                     nombre_whatsapp=patient_ctx.get("nombre_whatsapp"),
+                    handoff_callback=_on_handoff,
                 )
             )
             try:
@@ -115,6 +122,10 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
                 )
             await gateway.send_response(dest, response_text)
             logger.info("crm_response_sent", wa_id=wa_id, turn_id=turn_id, preview=response_text[:120])
+            # Derive AFTER the reply (the reply is the client's notice): once derived the CRM 409s
+            # any further /messages, so the order matters.
+            if "reason" in handoff and dest.conversation_id is not None:
+                await request_handoff(dest.conversation_id, handoff["reason"])
         except asyncio.TimeoutError:
             logger.warning("crm_agent_hard_timeout", wa_id=wa_id, turn_id=turn_id)
             if agent_task is not None:
@@ -156,6 +167,15 @@ async def receive_crm_event(request: Request) -> dict:
         return {"status": "ok"}  # 200 so the CRM does not retry a malformed body
 
     if event.event != "message.received":
+        return {"status": "ignored"}
+
+    # A human advisor is already handling this conversation — stay silent (derivacion-asesor.md §3).
+    if event.handoff and event.handoff.open:
+        logger.info(
+            "crm_conversation_handed_off_skip",
+            conversation_id=event.conversation_id,
+            state=event.handoff.state,
+        )
         return {"status": "ignored"}
 
     text = (event.message.text or "").strip()

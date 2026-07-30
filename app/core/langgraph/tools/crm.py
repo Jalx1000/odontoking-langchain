@@ -548,3 +548,63 @@ async def get_person_leads(wa_id: str) -> str:
     except Exception as e:
         log.exception("get_person_leads_failed", error=str(e))
         return json.dumps({"leads": [], "error": str(e) or type(e).__name__}, ensure_ascii=False)
+
+
+@tool
+async def derivar_a_asesor(conversation_id: int, reason: str) -> str:
+    """Deriva la conversación a un asesor humano del equipo de ventas.
+
+    Úsala cuando el cliente pida explícitamente hablar con una persona/asesor/humano, cuando
+    muestre enojo o frustración, o cuando la consulta exceda lo que podés resolver: descuentos por
+    volumen, precios especiales, reclamos por un trabajo entregado, pagos, facturación o cambios
+    sobre un pedido ya confirmado. NO derives por precios de lista, tiempos de entrega, formatos,
+    materiales, horarios ni dirección — eso lo resolvés vos.
+
+    Importante: el mensaje que escribes en ESTA misma respuesta es el aviso que recibe el cliente
+    (breve y natural, sin prometer tiempos; ej. "Te comunico con un asesor del equipo, en un
+    momento te escriben por acá"). Después de derivar NO vuelvas a escribir en esta conversación:
+    la atiende una persona. Si ya derivaste antes en esta conversación, no lo hagas de nuevo.
+
+    Args:
+        conversation_id: El conversation_id de esta conversación (está en el contexto).
+        reason: Motivo en una frase, en español, para que el asesor entienda el contexto sin leer
+            todo el chat. Ej: "Pide cotización de 5000 bolsas pouch con descuento por volumen".
+    """
+    # Pure signal: the actual POST /handoff is done by the caller AFTER the client notice is sent,
+    # because once a conversation is derived the CRM 409s any further /messages.
+    return json.dumps({"status": "handoff_signaled", "reason": reason}, ensure_ascii=False)
+
+
+async def request_handoff(conversation_id: int, reason: str) -> dict:
+    """Derive a conversation to a human advisor: POST /whatsapp/conversations/{id}/handoff.
+
+    Not a tool — the gateway calls this AFTER sending the client notice (once derived, the CRM 409s
+    any further /messages, so order matters). Idempotent: a second call returns handoff.changed=false.
+    Best-effort: logs and returns {} on failure, never raises. Uses the same Bearer token as the
+    other CRM calls (verified: the route authenticates and 404s only on an unknown conversation).
+    """
+    log = logger.bind(conversation_id=conversation_id)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await _request(
+                client,
+                "POST",
+                f"/api/v1/whatsapp/conversations/{conversation_id}/handoff",
+                json={"reason": reason},
+            )
+            payload = resp.json()
+            handoff = payload.get("handoff", {}) if isinstance(payload, dict) else {}
+            log.info(
+                "imprimir_handoff_requested",
+                state=handoff.get("state"),
+                pooled=handoff.get("pooled"),
+                changed=handoff.get("changed"),
+            )
+            return payload if isinstance(payload, dict) else {}
+    except httpx.HTTPStatusError as e:
+        body = e.response.text[:300] if e.response is not None else ""
+        log.error("request_handoff_http_error", status=e.response.status_code, body=body)
+        return {}
+    except Exception as e:
+        log.exception("request_handoff_failed", error=str(e))
+        return {}

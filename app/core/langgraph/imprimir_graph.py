@@ -9,6 +9,7 @@ infrastructure as the retired Odontoking agent, minus the intake/booking/insuran
 import asyncio
 import json
 import os as _os
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any, Optional
 from urllib.parse import quote_plus
@@ -30,6 +31,7 @@ from pydantic import SecretStr
 
 from app.core.config import settings
 from app.core.langgraph.tools.crm import (
+    derivar_a_asesor,
     get_person_leads,
     register_cotizacion,
     registrar_consulta_postventa,
@@ -46,6 +48,7 @@ _IMPRIMIR_TOOLS = [
     register_cotizacion,
     registrar_consulta_postventa,
     get_person_leads,
+    derivar_a_asesor,
 ]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "imprimir.md")
@@ -250,8 +253,14 @@ class ImprimirAgent:
         conversation_id: str | int | None = None,
         nombre_registrado: Optional[str] = None,
         nombre_whatsapp: Optional[str] = None,
+        handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
-        """Process one WhatsApp message and return Valentina's plain-text reply."""
+        """Process one WhatsApp message and return Valentina's plain-text reply.
+
+        If the agent calls `derivar_a_asesor` this turn, `handoff_callback` is invoked with the
+        reason so the caller can POST /handoff AFTER sending the reply (the reply is the client's
+        notice; once derived the CRM rejects further messages).
+        """
         graph = await self._get_graph()
         callbacks: list[BaseCallbackHandler] = (
             [langfuse_callback_handler] if settings.LANGFUSE_TRACING_ENABLED else []
@@ -289,6 +298,20 @@ class ImprimirAgent:
                 task = asyncio.create_task(_persist_messages_async(wa_id, new_msgs))
                 self._persist_tasks.add(task)
                 task.add_done_callback(self._persist_tasks.discard)
+
+            # Handoff signal: if the agent called derivar_a_asesor THIS turn, surface the reason so
+            # the caller derives AFTER sending the reply (the reply is the client's notice).
+            if handoff_callback is not None:
+                for m in new_msgs:
+                    tool_calls = getattr(m, "tool_calls", None) or []
+                    for tc in tool_calls:
+                        if tc.get("name") == "derivar_a_asesor":
+                            reason = str((tc.get("args") or {}).get("reason") or "").strip()
+                            logger.info("imprimir_handoff_signaled", wa_id=wa_id, reason=reason[:80])
+                            try:
+                                await handoff_callback({"reason": reason})
+                            except Exception as e:  # noqa: BLE001
+                                logger.warning("imprimir_handoff_callback_failed", wa_id=wa_id, error=str(e))
 
             ai_messages = [
                 m for m in response.get("messages", []) if isinstance(m, AIMessage) and m.content

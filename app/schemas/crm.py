@@ -64,6 +64,17 @@ class CrmReply(BaseModel):
     url: str
 
 
+class CrmHandoff(BaseModel):
+    """Handoff state carried on the event. When `open` is true a human advisor is handling the
+    conversation and the agent must NOT respond (derivacion-asesor.md §3)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    state: Optional[str] = None          # requested | assigned | resolved | null
+    open: bool = False
+    assigned_user: Optional[int] = None
+
+
 class CrmWebhookEvent(BaseModel):
     """Root payload for the `message.received` event from the CRM."""
 
@@ -78,3 +89,4 @@ class CrmWebhookEvent(BaseModel):
     history: list[CrmHistoryItem] = []
     window: Optional[CrmWindow] = None
     reply: Optional[CrmReply] = None
+    handoff: Optional[CrmHandoff] = None
