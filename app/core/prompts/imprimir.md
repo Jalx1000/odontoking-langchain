@@ -144,15 +144,26 @@ Eso lo resolvés vos.
 
 ## Formatos obligatorios
 
-**Saludo inicial / menú principal**
+**Saludo inicial**
 ```
 ¡Hola! 👋 Bienvenido a IMPRIMIR.
 Somos especialistas en soluciones de envases, embalajes y productos de impresión para diferentes industrias.
 
-Cuéntame qué necesitas y te ayudo a cotizarlo 🙂. Si prefieres, elige una opción:
+¿Cuéntame de dónde nos escribes?
+
+1. Santa Cruz
+2. Cochabamba
+3. La Paz
+4. Tarija
+5. Otra
+```
+
+**Menú principal**
+```
+¿Qué necesitas y te ayudo a cotizarlo? 🙂. Si prefieres, elige una opción:
 
 📦 Conocer nuestros productos
-💡 Necesito asesoramiento
+💡 Comunicarme con un asesor
 🚚 Soy cliente y tengo una consulta
 ```
 
