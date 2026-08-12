@@ -56,6 +56,31 @@ class TestCrmWebhookEvent:
         ev = CrmWebhookEvent.model_validate(payload)
         assert ev.contact.name == "Alejandro"
 
+    def test_null_phone_does_not_reject_event(self):
+        """messenger/instagram never carry a phone — a null must not lose the message (the prod bug)."""
+        payload = {**_DOC_EVENT, "gateway": "messenger",
+                   "contact": {"phone": None, "channel": "messenger", "name": "Ale"}}
+        ev = CrmWebhookEvent.model_validate(payload)
+        assert ev.contact.phone is None
+
+    def test_null_message_text_does_not_reject_event(self):
+        """audio/sticker/location carry no text — a null message.text must parse, not crash."""
+        payload = {**_DOC_EVENT, "message": {"id": 9, "type": "audio", "text": None, "timestamp": None}}
+        ev = CrmWebhookEvent.model_validate(payload)
+        assert ev.message.text is None
+
+    def test_null_history_content_coerced_to_empty(self):
+        """Non-text history items send content: null; it is coerced to '' so the event survives."""
+        payload = {**_DOC_EVENT, "history": [{"role": "user", "content": None, "type": "audio"}]}
+        ev = CrmWebhookEvent.model_validate(payload)
+        assert ev.history[0].content == ""
+
+    def test_unknown_gateway_does_not_reject_event(self):
+        """The gateway is an open str, not a closed enum: a future channel must never break parsing."""
+        payload = {**_DOC_EVENT, "gateway": "instagram"}
+        ev = CrmWebhookEvent.model_validate(payload)
+        assert ev.gateway == "instagram"
+
 
 class TestVerifyAgentToken:
     """_verify_agent_token compares the Bearer against WHATSAPP_AGENT_TOKEN."""

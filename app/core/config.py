@@ -278,6 +278,9 @@ class Settings:
         self.MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
         self.MAIL_FROM_ADDRESS = os.getenv("MAIL_FROM_ADDRESS", "")
         self.MAIL_TO_ADDRESS = os.getenv("MAIL_TO_ADDRESS", "")  # recipient for alerts
+        self.MAIL_TIMEOUT_SECONDS = int(os.getenv("MAIL_TIMEOUT_SECONDS", "5"))
+        # Submission-port fallback: some PaaS block implicit-SSL 465 but allow STARTTLS 587.
+        self.MAIL_STARTTLS_PORT = int(os.getenv("MAIL_STARTTLS_PORT", "587"))
         self.NOTIFICATION_COOLDOWN_SECONDS = int(os.getenv("NOTIFICATION_COOLDOWN_SECONDS", "300"))
 
         # Evaluation Configuration

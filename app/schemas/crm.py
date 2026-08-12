@@ -12,7 +12,12 @@ from pydantic import BaseModel, ConfigDict, field_validator
 class CrmContact(BaseModel):
     """The WhatsApp contact behind the conversation."""
 
-    phone: str
+    # phone is OPTIONAL by contract, not by accident: messenger/instagram never carry a phone
+    # (Meta identifies the contact by PSID), and kommo may omit it when the CRM's contact lookup
+    # fails. Only cloud_api guarantees it. Typing this `str` (required) makes a literal null reject
+    # the WHOLE message.received event, so the agent never runs and the message is lost silently.
+    phone: Optional[str] = None
+    channel: Optional[str] = None  # same value as event.gateway; kept for contract completeness
     name: Optional[str] = None
     person_id: Optional[int] = None
     lead_id: Optional[int] = None
@@ -65,8 +70,11 @@ class CrmReply(BaseModel):
 
 
 class CrmHandoff(BaseModel):
-    """Handoff state carried on the event. When `open` is true a human advisor is handling the
-    conversation and the agent must NOT respond (derivacion-asesor.md §3)."""
+    """Handoff state carried on the event.
+
+    When `open` is true a human advisor is handling the conversation and the agent must NOT respond
+    (derivacion-asesor.md §3).
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -82,6 +90,10 @@ class CrmWebhookEvent(BaseModel):
 
     event: str
     conversation_id: int
+    # Deliberately a plain str, NOT a closed Enum: new channels get added (instagram is next) and an
+    # unknown value must never reject the event. Per-channel behaviour is decided downstream by
+    # membership sets (see app/api/v1/crm.py TEXT_ONLY / NO_PHONE), where unknown == text-only,
+    # no-phone (the safe default that works everywhere).
     gateway: Optional[str] = None
     ai_enabled: bool = True
     contact: CrmContact

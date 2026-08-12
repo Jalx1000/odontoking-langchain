@@ -43,16 +43,50 @@ def _build_email(subject: str, body_html: str, body_text: str) -> MIMEMultipart:
     return msg
 
 
-def _smtp_send(msg: MIMEMultipart) -> None:
-    """Send email synchronously via SMTP SSL. Runs in a thread pool (fire-and-forget).
-
-    Short timeout: many PaaS (Railway) block outbound SMTP, so the connect would otherwise hang a
-    pool thread. This alert is best-effort and never on the request path, so failing fast is fine.
-    """
-    context = ssl.create_default_context()
-    with smtplib.SMTP_SSL(settings.MAIL_HOST, settings.MAIL_PORT, context=context, timeout=5) as server:
+def _smtp_send_ssl(msg: MIMEMultipart, context: ssl.SSLContext, port: int) -> None:
+    """Deliver over implicit-SSL SMTP (typically port 465)."""
+    with smtplib.SMTP_SSL(
+        settings.MAIL_HOST, port, context=context, timeout=settings.MAIL_TIMEOUT_SECONDS
+    ) as server:
         server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
         server.sendmail(settings.MAIL_FROM_ADDRESS, settings.MAIL_TO_ADDRESS, msg.as_string())
+
+
+def _smtp_send_starttls(msg: MIMEMultipart, context: ssl.SSLContext, port: int) -> None:
+    """Deliver over the submission port with STARTTLS (typically port 587)."""
+    with smtplib.SMTP(settings.MAIL_HOST, port, timeout=settings.MAIL_TIMEOUT_SECONDS) as server:
+        server.ehlo()
+        server.starttls(context=context)
+        server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+        server.sendmail(settings.MAIL_FROM_ADDRESS, settings.MAIL_TO_ADDRESS, msg.as_string())
+
+
+def _smtp_send(msg: MIMEMultipart) -> None:
+    """Send email synchronously via SMTP. Runs in a thread pool (fire-and-forget).
+
+    Short, configurable timeout: many PaaS (Railway) block outbound SMTP, so the connect would
+    otherwise hang a pool thread. This alert is best-effort and never on the request path, so failing
+    fast is fine.
+
+    Hardening: try implicit-SSL on MAIL_PORT (465) first; if that connect fails — the exact symptom
+    when a host blocks 465 — retry with STARTTLS on the submission port (587), which some of those
+    hosts still allow. If both fail, raise so the caller logs `alert_email_failed`.
+
+    Caveat: if the host blocks ALL outbound SMTP (465 and 587), no amount of SMTP hardening delivers
+    the alert — moving to an HTTPS-based transport is the only real fix. That was left out per scope.
+    """
+    context = ssl.create_default_context()
+    try:
+        _smtp_send_ssl(msg, context, settings.MAIL_PORT)
+        return
+    except (OSError, smtplib.SMTPException) as e:
+        if settings.MAIL_STARTTLS_PORT == settings.MAIL_PORT:
+            raise
+        _log.warning(
+            "alert_smtp_ssl_failed port=%s error=%s — falling back to starttls port=%s",
+            settings.MAIL_PORT, e, settings.MAIL_STARTTLS_PORT,
+        )
+    _smtp_send_starttls(msg, context, settings.MAIL_STARTTLS_PORT)
 
 
 async def _send_email_alert(

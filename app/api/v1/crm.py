@@ -33,6 +33,13 @@ _background_tasks: set[asyncio.Task] = set()
 _seen_message_ids: dict[str, float] = {}
 _MSG_DEDUPE_TTL = 60.0
 
+# Per-channel capabilities. Membership, not an allowlist: a channel NOT listed here is treated as
+# the safe default (text-only, no phone), so a new gateway never needs a code change to be handled.
+# The CRM gateway only ever sends text anyway (see services/gateway/crm.py), so media degradation is
+# structural; these sets exist to document the contract and gate phone-dependent logic.
+_TEXT_ONLY = {"kommo"}       # channels that only relay text
+_NO_PHONE = {"messenger"}    # channels that never carry a phone (Meta PSID identity)
+
 _WAITING_MSG = (
     "La consulta está tardando un poco más de lo normal. "
     "Sigo revisando y le responderé en este mismo chat en un momento 🙏."
@@ -163,8 +170,12 @@ async def receive_crm_event(request: Request) -> dict:
     try:
         event = CrmWebhookEvent.model_validate_json(raw)
     except Exception as e:
+        # 422, NOT 200. Returning 200 on a parse failure hid this bug for weeks: the CRM saw success,
+        # never logged an error, and dropped every message in silence. 422 makes the CRM record it.
+        # Retrying won't help (a deterministic body fails identically all 4 times) — but visibility is
+        # the point; a transient fault would surface as 5xx below, where the CRM's retries do rescue it.
         logger.exception("crm_payload_parse_error", error=str(e))
-        return {"status": "ok"}  # 200 so the CRM does not retry a malformed body
+        raise HTTPException(status_code=422, detail="unparseable message.received payload") from e
 
     if event.event != "message.received":
         return {"status": "ignored"}
@@ -188,25 +199,42 @@ async def receive_crm_event(request: Request) -> dict:
         logger.info("crm_duplicate_message_skipped", conversation_id=event.conversation_id, msg_id=msg_key)
         return {"status": "ok"}
 
-    phone = event.contact.phone.replace("+", "")
-    if not phone.isdigit():
-        logger.warning("crm_invalid_phone_number", phone=phone)
-        return {"status": "ok"}
+    # Contact identity. The phone can be absent (messenger never has one; kommo may omit it) — never
+    # drop the message for that. Fall back to a stable per-conversation key so the checkpointer thread
+    # and mem0 stay keyed consistently across the conversation's turns.
+    phone = (event.contact.phone or "").replace("+", "")
+    if phone and not phone.isdigit():
+        logger.warning("crm_invalid_phone_number", phone=phone, conversation_id=event.conversation_id)
+        phone = ""
+    convo_key = phone or f"conv:{event.conversation_id}"
     reply_url = event.reply.url if event.reply else ""
-    dest = Destination(wa_id=phone, conversation_id=event.conversation_id, reply_url=reply_url)
+    dest = Destination(wa_id=convo_key, conversation_id=event.conversation_id, reply_url=reply_url)
 
     patient_ctx: dict = {"nombre_whatsapp": event.contact.name or None}
-    if settings.WHATSAPP_AUTO_CREATE_PERSON:
+    # The name lookup is keyed by phone (wa_id) in the CRM, so it only makes sense when we have one.
+    if settings.WHATSAPP_AUTO_CREATE_PERSON and phone:
         patient_ctx["nombre_registrado"] = await _resolve_contact_name(phone)
 
-    logger.info("crm_message_received", conversation_id=event.conversation_id, wa_id=phone, preview=text[:60])
+    logger.info(
+        "crm_message_received",
+        conversation_id=event.conversation_id,
+        wa_id=convo_key,
+        channel=event.gateway,
+        preview=text[:60],
+    )
 
     process_fn = _make_process_fn(dest, patient_ctx)
-    if settings.BUFFER_ENABLED:
-        await message_buffer_service.enqueue(phone, text, process_fn)
-    else:
-        task = asyncio.create_task(process_fn(phone, text))
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
+    # A failure to enqueue/schedule here is transient (buffer/loop hiccup), not a bad payload: answer
+    # 503 so the CRM's retries (1 + 3 spaced a minute) actually rescue the message.
+    try:
+        if settings.BUFFER_ENABLED:
+            await message_buffer_service.enqueue(convo_key, text, process_fn)
+        else:
+            task = asyncio.create_task(process_fn(convo_key, text))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+    except Exception as e:
+        logger.exception("crm_enqueue_failed", conversation_id=event.conversation_id, error=str(e))
+        raise HTTPException(status_code=503, detail="agent temporarily unavailable") from e
 
     return {"status": "ok"}
