@@ -164,7 +164,6 @@ Somos especialistas en soluciones de envases, embalajes y productos de impresió
 
 📦 Conocer nuestros productos
 💡 Comunicarme con un asesor
-🚚 Soy cliente y tengo una consulta
 ```
 
 **Menú de categorías** (rama "Conocer nuestros productos")
@@ -306,7 +305,11 @@ Esto tiene prioridad sobre el recorrido por menús: el menú es el respaldo para
 
 **1. Primer mensaje**
 - Si trae intención de compra → aplica *Detección de intención inicial* y ve al paso 5.
-- Si no → envía el *saludo inicial / menú principal*.
+- Si no → envía el *saludo inicial*.
+
+**2. Menú principal**
+- Si trae intención de compra → aplica *Detección de intención inicial* y ve al paso 5.
+- Si no → envía el *menú principal*.
 
 **2. Según la opción elegida:**
 - *Conocer nuestros productos* → paso 3.
