@@ -112,6 +112,8 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
                     messages,
                     wa_id,
                     conversation_id=dest.conversation_id,
+                    lead_id=patient_ctx.get("lead_id"),
+                    person_id=patient_ctx.get("person_id"),
                     nombre_registrado=patient_ctx.get("nombre_registrado"),
                     nombre_whatsapp=patient_ctx.get("nombre_whatsapp"),
                     handoff_callback=_on_handoff,
@@ -210,7 +212,13 @@ async def receive_crm_event(request: Request) -> dict:
     reply_url = event.reply.url if event.reply else ""
     dest = Destination(wa_id=convo_key, conversation_id=event.conversation_id, reply_url=reply_url)
 
-    patient_ctx: dict = {"nombre_whatsapp": event.contact.name or None}
+    # lead_id / person_id come straight from the CRM event: the CRM auto-opens ONE lead per
+    # conversation (contact.lead_id) and the agent moves/enriches it — it does not create its own.
+    patient_ctx: dict = {
+        "nombre_whatsapp": event.contact.name or None,
+        "lead_id": event.contact.lead_id,
+        "person_id": event.contact.person_id,
+    }
     # The name lookup is keyed by phone (wa_id) in the CRM, so it only makes sense when we have one.
     if settings.WHATSAPP_AUTO_CREATE_PERSON and phone:
         patient_ctx["nombre_registrado"] = await _resolve_contact_name(phone)

@@ -22,9 +22,11 @@ Bearer token.
 """
 
 import json
+from datetime import date, timedelta
 from typing import Any, Optional
 
 import httpx
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
@@ -75,6 +77,35 @@ _PRODUCT_IDS = {
 }
 
 _PLACEHOLDER_NAME = "Cliente WhatsApp"
+
+# ── City → sales pipeline routing (agent-quotes.md §1) ────────────────────────
+# The CRM's default pipeline is Santa Cruz, so EVERY messaging lead is born there regardless of the
+# client's city; the agent moves it once the city is confirmed. The ids are NOT correlative (2, 3, 5
+# are absent) — never generate or assume them: use this map, or resolve by name via
+# GET /api/v1/settings/pipelines.
+_CITY_PIPELINE_IDS = {
+    "santa cruz": 1,
+    "potosi": 4,
+    "oruro": 6,
+    "la paz": 7,
+    "cochabamba": 8,
+    "sucre": 9,
+}
+_PIPELINE_SIN_CIUDAD = 10  # fallback: no city / unrecognised city — keeps Santa Cruz metrics clean
+
+# The CRM auto-creates the lead in this initial stage. A lead in ANY other stage means a human
+# advisor already took it, so the agent must NOT move or modify it (see the Q1 "mixta" rule).
+_UNATTENDED_STAGE_NAME = "no atendido"
+
+# Free-text city (accents/abbreviations the client may type) → canonical pipeline key.
+_CITY_ALIASES = {
+    "santa cruz": "santa cruz", "santacruz": "santa cruz", "scz": "santa cruz",
+    "potosi": "potosi", "potosí": "potosi",
+    "oruro": "oruro",
+    "la paz": "la paz", "lapaz": "la paz", "lp": "la paz",
+    "cochabamba": "cochabamba", "cbba": "cochabamba", "cocha": "cochabamba",
+    "sucre": "sucre", "chuquisaca": "sucre",
+}
 
 
 # ── Low-level HTTP ────────────────────────────────────────────────────────────
@@ -135,6 +166,101 @@ async def find_person_by_wa_id(client: httpx.AsyncClient, wa_id: str) -> Optiona
     )
     data = _data(resp)
     return data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else None
+
+
+# ── City / lead / quote helpers (agent-quotes.md §1–§2) ───────────────────────
+
+def _ctx_ids(config: Optional[RunnableConfig]) -> tuple[Optional[int], Optional[int]]:
+    """Read (lead_id, person_id) injected by the graph via config.metadata.
+
+    These come from the CRM event (contact.lead_id / contact.person_id) and are injected server-side
+    so the LLM never sees or passes them — the module deliberately keeps ids off the LLM surface to
+    avoid hallucinated ids.
+    """
+    metadata = (config or {}).get("metadata") or {}
+    return metadata.get("lead_id"), metadata.get("person_id")
+
+
+def _resolve_pipeline_id(ciudad: Optional[str]) -> tuple[int, bool]:
+    """Map a free-text city to its sales pipeline id. Returns (pipeline_id, recognised).
+
+    Unrecognised or empty city → pipeline 10 (Sin ciudad). It never falls back to Santa Cruz: an
+    unconfirmed city must not inflate the biggest branch's metrics (agent-quotes.md §1).
+    """
+    key = (ciudad or "").strip().lower()
+    canonical = _CITY_ALIASES.get(key)
+    if canonical and canonical in _CITY_PIPELINE_IDS:
+        return _CITY_PIPELINE_IDS[canonical], True
+    return _PIPELINE_SIN_CIUDAD, False
+
+
+async def _initial_stage_id(client: httpx.AsyncClient, pipeline_id: int) -> Optional[int]:
+    """Resolve the initial stage of a pipeline (lowest sort_order).
+
+    Never hardcode stage ids — each pipeline has its own set (agent-quotes.md §1). Returns None if
+    the pipeline has no resolvable stages; the caller then omits the stage and lets Krayin default it.
+    """
+    resp = await _request(client, "GET", f"/api/v1/settings/pipelines/{pipeline_id}")
+    data = _data(resp)
+    stages = data.get("stages") if isinstance(data, dict) else None
+    values = list(stages.values()) if isinstance(stages, dict) else (stages or [])
+    stage_list = [s for s in values if isinstance(s, dict) and s.get("id") is not None]
+    if not stage_list:
+        return None
+    first = min(stage_list, key=lambda s: s.get("sort_order") or 0)
+    return first.get("id")
+
+
+async def _get_lead(client: httpx.AsyncClient, lead_id: int) -> Optional[dict[str, Any]]:
+    """Fetch a lead by id, or None on 404/failure (best-effort)."""
+    try:
+        resp = await _request(client, "GET", f"/api/v1/leads/{lead_id}")
+        data = _data(resp)
+        return data if isinstance(data, dict) else None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("imprimir_lead_fetch_failed", lead_id=lead_id, error=str(e))
+        return None
+
+
+def _lead_stage_name(lead: dict[str, Any]) -> str:
+    """Current stage name of a lead, lowercased/stripped ('' when unknown)."""
+    stage = lead.get("lead_pipeline_stage") or lead.get("stage") or {}
+    name = stage.get("name") if isinstance(stage, dict) else None
+    return (name or "").strip().lower()
+
+
+def _is_unattended(lead: dict[str, Any]) -> bool:
+    """True if the lead is still in the initial 'No atendido' stage (safe to move/enrich).
+
+    When the stage is unknown we return True: the fresh auto-created lead is the common case, and
+    the CRM PUT is idempotent, so a re-move is harmless — whereas wrongly skipping loses the routing.
+    """
+    name = _lead_stage_name(lead)
+    return name in ("", _UNATTENDED_STAGE_NAME)
+
+
+def _build_quote_items(items: Any) -> list[dict[str, Any]]:
+    """Normalise LLM-provided items into Krayin quote line items with prices at 0.
+
+    Each line needs name, quantity, price, total. Prices are 0 by policy — the agent does not quote
+    money; the advisor prices the document later. Entries without a name are skipped. `items` must
+    end up non-empty: QuoteRepository::create() does foreach($data['items']) with no guard, so an
+    empty/absent items 500s instead of 422 (agent-quotes.md §2).
+    """
+    out: list[dict[str, Any]] = []
+    for it in items if isinstance(items, list) else []:
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("name") or "").strip()
+        if not name:
+            continue
+        try:
+            qty = int(it.get("quantity") or 1)
+        except (TypeError, ValueError):
+            qty = 1
+        sku = str(it.get("sku") or "").strip() or name.upper().replace(" ", "-")[:40]
+        out.append({"sku": sku, "name": name, "quantity": max(qty, 1), "price": 0, "total": 0})
+    return out
 
 
 async def _resolve_product_id(client: httpx.AsyncClient, name: str) -> Optional[int]:
@@ -346,6 +472,7 @@ async def register_cotizacion(
     categoria: str,
     producto: str,
     cantidad: int,
+    config: RunnableConfig,
     nombre_empresa: Optional[str] = None,
     contacto: Optional[str] = None,
     medida: Optional[str] = None,
@@ -356,17 +483,19 @@ async def register_cotizacion(
     detalle: Optional[str] = None,
     es_postventa: bool = False,
 ) -> str:
-    """Registra la cotización COMPLETA en el CRM en una sola llamada. Llámala UNA vez, solo DESPUÉS
-    de que el cliente confirme el resumen con un "sí".
+    """Enriquece la oportunidad ya abierta por el CRM con los datos de la cotización.
 
-    Hace todo internamente (contacto, empresa, lead, producto, specs y temperatura) — tú solo pasas
-    los datos, no manejas ids. Devuelve el número de referencia "Solicitud #<lead_id>".
+    Reutiliza la oportunidad que el CRM abrió para esta conversación (no crea una nueva) y le agrega
+    categoría, producto, specs, plazo y temperatura. Llámala UNA vez, solo DESPUÉS de que el cliente
+    confirme el resumen con un "sí". Tú solo pasas los datos, no manejas ids. Devuelve el número de
+    referencia "Solicitud #<lead_id>".
 
     Args:
         wa_id: Número de WhatsApp del cliente (está en el contexto).
         categoria: Categoría del catálogo (p. ej. "Envases Flexibles").
         producto: Nombre EXACTO del producto del catálogo (p. ej. "Bolsa Pouch").
         cantidad: Cantidad solicitada (entero).
+        config: Interno; lo inyecta el sistema. No lo pases.
         nombre_empresa: Empresa del cliente.
         contacto: Nombre de la persona de contacto.
         medida: Medida / capacidad / dimensiones.
@@ -376,24 +505,42 @@ async def register_cotizacion(
         adjunto: "sí" si el cliente ya envió un archivo, si aplica.
         detalle: Cualquier detalle adicional en texto libre.
         es_postventa: True solo si es un cliente existente con una consulta de postventa.
-
-    Devuelve {"lead_id", "solicitud", "temperatura", "producto_adjuntado"}.
     """
     wa = _normalize_wa_id(wa_id)
-    log = logger.bind(wa_id=wa)
+    lead_ctx, person_ctx = _ctx_ids(config)
+    log = logger.bind(wa_id=wa, lead_id=lead_ctx)
     resumen = " ".join(str(p) for p in (cantidad, producto) if p)
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            person_id = await _resolve_person(client, wa, contacto)
-            org_id = await _ensure_organization(client, person_id, nombre_empresa) if nombre_empresa else None
-            lead_id = await _create_lead(
-                client, person_id, wa, contacto, nombre_empresa, org_id, categoria, resumen, es_postventa
-            )
+            # Q1 "mixta": the CRM already auto-created ONE lead for this conversation
+            # (contact.lead_id). Reuse it — never create a duplicate. Enrich it only while it is
+            # still the untouched auto-created lead ("No atendido"); if an advisor already advanced
+            # it, leave it exactly as-is.
+            if lead_ctx:
+                lead = await _get_lead(client, lead_ctx)
+                if lead is not None and not _is_unattended(lead):
+                    log.info("register_cotizacion_lead_in_progress", stage=_lead_stage_name(lead))
+                    return json.dumps(
+                        {"lead_id": lead_ctx, "solicitud": f"#{lead_ctx}", "reused": True,
+                         "note": "lead_en_proceso"},
+                        ensure_ascii=False,
+                    )
+                lead_id: Optional[int] = lead_ctx
+            else:
+                # Fallback: no auto-created lead in context (contact.lead_id was null) — create one.
+                person_id = person_ctx or await _resolve_person(client, wa, contacto)
+                org_id = (
+                    await _ensure_organization(client, person_id, nombre_empresa)
+                    if nombre_empresa else None
+                )
+                lead_id = await _create_lead(
+                    client, person_id, wa, contacto, nombre_empresa, org_id, categoria, resumen, es_postventa
+                )
             if not lead_id:
                 log.error("register_cotizacion_no_lead_id")
                 return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
 
-            # Best-effort enrichment — a failure here must not lose the lead already created.
+            # Best-effort enrichment — a failure here must not lose the lead.
             attached = False
             try:
                 attached = await _add_lead_product(client, lead_id, producto, cantidad)
@@ -548,6 +695,126 @@ async def get_person_leads(wa_id: str) -> str:
     except Exception as e:
         log.exception("get_person_leads_failed", error=str(e))
         return json.dumps({"leads": [], "error": str(e) or type(e).__name__}, ensure_ascii=False)
+
+
+@tool
+async def mover_lead_por_ciudad(ciudad: str, config: RunnableConfig) -> str:
+    """Mueve la oportunidad del cliente al pipeline de su CIUDAD.
+
+    Llámala UNA vez, apenas el cliente confirme la ciudad en el saludo, antes de avanzar con la
+    consulta. No manejas ids: la oportunidad se toma del contexto; vos solo pasás la ciudad.
+
+    Ciudades válidas: Santa Cruz, Potosí, Oruro, La Paz, Cochabamba, Sucre. Si el cliente no da
+    ciudad o dice una que no está en la lista, igual llamá la herramienta con lo que haya dicho: cae
+    en "Sin ciudad" automáticamente (no lo dejes en Santa Cruz por omisión).
+
+    Args:
+        ciudad: La ciudad que dijo el cliente (texto libre; se normaliza por dentro).
+        config: Interno; lo inyecta el sistema. No lo pases.
+    """
+    lead_id, _ = _ctx_ids(config)
+    pipeline_id, recognised = _resolve_pipeline_id(ciudad)
+    log = logger.bind(lead_id=lead_id, ciudad=(ciudad or "")[:40])
+    if not lead_id:
+        log.warning("mover_lead_no_lead_id")
+        return json.dumps({"moved": False, "error": "no_lead_id"}, ensure_ascii=False)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            lead = await _get_lead(client, lead_id)
+            if lead is None:
+                return json.dumps({"moved": False, "error": "lead_not_found"}, ensure_ascii=False)
+            # Q1 "mixta" rule: only the untouched auto-created lead ("No atendido") is movable. If an
+            # advisor already advanced it, leave it exactly where it is.
+            if not _is_unattended(lead):
+                log.info("mover_lead_skip_in_progress", stage=_lead_stage_name(lead))
+                return json.dumps(
+                    {"moved": False, "reason": "lead_en_proceso", "pipeline_id": pipeline_id},
+                    ensure_ascii=False,
+                )
+            stage_id = await _initial_stage_id(client, pipeline_id)
+            body: dict[str, Any] = {"lead_pipeline_id": pipeline_id}
+            if stage_id is not None:
+                body["lead_pipeline_stage_id"] = stage_id
+            await _request(client, "PUT", f"/api/v1/leads/{lead_id}", json=body)
+            log.info(
+                "imprimir_lead_moved",
+                pipeline_id=pipeline_id,
+                stage_id=stage_id,
+                ciudad_reconocida=recognised,
+            )
+            return json.dumps(
+                {"moved": True, "pipeline_id": pipeline_id, "ciudad_reconocida": recognised},
+                ensure_ascii=False,
+            )
+    except httpx.HTTPStatusError as e:
+        body_text = e.response.text[:400] if e.response is not None else ""
+        log.exception("mover_lead_http_error", status=e.response.status_code, body=body_text)
+        return json.dumps({"moved": False, "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
+    except Exception as e:
+        log.exception("mover_lead_failed", error=str(e))
+        return json.dumps({"moved": False, "error": str(e) or type(e).__name__}, ensure_ascii=False)
+
+
+@tool
+async def crear_quote(
+    subject: str,
+    items: list[dict],
+    config: RunnableConfig,
+    descripcion: Optional[str] = None,
+) -> str:
+    """Crea una cotización formal (quote) en el CRM, ligada a la oportunidad del cliente.
+
+    Una sola llamada, y SOLO después de que el cliente confirme el resumen con un "sí". Los PRECIOS
+    van en 0: esta cotización es el documento base que el asesor completa con los precios reales;
+    nunca inventes montos ni precios de lista. No manejas ids: person_id y lead_id vienen del
+    contexto de la conversación.
+
+    Args:
+        subject: Título de la cotización (ej. "Cotización bolsas pouch 5000u").
+        items: Lista de ítems, al menos uno. Cada ítem: {"name": str, "quantity": int, "sku"?: str}.
+        config: Interno; lo inyecta el sistema. No lo pases.
+        descripcion: Detalle opcional en texto libre.
+    """
+    lead_id, person_id = _ctx_ids(config)
+    log = logger.bind(lead_id=lead_id, person_id=person_id)
+    if not person_id:
+        # §4.3: person_id must exist and must never be invented — without it we cannot create.
+        log.warning("crear_quote_no_person_id")
+        return json.dumps({"quote_id": None, "error": "no_person_id"}, ensure_ascii=False)
+    line_items = _build_quote_items(items)
+    if not line_items:
+        log.warning("crear_quote_no_items")
+        return json.dumps({"quote_id": None, "error": "no_items"}, ensure_ascii=False)
+    body: dict[str, Any] = {
+        "subject": (subject or "").strip() or "Cotización WhatsApp",
+        "person_id": person_id,
+        "user_id": _OWNER_USER_ID,
+        # §2: the 7-day expiry lives in the web form, not the API — compute it or the POST 422s.
+        "expired_at": (date.today() + timedelta(days=7)).isoformat(),
+        "sub_total": 0,
+        "grand_total": 0,
+        "items": line_items,
+    }
+    if lead_id:
+        # Always link the quote to the lead — it is what ties the quote to the city pipeline, and the
+        # PUT path detaches the lead when lead_id is omitted (§3), so we keep it present everywhere.
+        body["lead_id"] = lead_id
+    if descripcion and descripcion.strip():
+        body["description"] = descripcion.strip()
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await _request(client, "POST", "/api/v1/quotes", json=body)
+            data = _data(resp)
+            quote_id = data.get("id") if isinstance(data, dict) else None
+            log.info("imprimir_quote_created", quote_id=quote_id, items=len(line_items))
+            return json.dumps({"quote_id": quote_id, "solicitud": f"#{quote_id}"}, ensure_ascii=False)
+    except httpx.HTTPStatusError as e:
+        body_text = e.response.text[:400] if e.response is not None else ""
+        log.exception("crear_quote_http_error", status=e.response.status_code, body=body_text)
+        return json.dumps({"quote_id": None, "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
+    except Exception as e:
+        log.exception("crear_quote_failed", error=str(e))
+        return json.dumps({"quote_id": None, "error": str(e) or type(e).__name__}, ensure_ascii=False)
 
 
 @tool

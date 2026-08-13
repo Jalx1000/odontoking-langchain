@@ -31,8 +31,10 @@ from pydantic import SecretStr
 
 from app.core.config import settings
 from app.core.langgraph.tools.crm import (
+    crear_quote,
     derivar_a_asesor,
     get_person_leads,
+    mover_lead_por_ciudad,
     register_cotizacion,
     registrar_consulta_postventa,
 )
@@ -45,7 +47,9 @@ from app.utils import dump_messages, process_llm_response
 PostgresConnPool = AsyncConnectionPool[AsyncConnection[DictRow]]
 
 _IMPRIMIR_TOOLS = [
+    mover_lead_por_ciudad,
     register_cotizacion,
+    crear_quote,
     registrar_consulta_postventa,
     get_person_leads,
     derivar_a_asesor,
@@ -190,12 +194,15 @@ class ImprimirAgent:
             logger.exception("imprimir_chat_failed", thread_id=thread_id, error=str(e))
             raise
 
-    async def _tool_call(self, state: GraphState) -> Command:
+    async def _tool_call(self, state: GraphState, config: RunnableConfig) -> Command:
         tool_calls = state.messages[-1].tool_calls
 
         async def _execute(tc: dict) -> ToolMessage:
             try:
-                result = await self.tools_by_name[tc["name"]].ainvoke(tc["args"])
+                # Forward config so tools can read injected metadata (lead_id, person_id) without the
+                # LLM ever seeing or passing those ids — avoids the id-hallucination this module warns
+                # about. Tools that don't declare a `config` param simply ignore it.
+                result = await self.tools_by_name[tc["name"]].ainvoke(tc["args"], config)
             except GraphBubbleUp:
                 raise
             except Exception as e:
@@ -251,6 +258,8 @@ class ImprimirAgent:
         wa_id: str,
         *,
         conversation_id: str | int | None = None,
+        lead_id: Optional[int] = None,
+        person_id: Optional[int] = None,
         nombre_registrado: Optional[str] = None,
         nombre_whatsapp: Optional[str] = None,
         handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
@@ -271,6 +280,11 @@ class ImprimirAgent:
             "metadata": {
                 "wa_id": wa_id,
                 "conversation_id": conversation_id,
+                # lead_id / person_id come from the CRM event (contact.lead_id / contact.person_id).
+                # Injected here so the city-move and quote tools read real ids from config.metadata
+                # instead of the LLM passing (and hallucinating) them.
+                "lead_id": lead_id,
+                "person_id": person_id,
                 "nombre_registrado": nombre_registrado,
                 "nombre_whatsapp": nombre_whatsapp,
             },
