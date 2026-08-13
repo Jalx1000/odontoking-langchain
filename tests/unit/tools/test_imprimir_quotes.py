@@ -11,6 +11,7 @@ import pytest
 from app.core.langgraph.tools import crm
 from app.core.langgraph.tools.crm import (
     _build_quote_items,
+    _build_quote_line_items,
     _ctx_ids,
     _initial_stage_id,
     _is_unattended,
@@ -86,6 +87,36 @@ class TestQuoteItems:
         assert _build_quote_items([{"name": "", "quantity": 1}, "junk", 3]) == []
         assert _build_quote_items([]) == []
         assert _build_quote_items(None) == []
+
+
+class TestQuoteLineItemsValidation:
+    """_build_quote_line_items validates items against the catalog and attaches product_id."""
+
+    @pytest.mark.asyncio
+    async def test_attaches_product_id_when_resolved(self, monkeypatch):
+        """A recognised product gets its product_id; prices stay 0."""
+        async def fake_resolve(_client, name):
+            return 12 if name == "Bolsa Pouch" else None
+        monkeypatch.setattr(crm, "_resolve_product_id", fake_resolve)
+        lines, unresolved = await _build_quote_line_items(
+            None, [{"name": "Bolsa Pouch", "quantity": 5000}]
+        )
+        assert lines[0]["product_id"] == 12
+        assert lines[0]["price"] == 0 and lines[0]["total"] == 0
+        assert unresolved == []
+
+    @pytest.mark.asyncio
+    async def test_reports_unresolved_products(self, monkeypatch):
+        """A name that matches no catalog product is kept but reported as unresolved."""
+        async def fake_resolve(_client, name):
+            return 12 if name == "Bolsa Pouch" else None
+        monkeypatch.setattr(crm, "_resolve_product_id", fake_resolve)
+        lines, unresolved = await _build_quote_line_items(
+            None, [{"name": "Bolsa Pouch", "quantity": 10}, {"name": "Producto Inventado", "quantity": 1}]
+        )
+        assert len(lines) == 2
+        assert "product_id" not in lines[1]
+        assert unresolved == ["Producto Inventado"]
 
 
 class TestCtxIds:

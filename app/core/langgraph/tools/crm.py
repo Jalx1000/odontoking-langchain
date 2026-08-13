@@ -284,6 +284,27 @@ async def _resolve_product_id(client: httpx.AsyncClient, name: str) -> Optional[
     return _PRODUCT_IDS.get(clean.lower())
 
 
+async def _build_quote_line_items(
+    client: httpx.AsyncClient, items: Any
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Build quote line items and VALIDATE each against the catalog (the items ARE the products).
+
+    Every line is resolved to a real catalog product_id (live search + static map). Resolved products
+    carry their product_id so the quote line links to the catalog; names that don't match any product
+    are still kept (nothing is silently dropped) but returned separately so the caller can surface
+    them. Prices/totals stay 0 — the advisor prices the document later.
+    """
+    line_items = _build_quote_items(items)
+    unresolved: list[str] = []
+    for line in line_items:
+        product_id = await _resolve_product_id(client, line["name"])
+        if product_id is None:
+            unresolved.append(line["name"])
+        else:
+            line["product_id"] = product_id
+    return line_items, unresolved
+
+
 # ── Internal step functions (share one httpx client; NOT exposed as tools) ─────
 
 async def _resolve_person(client: httpx.AsyncClient, wa_id: str, nombre: Optional[str]) -> Optional[int]:
@@ -757,21 +778,22 @@ async def mover_lead_por_ciudad(ciudad: str, config: RunnableConfig) -> str:
 
 @tool
 async def crear_quote(
-    subject: str,
+    nombre_empresa: str,
     items: list[dict],
     config: RunnableConfig,
     descripcion: Optional[str] = None,
 ) -> str:
     """Crea una cotización formal (quote) en el CRM, ligada a la oportunidad del cliente.
 
-    Una sola llamada, y SOLO después de que el cliente confirme el resumen con un "sí". Los PRECIOS
-    van en 0: esta cotización es el documento base que el asesor completa con los precios reales;
-    nunca inventes montos ni precios de lista. No manejas ids: person_id y lead_id vienen del
-    contexto de la conversación.
+    Una sola llamada, y SOLO después de que el cliente confirme el resumen con un "sí". El ASUNTO de
+    la cotización es el nombre de la empresa. Los ítems SON los productos: usá el nombre EXACTO del
+    catálogo en cada uno (se validan contra el catálogo). Los PRECIOS van en 0 — el asesor pone los
+    precios reales; nunca inventes montos. No manejas ids: person_id y lead_id vienen del contexto.
 
     Args:
-        subject: Título de la cotización (ej. "Cotización bolsas pouch 5000u").
-        items: Lista de ítems, al menos uno. Cada ítem: {"name": str, "quantity": int, "sku"?: str}.
+        nombre_empresa: Nombre de la empresa del cliente — va como asunto de la cotización.
+        items: Lista de ítems (productos), al menos uno. Cada ítem: {"name": str, "quantity": int}.
+            `name` debe ser el nombre EXACTO del producto del catálogo.
         config: Interno; lo inyecta el sistema. No lo pases.
         descripcion: Detalle opcional en texto libre.
     """
@@ -781,33 +803,45 @@ async def crear_quote(
         # §4.3: person_id must exist and must never be invented — without it we cannot create.
         log.warning("crear_quote_no_person_id")
         return json.dumps({"quote_id": None, "error": "no_person_id"}, ensure_ascii=False)
-    line_items = _build_quote_items(items)
-    if not line_items:
-        log.warning("crear_quote_no_items")
-        return json.dumps({"quote_id": None, "error": "no_items"}, ensure_ascii=False)
-    body: dict[str, Any] = {
-        "subject": (subject or "").strip() or "Cotización WhatsApp",
-        "person_id": person_id,
-        "user_id": _OWNER_USER_ID,
-        # §2: the 7-day expiry lives in the web form, not the API — compute it or the POST 422s.
-        "expired_at": (date.today() + timedelta(days=7)).isoformat(),
-        "sub_total": 0,
-        "grand_total": 0,
-        "items": line_items,
-    }
-    if lead_id:
-        # Always link the quote to the lead — it is what ties the quote to the city pipeline, and the
-        # PUT path detaches the lead when lead_id is omitted (§3), so we keep it present everywhere.
-        body["lead_id"] = lead_id
-    if descripcion and descripcion.strip():
-        body["description"] = descripcion.strip()
+    subject = (nombre_empresa or "").strip()
     try:
         async with httpx.AsyncClient(timeout=20) as client:
+            # Items ARE the products — validate each against the catalog and attach its product_id.
+            line_items, unresolved = await _build_quote_line_items(client, items)
+            if not line_items:
+                log.warning("crear_quote_no_items")
+                return json.dumps({"quote_id": None, "error": "no_items"}, ensure_ascii=False)
+            if unresolved:
+                log.warning("crear_quote_unresolved_products", productos=unresolved[:10])
+            body: dict[str, Any] = {
+                "subject": subject or "Cotización WhatsApp",
+                "person_id": person_id,
+                "user_id": _OWNER_USER_ID,
+                # §2: the 7-day expiry lives in the web form, not the API — compute it or the POST 422s.
+                "expired_at": (date.today() + timedelta(days=7)).isoformat(),
+                "sub_total": 0,
+                "grand_total": 0,
+                "items": line_items,
+            }
+            if lead_id:
+                # Always link the quote to the lead — it ties the quote to the city pipeline, and the
+                # PUT path detaches the lead when lead_id is omitted (§3), so keep it present.
+                body["lead_id"] = lead_id
+            if descripcion and descripcion.strip():
+                body["description"] = descripcion.strip()
             resp = await _request(client, "POST", "/api/v1/quotes", json=body)
             data = _data(resp)
             quote_id = data.get("id") if isinstance(data, dict) else None
-            log.info("imprimir_quote_created", quote_id=quote_id, items=len(line_items))
-            return json.dumps({"quote_id": quote_id, "solicitud": f"#{quote_id}"}, ensure_ascii=False)
+            log.info(
+                "imprimir_quote_created",
+                quote_id=quote_id,
+                items=len(line_items),
+                productos_no_reconocidos=len(unresolved),
+            )
+            result: dict[str, Any] = {"quote_id": quote_id, "solicitud": f"#{quote_id}"}
+            if unresolved:
+                result["productos_no_reconocidos"] = unresolved
+            return json.dumps(result, ensure_ascii=False)
     except httpx.HTTPStatusError as e:
         body_text = e.response.text[:400] if e.response is not None else ""
         log.exception("crear_quote_http_error", status=e.response.status_code, body=body_text)
