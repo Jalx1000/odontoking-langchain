@@ -22,6 +22,15 @@ class CrmContact(BaseModel):
     person_id: Optional[int] = None
     lead_id: Optional[int] = None
 
+    # Messenger phone-capture signalling. All optional and staged: the CRM rolls this out gradually,
+    # so when the fields are ABSENT they must read as "don't ask" (phone_required=False). The CRM owns
+    # the counters — we only read them (§4). `phone_required` is a SIGNAL that the phone is missing,
+    # not an order to ask now; the agent decides when (once the conversation qualifies).
+    phone_required: bool = False
+    phone_prompt_state: Optional[str] = None      # pending | asked | captured | refused | null
+    phone_prompt_attempts: int = 0                # times the CRM counted us asking (not our counter)
+    phone_prompt_exhausted: bool = False          # true = asked 3x already → stop asking
+
 
 class CrmMessage(BaseModel):
     """The inbound message that triggered the event."""

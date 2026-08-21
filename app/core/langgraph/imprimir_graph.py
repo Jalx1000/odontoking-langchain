@@ -31,9 +31,11 @@ from pydantic import SecretStr
 
 from app.core.config import settings
 from app.core.langgraph.tools.crm import (
+    _phone_ask_allowed,
     crear_quote,
     derivar_a_asesor,
     get_person_leads,
+    guardar_telefono_contacto,
     mover_lead_por_ciudad,
     register_cotizacion,
     registrar_consulta_postventa,
@@ -52,6 +54,7 @@ _IMPRIMIR_TOOLS = [
     crear_quote,
     registrar_consulta_postventa,
     get_person_leads,
+    guardar_telefono_contacto,
     derivar_a_asesor,
 ]
 
@@ -69,6 +72,8 @@ def _load_imprimir_prompt(
     wa_id: str,
     *,
     conversation_id: str | int | None = None,
+    channel: Optional[str] = None,
+    phone_prompt: Optional[dict[str, Any]] = None,
     nombre_registrado: Optional[str] = None,
     nombre_whatsapp: Optional[str] = None,
 ) -> str:
@@ -82,6 +87,8 @@ def _load_imprimir_prompt(
     context_lines = ["# Contexto del contacto", f"wa_id: {wa_id}"]
     if conversation_id:
         context_lines.append(f"conversation_id: {conversation_id}")
+    if channel:
+        context_lines.append(f"canal: {channel}")
     if nombre_registrado:
         context_lines.append(f"nombre_registrado: {nombre_registrado}")
     elif nombre_whatsapp:
@@ -90,6 +97,19 @@ def _load_imprimir_prompt(
         )
     else:
         context_lines.append("nombre_registrado: null  # pide el nombre del contacto")
+
+    # Phone-capture block: only when the CRM flags the phone missing (messenger). The ask gate is
+    # evaluated in code here so the model just reads sí/no — see "Pedido de teléfono" in imprimir.md.
+    pp = phone_prompt or {}
+    if pp.get("required"):
+        allowed = _phone_ask_allowed(True, pp.get("state"), bool(pp.get("exhausted")))
+        context_lines += [
+            "",
+            "# Teléfono del contacto",
+            "telefono_conocido: no  # este canal no trae teléfono (Messenger usa PSID)",
+            f"puede_pedir_telefono: {'sí' if allowed else 'no'}  # regla ya evaluada; si es 'no', NO lo pidas",
+            f"pedidos_hechos: {pp.get('attempts', 0)} de 3",
+        ]
 
     context = "\n".join(context_lines)
     return _PROMPT_TEMPLATE.format(current_datetime=current_datetime) + f"\n\n{context}"
@@ -171,6 +191,8 @@ class ImprimirAgent:
         system_prompt = _load_imprimir_prompt(
             wa_id,
             conversation_id=metadata.get("conversation_id"),
+            channel=metadata.get("channel"),
+            phone_prompt=metadata.get("phone_prompt"),
             nombre_registrado=metadata.get("nombre_registrado"),
             nombre_whatsapp=metadata.get("nombre_whatsapp"),
         )
@@ -260,6 +282,8 @@ class ImprimirAgent:
         conversation_id: str | int | None = None,
         lead_id: Optional[int] = None,
         person_id: Optional[int] = None,
+        channel: Optional[str] = None,
+        phone_prompt: Optional[dict[str, Any]] = None,
         nombre_registrado: Optional[str] = None,
         nombre_whatsapp: Optional[str] = None,
         handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
@@ -285,6 +309,11 @@ class ImprimirAgent:
                 # instead of the LLM passing (and hallucinating) them.
                 "lead_id": lead_id,
                 "person_id": person_id,
+                # channel + phone_prompt drive the messenger phone-capture flow: the phone-submit tool
+                # reads conversation_id from here, and (once the prompt diff lands) the system prompt
+                # renders the phone-ask gate from phone_prompt. Absent phone_prompt → no ask.
+                "channel": channel,
+                "phone_prompt": phone_prompt or {},
                 "nombre_registrado": nombre_registrado,
                 "nombre_whatsapp": nombre_whatsapp,
             },

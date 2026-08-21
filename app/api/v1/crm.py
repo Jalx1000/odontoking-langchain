@@ -114,6 +114,8 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
                     conversation_id=dest.conversation_id,
                     lead_id=patient_ctx.get("lead_id"),
                     person_id=patient_ctx.get("person_id"),
+                    channel=patient_ctx.get("channel"),
+                    phone_prompt=patient_ctx.get("phone_prompt"),
                     nombre_registrado=patient_ctx.get("nombre_registrado"),
                     nombre_whatsapp=patient_ctx.get("nombre_whatsapp"),
                     handoff_callback=_on_handoff,
@@ -218,6 +220,15 @@ async def receive_crm_event(request: Request) -> dict:
         "nombre_whatsapp": event.contact.name or None,
         "lead_id": event.contact.lead_id,
         "person_id": event.contact.person_id,
+        "channel": event.contact.channel or event.gateway,
+        # Phone-capture signalling (messenger). The CRM owns the counters; we just forward them so the
+        # agent knows whether the phone is missing and whether it may still ask. Absent → not required.
+        "phone_prompt": {
+            "required": event.contact.phone_required,
+            "state": event.contact.phone_prompt_state,
+            "attempts": event.contact.phone_prompt_attempts,
+            "exhausted": event.contact.phone_prompt_exhausted,
+        },
     }
     # The name lookup is keyed by phone (wa_id) in the CRM, so it only makes sense when we have one.
     if settings.WHATSAPP_AUTO_CREATE_PERSON and phone:

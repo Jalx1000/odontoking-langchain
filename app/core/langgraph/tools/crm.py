@@ -181,6 +181,28 @@ def _ctx_ids(config: Optional[RunnableConfig]) -> tuple[Optional[int], Optional[
     return metadata.get("lead_id"), metadata.get("person_id")
 
 
+def _ctx_conversation_id(config: Optional[RunnableConfig]) -> Optional[int]:
+    """Read the conversation_id injected via config.metadata (the LLM never passes it)."""
+    metadata = (config or {}).get("metadata") or {}
+    return metadata.get("conversation_id")
+
+
+def _phone_ask_allowed(
+    phone_required: bool, phone_prompt_state: Optional[str], phone_prompt_exhausted: bool
+) -> bool:
+    """Hard gate (code-owned, not the model's) for whether the agent may ASK for the phone.
+
+    Asking is allowed only when the CRM flags the phone missing, the 3 attempts are not exhausted, and
+    it is not already captured/refused. WHEN to ask within that (the conversation must have qualified)
+    and the wording are the model's job. Capturing a number the client volunteers is ALWAYS allowed —
+    this gates asking only. Absent/false `phone_required` reads as not-required (§4 compatibility), so a
+    CRM that hasn't deployed phone-capture never triggers an ask.
+    """
+    if not phone_required or phone_prompt_exhausted:
+        return False
+    return (phone_prompt_state or "pending") not in ("captured", "refused")
+
+
 def _resolve_pipeline_id(ciudad: Optional[str]) -> tuple[int, bool]:
     """Map a free-text city to its sales pipeline id. Returns (pipeline_id, recognised).
 
@@ -909,3 +931,80 @@ async def request_handoff(conversation_id: int, reason: str) -> dict:
     except Exception as e:
         log.exception("request_handoff_failed", error=str(e))
         return {}
+
+
+# Documented statuses of POST .../contact-phone (integracion §3) → a compact result the model reacts
+# to. 422 is the only one worth re-asking on (invalid number, nothing saved); 404/401 are terminal.
+_CONTACT_PHONE_STATUS = {422: "invalid", 404: "not_found", 401: "unauthorized"}
+
+
+async def submit_contact_phone(
+    conversation_id: int, phone: Optional[str] = None, refused: bool = False
+) -> dict[str, Any]:
+    """Report a captured phone (or a refusal) to the CRM: POST .../contact-phone.
+
+    Not a tool — `guardar_telefono_contacto` calls this. Sends the number VERBATIM; the CRM normalises
+    and validates it (§3), so we never clean/format it here. Idempotent on the CRM side. Best-effort:
+    never raises. Maps the documented statuses:
+      200 → {"status": "ok"}            registered; don't ask again
+      422 → {"status": "invalid"}       number rejected, nothing saved; re-ask if attempts remain
+      404 → {"status": "not_found"}     unknown conversation; don't retry
+      401 → {"status": "unauthorized"}  bad token (config issue); don't retry
+    """
+    log = logger.bind(conversation_id=conversation_id)
+    if not refused and not (phone or "").strip():
+        # Guard: never POST an empty capture — treat it like an invalid number so the model re-asks.
+        return {"status": "invalid", "reason": "empty_phone"}
+    payload: dict[str, Any] = (
+        {"refused": True} if refused else {"phone": phone, "source": "ai", "confidence": "stated"}
+    )
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await _request(
+                client,
+                "POST",
+                f"/api/v1/whatsapp/conversations/{conversation_id}/contact-phone",
+                json=payload,
+            )
+            body = resp.json() if resp.content else {}
+            contact = body.get("contact") if isinstance(body, dict) else None
+            log.info("imprimir_contact_phone_submitted", refused=refused, captured=not refused)
+            return {"status": "ok", "refused": refused, "contact": contact}
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code if e.response is not None else 0
+        result = _CONTACT_PHONE_STATUS.get(status, "error")
+        log.warning("imprimir_contact_phone_rejected", status=status, result=result)
+        return {"status": result, "http_status": status}
+    except Exception as e:
+        log.exception("imprimir_contact_phone_failed", error=str(e))
+        return {"status": "error", "error": str(e) or type(e).__name__}
+
+
+@tool
+async def guardar_telefono_contacto(
+    config: RunnableConfig,
+    telefono: Optional[str] = None,
+    rechazado: bool = False,
+) -> str:
+    """Registra en el CRM el teléfono que el cliente dio, o que se niega a darlo (canal Messenger).
+
+    Llamala cuando el cliente ESCRIBE su número en dígitos (pasalo TAL CUAL, sin limpiarlo ni
+    completar el código de país) o cuando se niega o cambia de tema sin darlo (`rechazado=True`). Si
+    el cliente lo dicta en palabras, NO adivines: pedile que lo escriba en dígitos y no llames esto.
+    No manejas ids: el conversation_id viene del contexto.
+
+    Args:
+        config: Interno; lo inyecta el sistema. No lo pases.
+        telefono: El número tal cual lo escribió el cliente. Omitilo si rechazado=True.
+        rechazado: True si el cliente no quiere dar el número.
+    """
+    conversation_id = _ctx_conversation_id(config)
+    log = logger.bind(conversation_id=conversation_id)
+    if not conversation_id:
+        log.warning("guardar_telefono_no_conversation_id")
+        return json.dumps({"status": "error", "error": "no_conversation_id"}, ensure_ascii=False)
+    result = await submit_contact_phone(conversation_id, phone=telefono, refused=rechazado)
+    if result.get("status") == "invalid":
+        # 422 / empty: the number was not saved — the model should re-ask once if attempts remain.
+        result["repreguntar"] = True
+    return json.dumps(result, ensure_ascii=False)
