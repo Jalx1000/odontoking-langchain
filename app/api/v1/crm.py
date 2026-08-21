@@ -241,6 +241,18 @@ async def receive_crm_event(request: Request) -> dict:
         channel=event.gateway,
         preview=text[:60],
     )
+    # Diagnostic: shows whether the CRM is actually sending the phone-capture signal on this channel.
+    # If phone_required stays false/absent on messenger, the agent will (correctly) never ask.
+    logger.info(
+        "crm_phone_prompt",
+        conversation_id=event.conversation_id,
+        channel=event.contact.channel or event.gateway,
+        phone_present=bool(event.contact.phone),
+        phone_required=event.contact.phone_required,
+        phone_prompt_state=event.contact.phone_prompt_state,
+        phone_prompt_attempts=event.contact.phone_prompt_attempts,
+        phone_prompt_exhausted=event.contact.phone_prompt_exhausted,
+    )
 
     process_fn = _make_process_fn(dest, patient_ctx)
     # A failure to enqueue/schedule here is transient (buffer/loop hiccup), not a bad payload: answer

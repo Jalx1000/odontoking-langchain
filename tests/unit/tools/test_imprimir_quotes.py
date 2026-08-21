@@ -12,11 +12,13 @@ from app.core.langgraph.tools import crm
 from app.core.langgraph.tools.crm import (
     _build_quote_items,
     _build_quote_line_items,
+    _ctx_contact_name,
     _ctx_ids,
     _initial_stage_id,
     _is_unattended,
     _lead_stage_name,
     _resolve_pipeline_id,
+    crear_quote,
 )
 
 
@@ -117,6 +119,54 @@ class TestQuoteLineItemsValidation:
         assert len(lines) == 2
         assert "product_id" not in lines[1]
         assert unresolved == ["Producto Inventado"]
+
+
+class TestQuoteSubject:
+    """The quote subject is the company name, with a graceful fallback.
+
+    With no company it falls back to the contact name from context, never to a generic
+    'Cotización WhatsApp' (the bug seen on Messenger with individual clients).
+    """
+
+    def test_ctx_contact_name_prefers_registered(self):
+        """Registered name wins over the WhatsApp/Messenger profile name."""
+        assert _ctx_contact_name({"metadata": {"nombre_registrado": "Acme", "nombre_whatsapp": "Ana"}}) == "Acme"
+        assert _ctx_contact_name({"metadata": {"nombre_whatsapp": "Ana"}}) == "Ana"
+        assert _ctx_contact_name({"metadata": {}}) is None
+
+    def _post_capture(self, monkeypatch):
+        """Stub product validation + the POST, capturing the request body."""
+        monkeypatch.setattr(
+            crm, "_build_quote_line_items",
+            AsyncMock(return_value=([{"sku": "BANNER", "name": "Banner", "quantity": 1, "price": 0, "total": 0}], [])),
+        )
+        captured: dict = {}
+
+        async def fake_request(_client, _method, path, **kw):
+            captured["path"] = path
+            captured["json"] = kw.get("json")
+            return MagicMock(json=MagicMock(return_value={"data": {"id": 55}}))
+
+        monkeypatch.setattr(crm, "_request", fake_request)
+        return captured
+
+    @pytest.mark.asyncio
+    async def test_empty_company_uses_contact_name(self, monkeypatch):
+        """No company passed → subject becomes the contact name from context (not 'Cotización WhatsApp')."""
+        captured = self._post_capture(monkeypatch)
+        cfg = {"metadata": {"conversation_id": 1, "lead_id": 890, "person_id": 412, "nombre_whatsapp": "Ana Pérez"}}
+        out = await crear_quote.ainvoke({"nombre_empresa": "", "items": [{"name": "Banner", "quantity": 1}]}, cfg)
+        assert captured["json"]["subject"] == "Ana Pérez"
+        assert captured["path"] == "/api/v1/quotes"
+        assert '"quote_id": 55' in out
+
+    @pytest.mark.asyncio
+    async def test_company_used_as_subject_when_present(self, monkeypatch):
+        """A company name is used verbatim as the subject."""
+        captured = self._post_capture(monkeypatch)
+        cfg = {"metadata": {"conversation_id": 1, "person_id": 412, "nombre_whatsapp": "Ana Pérez"}}
+        await crear_quote.ainvoke({"nombre_empresa": "Imprenta Sur SRL", "items": [{"name": "Banner", "quantity": 1}]}, cfg)
+        assert captured["json"]["subject"] == "Imprenta Sur SRL"
 
 
 class TestCtxIds:

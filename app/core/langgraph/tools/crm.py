@@ -187,6 +187,18 @@ def _ctx_conversation_id(config: Optional[RunnableConfig]) -> Optional[int]:
     return metadata.get("conversation_id")
 
 
+def _ctx_contact_name(config: Optional[RunnableConfig]) -> Optional[str]:
+    """Best contact name from metadata (registered name, else WhatsApp/Messenger profile), or None.
+
+    Used as the quote subject when there's no company — an individual client (common on Messenger)
+    must not end up with a generic "Cotización WhatsApp" subject.
+    """
+    metadata = (config or {}).get("metadata") or {}
+    name = metadata.get("nombre_registrado") or metadata.get("nombre_whatsapp")
+    clean = name.strip() if isinstance(name, str) else ""
+    return clean or None
+
+
 def _phone_ask_allowed(
     phone_required: bool, phone_prompt_state: Optional[str], phone_prompt_exhausted: bool
 ) -> bool:
@@ -825,7 +837,9 @@ async def crear_quote(
         # §4.3: person_id must exist and must never be invented — without it we cannot create.
         log.warning("crear_quote_no_person_id")
         return json.dumps({"quote_id": None, "error": "no_person_id"}, ensure_ascii=False)
-    subject = (nombre_empresa or "").strip()
+    # Subject is the company name; for an individual (no company — common on Messenger) fall back to
+    # the contact's name from context, never to a generic "Cotización WhatsApp".
+    subject = (nombre_empresa or "").strip() or _ctx_contact_name(config) or "Cotización"
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             # Items ARE the products — validate each against the catalog and attach its product_id.
@@ -836,7 +850,7 @@ async def crear_quote(
             if unresolved:
                 log.warning("crear_quote_unresolved_products", productos=unresolved[:10])
             body: dict[str, Any] = {
-                "subject": subject or "Cotización WhatsApp",
+                "subject": subject,
                 "person_id": person_id,
                 "user_id": _OWNER_USER_ID,
                 # §2: the 7-day expiry lives in the web form, not the API — compute it or the POST 422s.
