@@ -16,7 +16,6 @@ from app.core.config import (
 )
 from app.core.logging import logger
 
-_TOKEN_LIMIT: Dict[str, Any] = {"max_completion_tokens": settings.MAX_TOKENS}
 _API_KEY = SecretStr(settings.OPENAI_API_KEY)
 
 
@@ -33,7 +32,7 @@ class LLMRegistry:
             "llm": ChatOpenAI(
                 model="gpt-4o-mini",
                 api_key=_API_KEY,
-                model_kwargs=_TOKEN_LIMIT,
+                max_completion_tokens=settings.MAX_TOKENS,  # pyright: ignore[reportCallIssue]
                 top_p=0.95 if settings.ENVIRONMENT == Environment.PRODUCTION else 0.8,
             ),
         },
@@ -42,7 +41,7 @@ class LLMRegistry:
             "llm": ChatOpenAI(
                 model="gpt-4o",
                 api_key=_API_KEY,
-                model_kwargs=_TOKEN_LIMIT,
+                max_completion_tokens=settings.MAX_TOKENS,  # pyright: ignore[reportCallIssue]
                 top_p=0.95 if settings.ENVIRONMENT == Environment.PRODUCTION else 0.8,
                 presence_penalty=0.1 if settings.ENVIRONMENT == Environment.PRODUCTION else 0.0,
                 frequency_penalty=0.1 if settings.ENVIRONMENT == Environment.PRODUCTION else 0.0,
