@@ -5,10 +5,10 @@ wa_id; the ONLY identifier the LLM handles is the public property `codigo` (it a
 the client saw). conversation_id / person_id / lead_id are injected server-side via config.metadata
 and never touch the LLM surface (weak models hallucinate ids → corrupt data).
 
-Design note — one coarse tool per action, only `codigo` + plain fields. Endpoints follow the contract
-agreed with the CRM team (doc "flujo de Sofía"): domain actions under /api/v1/inmobiliaria/…,
-messaging (media/location/phone) under /api/v1/whatsapp/…. Base URL + Bearer come from CRM_BASE_URL /
-CRM_API_KEY (same pair the reply gateway already uses successfully), NOT the impresión token.
+Design note — one coarse tool per action, only `codigo` + plain fields. Every action (catalog, leads,
+historial, handoff, media, location, telefono) lives under /api/v1/inmobiliaria/conversations/{id}/…
+(verified against the live CRM). Base URL + Bearer come from CRM_BASE_URL / CRM_API_KEY (same pair the
+reply gateway already uses successfully), NOT the impresión token.
 
 v1 does NOT schedule visits: the agent captures a `visita_preferencia` (free text) and hands off to
 the titular advisor, who coordinates the actual time. So there is no get_disponibilidad / agendar_visita
@@ -27,9 +27,10 @@ from app.core.config import settings
 from app.core.logging import logger
 
 _BASE = settings.CRM_BASE_URL
-_NS_INMO = "/api/v1/inmobiliaria"        # domain actions (catalog, leads, historial, handoff)
-_NS_WA = "/api/v1/whatsapp"              # messaging capabilities (media, location, phone)
-_MEDIA_MAX = 8                           # hard cap per the CRM contract
+# Every conversation action lives under /api/v1/inmobiliaria/conversations/{id}/… (catalog, leads,
+# historial, handoff, media, location, telefono) — verified against the live CRM instance.
+_NS_INMO = "/api/v1/inmobiliaria"
+_MEDIA_MAX = 8                           # hard cap per the CRM contract (asking for more returns 8)
 
 _HEADERS = {
     "accept": "application/json",
@@ -190,29 +191,59 @@ async def get_inmueble(codigo: str) -> str:
 # ── Messaging tools (send media / location to the client) ─────────────────────
 
 @tool
-async def enviar_media(codigo: str, tipo: str, cantidad: int, config: RunnableConfig) -> str:
-    """Envía al cliente archivos de un inmueble (fotos, video, plano o tour). La galería vive en el CRM.
+async def enviar_media(
+    codigo: str, config: RunnableConfig, tipo: str = "foto", cantidad: int = 4
+) -> str:
+    """Envía al cliente los archivos de un inmueble (fotos, plano, video o tour).
+
+    Usala SOLO después de confirmar con `get_inmueble` que el inmueble tiene ese material
+    (campos `tiene_fotos` / `tiene_plano` / `tiene_tour`) — si no, promete algo que no puede cumplir.
+    La galería vive en el CRM: elige los archivos y el orden (portada primero, caption solo en la
+    primera). El agente nunca ve URLs. Para una primera muestra 3-4 fotos alcanzan (tope duro 8).
 
     Args:
         codigo: Código público del inmueble.
-        tipo: "foto" | "video" | "plano" | "tour".
-        cantidad: Cuántos archivos enviar (máx 8).
         config: Interno; lo inyecta el sistema. No lo pases.
+        tipo: "foto" | "plano" | "video" | "tour" (por defecto "foto").
+        cantidad: Cuántos archivos enviar (por defecto 4, máximo 8).
     """
     conversation_id = _ctx_conversation_id(config)
     log = logger.bind(conversation_id=conversation_id, codigo=codigo, tipo=tipo)
     if not conversation_id:
         return json.dumps({"enviado": False, "error": "no_conversation_id"}, ensure_ascii=False)
-    body = {"codigo": codigo, "tipo": tipo, "cantidad": max(1, min(int(cantidad or 1), _MEDIA_MAX))}
+    body = {"codigo": codigo, "tipo": tipo, "cantidad": max(1, min(int(cantidad or 4), _MEDIA_MAX))}
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            await _request(client, "POST", f"{_NS_WA}/conversations/{conversation_id}/media", json=body)
-            log.info("c21_enviar_media_ok", cantidad=body["cantidad"])
-            return json.dumps({"enviado": True}, ensure_ascii=False)
+            resp = await _request(
+                client, "POST", f"{_NS_INMO}/conversations/{conversation_id}/media", json=body
+            )
+            data = resp.json() if resp.content else {}
+            enviados = data.get("enviados", body["cantidad"]) if isinstance(data, dict) else body["cantidad"]
+            log.info("c21_enviar_media_ok", enviados=enviados)
+            return json.dumps({"enviado": True, "enviados": enviados, "codigo": codigo}, ensure_ascii=False)
     except httpx.HTTPStatusError as e:
-        # 501 = gateway can't send media; 404 = unknown codigo/conversation. Never crash.
-        log.warning("c21_enviar_media_http_error", status=e.response.status_code)
-        return json.dumps({"enviado": False, "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
+        # Non-transient statuses (_request already retried 5xx/429): map each to a result Sofía reacts
+        # to. 404 = no material of that type (o código inexistente) → decírselo, NO reintentar; 409 =
+        # derivada a un asesor → callarse; 422 = fuera de la ventana 24h; 501 = canal sin media.
+        status = e.response.status_code
+        try:
+            mensaje = (e.response.json() or {}).get("message", "") if e.response.content else ""
+        except Exception:  # noqa: BLE001
+            mensaje = ""
+        log.warning("c21_enviar_media_http_error", status=status, mensaje=mensaje[:120])
+        if status == 404:
+            return json.dumps(
+                {"enviado": False, "motivo": "sin_material",
+                 "mensaje": mensaje or "el inmueble no tiene ese material cargado", "codigo": codigo},
+                ensure_ascii=False,
+            )
+        if status == 409:
+            return json.dumps({"enviado": False, "motivo": "derivada"}, ensure_ascii=False)
+        if status == 422:
+            return json.dumps({"enviado": False, "motivo": "ventana_cerrada"}, ensure_ascii=False)
+        if status == 501:
+            return json.dumps({"enviado": False, "motivo": "canal_sin_media"}, ensure_ascii=False)
+        return json.dumps({"enviado": False, "error": f"api_{status}"}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         log.exception("c21_enviar_media_failed", error=str(e))
         return json.dumps({"enviado": False, "error": str(e) or type(e).__name__}, ensure_ascii=False)
@@ -236,7 +267,7 @@ async def enviar_ubicacion(codigo: str, config: RunnableConfig) -> str:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             await _request(
-                client, "POST", f"{_NS_WA}/conversations/{conversation_id}/location", json={"codigo": codigo}
+                client, "POST", f"{_NS_INMO}/conversations/{conversation_id}/location", json={"codigo": codigo}
             )
             log.info("c21_enviar_ubicacion_ok")
             return json.dumps({"enviado": True}, ensure_ascii=False)
@@ -457,7 +488,7 @@ async def guardar_telefono(
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             await _request(
-                client, "POST", f"{_NS_WA}/conversations/{conversation_id}/telefono", json=payload
+                client, "POST", f"{_NS_INMO}/conversations/{conversation_id}/telefono", json=payload
             )
             log.info("c21_guardar_telefono_ok", rechazado=rechazado)
             return json.dumps({"status": "ok", "rechazado": rechazado}, ensure_ascii=False)
