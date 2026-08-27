@@ -842,11 +842,8 @@ Para comenzar, ¿en qué ciudad estás buscando una propiedad?
 Perfecto 😊 ¿Qué estás buscando?
 
 🏠 Comprar una propiedad
-
 🔑 Alquilar una propiedad
-
 🤝 Buscar una propiedad en anticrético
-
 💬 Hablar con un asesor
 ```
 
@@ -860,13 +857,9 @@ Perfecto 😊 ¿Qué estás buscando?
 ¿Qué tipo de propiedad estás buscando?
 
 🏠 Casa
-
 🌱 Lote
-
 📦 Galpón
-
 🌳 Quinta o propiedad
-
 💬 No estoy seguro, necesito asesoramiento
 ```
 
@@ -880,9 +873,7 @@ Perfecto 😊 ¿Qué estás buscando?
 ¿Qué tipo de propiedad estás buscando?
 
 🏠 Casa
-
 🏢 Departamento
-
 💬 No estoy seguro, necesito asesoramiento
 ```
 
@@ -896,9 +887,7 @@ Perfecto 😊 ¿Qué estás buscando?
 ¿Qué tipo de propiedad estás buscando?
 
 🏠 Casa
-
 🛏️ Cuarto
-
 🏢 Departamento
 ```
 
@@ -914,13 +903,9 @@ Ejemplo para casa en venta:
 Perfecto. Para mostrarte opciones que realmente se ajusten a lo que buscas, contame:
 
 • ¿En qué zona te gustaría comprar?
-
 • ¿Qué presupuesto aproximado manejás?
-
 • ¿Cuántos dormitorios necesitás?
-
 • ¿Necesitás garaje?
-
 • ¿Hay alguna característica indispensable para vos?
 ```
 
@@ -954,19 +939,12 @@ Cuando existan propiedades compatibles:
 Encontré algunas opciones que podrían ajustarse a lo que buscas 😊
 
 🏠 Propiedad: {nombre_o_codigo}
-
 📍 Zona: {zona}
-
 💰 Precio: {precio}
-
 🛏️ Dormitorios: {dormitorios}
-
 🚿 Baños: {banos}
-
 🚗 Parqueos: {parqueos}
-
 📐 Superficie: {superficie}
-
 ✨ Destacado: {caracteristica_principal}
 
 ¿Cuál te interesa conocer mejor?
@@ -984,9 +962,7 @@ Por el momento no encontré una opción que coincida exactamente con todos los c
 Podemos ampliar un poco la búsqueda, por ejemplo:
 
 • Revisar zonas cercanas
-
 • Ajustar el rango de presupuesto
-
 • Ver propiedades con características similares
 
 ¿Qué preferís?
@@ -1065,11 +1041,8 @@ Solo si la disponibilidad fue confirmada:
 ¡Listo! ✅ Tu visita quedó confirmada.
 
 🏠 Propiedad: {propiedad}
-
 📅 Fecha: {fecha}
-
 🕐 Hora: {hora}
-
 👤 Asesor: {asesor}
 
 Te recomendamos estar unos minutos antes.
@@ -1101,19 +1074,12 @@ Antes de registrar una búsqueda completa:
 Confirmo lo que estás buscando para ayudarte mejor 📋
 
 🔑 Modalidad: {operacion}
-
 🏠 Tipo de propiedad: {tipo_propiedad}
-
 📍 Ciudad/Zona: {ciudad_y_zona}
-
 💰 Presupuesto: {presupuesto}
-
 🛏️ Dormitorios: {dormitorios}
-
 🚗 Parqueo: {parqueo}
-
 ✨ Características importantes: {caracteristicas}
-
 📅 Plazo para avanzar: {plazo}
 
 ¿Está correcto?

@@ -11,12 +11,11 @@ import hmac
 import time
 from hashlib import sha256
 
-import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core.config import settings
-from app.core.langgraph.imprimir_graph import imprimir_agent
-from app.core.langgraph.tools.crm import find_person_by_wa_id, request_handoff, _real_name_or_none
+from app.core.langgraph.c21_graph import c21_agent
+from app.core.langgraph.tools.inmobiliaria import request_handoff
 from app.core.limiter import limiter
 from app.core.logging import logger
 from app.schemas import Message
@@ -76,21 +75,6 @@ def _is_duplicate_message(msg_id: str) -> bool:
     return False
 
 
-async def _resolve_contact_name(phone: str) -> str | None:
-    """Best-effort: return the contact's real registered name from the CRM, or None.
-
-    We do NOT pre-create the person/lead here — the agent's resolve_person / create_lead tools own
-    that during the quotation flow. This only lets Valentina greet a returning contact by name.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            person = await find_person_by_wa_id(client, phone)
-        return _real_name_or_none(person.get("name")) if person else None
-    except Exception as e:
-        logger.warning("crm_contact_name_lookup_failed", wa_id=phone, error=str(e))
-        return None
-
-
 def _make_process_fn(dest: Destination, patient_ctx: dict):
     """Return a ProcessFn closure bound to the CRM destination + contact context."""
     gateway = get_gateway()
@@ -108,12 +92,10 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
         try:
             logger.info("crm_agent_turn_started", wa_id=wa_id, turn_id=turn_id, text_preview=text[:120])
             agent_task = asyncio.create_task(
-                imprimir_agent.get_response(
+                c21_agent.get_response(
                     messages,
                     wa_id,
                     conversation_id=dest.conversation_id,
-                    lead_id=patient_ctx.get("lead_id"),
-                    person_id=patient_ctx.get("person_id"),
                     channel=patient_ctx.get("channel"),
                     phone_prompt=patient_ctx.get("phone_prompt"),
                     nombre_registrado=patient_ctx.get("nombre_registrado"),
@@ -134,9 +116,9 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
             await gateway.send_response(dest, response_text)
             logger.info("crm_response_sent", wa_id=wa_id, turn_id=turn_id, preview=response_text[:120])
             # Derive AFTER the reply (the reply is the client's notice): once derived the CRM 409s
-            # any further /messages, so the order matters.
+            # any further /messages, so the order matters. Handoff goes to the titular of `codigo`.
             if "reason" in handoff and dest.conversation_id is not None:
-                await request_handoff(dest.conversation_id, handoff["reason"])
+                await request_handoff(dest.conversation_id, handoff.get("reason", ""), handoff.get("codigo"))
         except asyncio.TimeoutError:
             logger.warning("crm_agent_hard_timeout", wa_id=wa_id, turn_id=turn_id)
             if agent_task is not None:
@@ -218,8 +200,6 @@ async def receive_crm_event(request: Request) -> dict:
     # conversation (contact.lead_id) and the agent moves/enriches it — it does not create its own.
     patient_ctx: dict = {
         "nombre_whatsapp": event.contact.name or None,
-        "lead_id": event.contact.lead_id,
-        "person_id": event.contact.person_id,
         "channel": event.contact.channel or event.gateway,
         # Phone-capture signalling (messenger). The CRM owns the counters; we just forward them so the
         # agent knows whether the phone is missing and whether it may still ask. Absent → not required.
@@ -230,9 +210,6 @@ async def receive_crm_event(request: Request) -> dict:
             "exhausted": event.contact.phone_prompt_exhausted,
         },
     }
-    # The name lookup is keyed by phone (wa_id) in the CRM, so it only makes sense when we have one.
-    if settings.WHATSAPP_AUTO_CREATE_PERSON and phone:
-        patient_ctx["nombre_registrado"] = await _resolve_contact_name(phone)
 
     logger.info(
         "crm_message_received",
