@@ -112,7 +112,10 @@ def _load_imprimir_prompt(
         ]
 
     context = "\n".join(context_lines)
-    return _PROMPT_TEMPLATE.format(current_datetime=current_datetime) + f"\n\n{context}"
+    # Solo sustituimos el marcador conocido. NO usamos str.format: el prompt contiene llaves
+    # literales (plantillas de bloque, ejemplos de solicitud como {precio} o {lead_id}) que .format
+    # trataría como campos y reventaría con KeyError. .replace toca únicamente {current_datetime}.
+    return _PROMPT_TEMPLATE.replace("{current_datetime}", current_datetime) + f"\n\n{context}"
 
 
 def _serialize_message(m: BaseMessage) -> str:
