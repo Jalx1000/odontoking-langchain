@@ -122,7 +122,7 @@ async def buscar_inmuebles(
 
     Devuelve solo disponibles (hasta 3 por defecto; subí `limite` si el cliente pide ver más). La
     oficina trabaja una sola plaza: NO se pregunta la ciudad. Para un lote usá `m2_terreno_min` (no
-    dormitorios). Cada resultado trae su `codigo` público, precio con su condición y una línea destacada.
+    dormitorios). Cada resultado trae su `codigo` público y su precio con la condición.
 
     Args:
         operacion: "venta" | "alquiler" | "anticretico".
@@ -168,7 +168,7 @@ async def get_inmueble(codigo: str) -> str:
     """Ficha completa de un inmueble por su `codigo`.
 
     Trae descripción, características, precio con su condición publicada, asesor titular y punto de
-    encuentro. Usala para presentar el inmueble en detalle (la búsqueda solo trae una línea destacada).
+    encuentro. Usala para presentar el inmueble en detalle (la búsqueda solo trae los datos base).
 
     Args:
         codigo: Código público del inmueble (p. ej. "C21-0002").
