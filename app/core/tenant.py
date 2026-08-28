@@ -1,4 +1,4 @@
-"""Tenant registry — maps slug to per-tenant WhatsApp and agent configuration.
+"""Tenant registry - maps slug to per-tenant WhatsApp and agent configuration.
 
 Phase 1 (env-vars): in-memory dict loaded from environment variables at startup.
 Phase 4 (DB-backed): loads from PostgreSQL with Redis cache (TTL 5 min).
@@ -21,7 +21,7 @@ from app.core.logging import logger
 
 @dataclass
 class TenantConfig:
-    """Runtime tenant configuration — decrypted, ready to use."""
+    """Runtime tenant configuration - decrypted, ready to use."""
 
     slug: str
     display_name: str
@@ -61,7 +61,7 @@ class TenantConfig:
 
 
 # ---------------------------------------------------------------------------
-# Env-var fallback — always available for Odontoking (Phase 1 backward compat)
+# Env-var fallback - always available for Odontoking (Phase 1 backward compat)
 # ---------------------------------------------------------------------------
 
 def _build_env_registry() -> dict[str, TenantConfig]:
@@ -86,7 +86,7 @@ _ENV_REGISTRY: dict[str, TenantConfig] = _build_env_registry()
 
 
 # ---------------------------------------------------------------------------
-# Cache helpers — Redis-backed (TTL = settings.TENANT_CACHE_TTL)
+# Cache helpers - Redis-backed (TTL = settings.TENANT_CACHE_TTL)
 # ---------------------------------------------------------------------------
 
 def _cache_key(slug: str) -> str:
@@ -124,7 +124,7 @@ async def _cache_invalidate(slug: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# DB lookup — PostgreSQL via DatabaseService
+# DB lookup - PostgreSQL via DatabaseService
 # ---------------------------------------------------------------------------
 
 def _tenant_from_db_row(row) -> TenantConfig:
@@ -162,7 +162,7 @@ async def _db_get(slug: str) -> Optional[TenantConfig]:
 
 
 # ---------------------------------------------------------------------------
-# Public API — used throughout the app
+# Public API - used throughout the app
 # ---------------------------------------------------------------------------
 
 async def get_tenant_async(slug: str) -> Optional[TenantConfig]:
@@ -176,12 +176,12 @@ async def get_tenant_async(slug: str) -> Optional[TenantConfig]:
         await _cache_set(from_db)
         return from_db
 
-    # Phase 1 fallback — env-var registry
+    # Phase 1 fallback - env-var registry
     return _ENV_REGISTRY.get(slug)
 
 
 def get_tenant(slug: str) -> Optional[TenantConfig]:
-    """Sync lookup — env registry only (safe for import-time use).
+    """Sync lookup - env registry only (safe for import-time use).
 
     For webhook handlers use get_tenant_async() to benefit from DB + cache.
     """
@@ -189,7 +189,7 @@ def get_tenant(slug: str) -> Optional[TenantConfig]:
 
 
 def get_tenant_by_phone_id(phone_number_id: str) -> Optional[TenantConfig]:
-    """Sync lookup by phone_number_id — env registry only."""
+    """Sync lookup by phone_number_id - env registry only."""
     return next((t for t in _ENV_REGISTRY.values() if t.phone_number_id == phone_number_id), None)
 
 

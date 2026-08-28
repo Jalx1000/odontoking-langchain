@@ -5,8 +5,8 @@ Revises: c3f1a2b4d5e6
 Create Date: 2026-05-15
 
 Changes:
-  + Column  tenants.agent_endpoint_url  VARCHAR(512)  NULL  — URL of the agent service endpoint
-  + Column  tenants.agent_api_key       VARCHAR(2048) NULL  — API key for the agent service (encrypted at rest)
+  + Column  tenants.agent_endpoint_url  VARCHAR(512)  NULL  - URL of the agent service endpoint
+  + Column  tenants.agent_api_key       VARCHAR(2048) NULL  - API key for the agent service (encrypted at rest)
 """
 
 from typing import Sequence, Union

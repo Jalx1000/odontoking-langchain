@@ -1,4 +1,4 @@
-"""Admin endpoints — DLQ management and conversation history."""
+"""Admin endpoints - DLQ management and conversation history."""
 
 import json
 

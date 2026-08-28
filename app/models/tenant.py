@@ -1,4 +1,4 @@
-"""Tenant SQLModel — persisted client configuration for the agency platform."""
+"""Tenant SQLModel - persisted client configuration for the agency platform."""
 
 import uuid
 from datetime import datetime, UTC

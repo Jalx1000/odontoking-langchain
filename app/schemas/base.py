@@ -15,7 +15,7 @@ def _get_request_id() -> UUID:
 class BaseResponse(BaseModel):
     """Base response model that all endpoint responses inherit from.
 
-    request_id is auto-populated from the CorrelationIdMiddleware ContextVar —
+    request_id is auto-populated from the CorrelationIdMiddleware ContextVar -
     no endpoint needs to pass it explicitly.
     """
 

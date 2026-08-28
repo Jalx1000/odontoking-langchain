@@ -22,5 +22,5 @@ wheels/
 # Reports
 evals/reports/
 
-# History wipe backups — contain patient PII, never commit
+# History wipe backups - contain patient PII, never commit
 odontoking-backups/

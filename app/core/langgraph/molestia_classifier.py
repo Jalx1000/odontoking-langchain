@@ -2,11 +2,11 @@
 
 Used by the deterministic booking flow (booking.py) when the patient describes their molestia
 in free text (or picks "Otro"), instead of one of the 4 fixed buttons. A single bounded LLM
-call receives the molestia plus our REAL specialties and services and returns only the IDs —
+call receives the molestia plus our REAL specialties and services and returns only the IDs -
 the LLM classifies, it never renders the conversation, so it cannot loop or hallucinate slots.
 
 Robustness: the returned IDs are validated against the real catalogs; on any LLM failure or an
-invalid id we fall back to a keyword map, and finally to the "General" specialty — the flow is
+invalid id we fall back to a keyword map, and finally to the "General" specialty - the flow is
 never left without a specialty to offer doctors for.
 """
 

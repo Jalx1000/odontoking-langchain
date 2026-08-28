@@ -29,7 +29,7 @@ from app.core.config import settings
 # Use stdlib logger to avoid circular import with app.core.logging
 _log = logging.getLogger(__name__)
 
-# Per-event-type cooldown — prevents duplicate alerts for repeated errors
+# Per-event-type cooldown - prevents duplicate alerts for repeated errors
 _last_alerted: dict[str, float] = {}
 
 
@@ -68,12 +68,12 @@ def _smtp_send(msg: MIMEMultipart) -> None:
     otherwise hang a pool thread. This alert is best-effort and never on the request path, so failing
     fast is fine.
 
-    Hardening: try implicit-SSL on MAIL_PORT (465) first; if that connect fails — the exact symptom
-    when a host blocks 465 — retry with STARTTLS on the submission port (587), which some of those
+    Hardening: try implicit-SSL on MAIL_PORT (465) first; if that connect fails - the exact symptom
+    when a host blocks 465 - retry with STARTTLS on the submission port (587), which some of those
     hosts still allow. If both fail, raise so the caller logs `alert_email_failed`.
 
     Caveat: if the host blocks ALL outbound SMTP (465 and 587), no amount of SMTP hardening delivers
-    the alert — moving to an HTTPS-based transport is the only real fix. That was left out per scope.
+    the alert - moving to an HTTPS-based transport is the only real fix. That was left out per scope.
     """
     context = ssl.create_default_context()
     try:
@@ -83,7 +83,7 @@ def _smtp_send(msg: MIMEMultipart) -> None:
         if settings.MAIL_STARTTLS_PORT == settings.MAIL_PORT:
             raise
         _log.warning(
-            "alert_smtp_ssl_failed port=%s error=%s — falling back to starttls port=%s",
+            "alert_smtp_ssl_failed port=%s error=%s - falling back to starttls port=%s",
             settings.MAIL_PORT, e, settings.MAIL_STARTTLS_PORT,
         )
     _smtp_send_starttls(msg, context, settings.MAIL_STARTTLS_PORT)
@@ -95,7 +95,7 @@ async def _send_email_alert(
     wa_id: Optional[str],
     extra: Optional[dict[str, Any]],
 ) -> None:
-    """Build and send the alert email. Never raises — all errors are logged."""
+    """Build and send the alert email. Never raises - all errors are logged."""
     if not _is_email_configured():
         return
     try:
@@ -127,7 +127,7 @@ async def _send_email_alert(
             + (f"Error: {error[:800]}\n" if error else "")
         )
 
-        subject = f"[{env.upper()}] {settings.PROJECT_NAME} — {event}"
+        subject = f"[{env.upper()}] {settings.PROJECT_NAME} - {event}"
         msg = _build_email(subject, body_html, body_text)
         await asyncio.to_thread(_smtp_send, msg)
         _log.debug("alert_email_sent: %s", event)
@@ -169,7 +169,7 @@ def notify(
         loop = asyncio.get_running_loop()
         loop.create_task(_send_email_alert(event, error, wa_id, extra))
     except RuntimeError:
-        pass  # no running event loop during startup — skip safely
+        pass  # no running event loop during startup - skip safely
 
 
 def alert_processor(
@@ -181,7 +181,7 @@ def alert_processor(
 
     Register this in get_structlog_processors() just before the renderer.
     All logger.error() and logger.exception() calls automatically trigger
-    an alert — no need to add notify() calls throughout the codebase.
+    an alert - no need to add notify() calls throughout the codebase.
     """
     if method_name in ("error", "exception"):
         notify(

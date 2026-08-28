@@ -23,7 +23,7 @@ if settings.VALKEY_HOST:
     _storage_uri = f"redis://{_password_part}{settings.VALKEY_HOST}:{settings.VALKEY_PORT}/{settings.VALKEY_DB}"
     logger.info("rate_limiter_using_valkey", host=settings.VALKEY_HOST, port=settings.VALKEY_PORT)
 
-# Initialize rate limiter — fall back to in-memory if redis package is unavailable
+# Initialize rate limiter - fall back to in-memory if redis package is unavailable
 try:
     limiter = Limiter(
         key_func=get_remote_address,

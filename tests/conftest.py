@@ -114,7 +114,7 @@ def sample_whatsapp_audio_payload() -> dict:
 
 @pytest.fixture
 def sample_whatsapp_status_payload() -> dict:
-    """Payload with only a delivery status update — no messages."""
+    """Payload with only a delivery status update - no messages."""
     return {
         "object": "whatsapp_business_account",
         "entry": [

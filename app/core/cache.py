@@ -16,7 +16,7 @@ from typing import (
 from app.core.config import settings
 from app.core.logging import logger
 
-# Try to import redis — it's an optional dependency
+# Try to import redis - it's an optional dependency
 if TYPE_CHECKING:
     from redis.asyncio import Redis  # pyright: ignore[reportMissingImports]
 
@@ -224,5 +224,5 @@ def cache_key(prefix: str, *parts: str) -> str:
     return f"{prefix}:{hashed}"
 
 
-# Global cache service singleton — initialized lazily in lifespan
+# Global cache service singleton - initialized lazily in lifespan
 cache_service = _create_cache_service()

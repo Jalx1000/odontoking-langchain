@@ -81,7 +81,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("message_buffer_initialization_failed", error=str(e))
 
-    # Recover orphaned buffer messages — look up each wa_id's tenant from DB
+    # Recover orphaned buffer messages - look up each wa_id's tenant from DB
     # so the correct credentials are used when re-sending. Falls back to a
     # no-op (drops the message) when the tenant can't be resolved, to avoid
     # replying from the wrong phone number (multi-tenant safety).
@@ -95,7 +95,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Cleanup on shutdown — order matters: buffer first (drains workers), then agents
+    # Cleanup on shutdown - order matters: buffer first (drains workers), then agents
     await message_buffer_service.close()
     await c21_agent.close()  # awaits pending persist tasks + closes pool
     await cache_service.close()
@@ -126,11 +126,11 @@ app.add_middleware(LoggingContextMiddleware)
 # Add custom metrics middleware
 app.add_middleware(MetricsMiddleware)
 
-# Add profiling middleware (DEBUG only — saves HTML to /tmp on slow requests)
+# Add profiling middleware (DEBUG only - saves HTML to /tmp on slow requests)
 if settings.DEBUG:
     app.add_middleware(ProfilingMiddleware)
 
-# Add correlation ID middleware — must be outermost so request_id is set before all others
+# Add correlation ID middleware - must be outermost so request_id is set before all others
 app.add_middleware(CorrelationIdMiddleware)
 
 # Set up rate limiter exception handler

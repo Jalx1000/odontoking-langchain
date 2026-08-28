@@ -1,4 +1,4 @@
-"""sofo-crm inbound webhook — receives message.received events from the Krayin CRM.
+"""sofo-crm inbound webhook - receives message.received events from the Krayin CRM.
 
 Active only when WHATSAPP_GATEWAY=sofo-crm. The CRM POSTs here (this URL is the
 `WHATSAPP_AGENT_WEBHOOK_URL` configured on the CRM side) authenticated with
@@ -25,7 +25,7 @@ from app.services.message_buffer import message_buffer_service
 
 router = APIRouter()
 
-# Background task set — prevents GC of fire-and-forget tasks
+# Background task set - prevents GC of fire-and-forget tasks
 _background_tasks: set[asyncio.Task] = set()
 
 # Deduplication cache: message id → monotonic timestamp (the CRM may retry on slow ACK)
@@ -158,7 +158,7 @@ async def receive_crm_event(request: Request) -> dict:
     except Exception as e:
         # 422, NOT 200. Returning 200 on a parse failure hid this bug for weeks: the CRM saw success,
         # never logged an error, and dropped every message in silence. 422 makes the CRM record it.
-        # Retrying won't help (a deterministic body fails identically all 4 times) — but visibility is
+        # Retrying won't help (a deterministic body fails identically all 4 times) - but visibility is
         # the point; a transient fault would surface as 5xx below, where the CRM's retries do rescue it.
         logger.exception("crm_payload_parse_error", error=str(e))
         raise HTTPException(status_code=422, detail="unparseable message.received payload") from e
@@ -166,7 +166,7 @@ async def receive_crm_event(request: Request) -> dict:
     if event.event != "message.received":
         return {"status": "ignored"}
 
-    # A human advisor is already handling this conversation — stay silent (derivacion-asesor.md §3).
+    # A human advisor is already handling this conversation - stay silent (derivacion-asesor.md §3).
     if event.handoff and event.handoff.open:
         logger.info(
             "crm_conversation_handed_off_skip",
@@ -185,7 +185,7 @@ async def receive_crm_event(request: Request) -> dict:
         logger.info("crm_duplicate_message_skipped", conversation_id=event.conversation_id, msg_id=msg_key)
         return {"status": "ok"}
 
-    # Contact identity. The phone can be absent (messenger never has one; kommo may omit it) — never
+    # Contact identity. The phone can be absent (messenger never has one; kommo may omit it) - never
     # drop the message for that. Fall back to a stable per-conversation key so the checkpointer thread
     # and mem0 stay keyed consistently across the conversation's turns.
     phone = (event.contact.phone or "").replace("+", "")
@@ -197,7 +197,7 @@ async def receive_crm_event(request: Request) -> dict:
     dest = Destination(wa_id=convo_key, conversation_id=event.conversation_id, reply_url=reply_url)
 
     # lead_id / person_id come straight from the CRM event: the CRM auto-opens ONE lead per
-    # conversation (contact.lead_id) and the agent moves/enriches it — it does not create its own.
+    # conversation (contact.lead_id) and the agent moves/enriches it - it does not create its own.
     patient_ctx: dict = {
         "nombre_whatsapp": event.contact.name or None,
         "channel": event.contact.channel or event.gateway,

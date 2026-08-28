@@ -1,11 +1,11 @@
-"""Standalone worker process — consumes messages from Redis Streams and invokes the agent.
+"""Standalone worker process - consumes messages from Redis Streams and invokes the agent.
 
 Run via:
     python -m app.worker
 
 Required environment variables:
-    WORKER_TENANT   — tenant slug to serve (e.g. "odontoking", "kohlberg")
-    APP_ENV         — environment (development / staging / production)
+    WORKER_TENANT   - tenant slug to serve (e.g. "odontoking", "kohlberg")
+    APP_ENV         - environment (development / staging / production)
     + all standard app env vars (Postgres, Redis, OpenAI, WhatsApp, etc.)
 
 In Railway, deploy one service per tenant:

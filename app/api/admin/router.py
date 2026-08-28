@@ -1,4 +1,4 @@
-"""Admin API router — aggregates all admin sub-routers under /admin."""
+"""Admin API router - aggregates all admin sub-routers under /admin."""
 
 from fastapi import APIRouter
 

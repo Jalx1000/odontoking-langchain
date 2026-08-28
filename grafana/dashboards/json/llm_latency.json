@@ -101,7 +101,7 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "Latencia API — p50 / p95 / p99",
+      "title": "Latencia API - p50 / p95 / p99",
       "targets": [
         {
           "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[1m])) by (le)) * 1000",
@@ -126,7 +126,7 @@
     {
       "id": 7,
       "type": "timeseries",
-      "title": "Webhooks WhatsApp — rate",
+      "title": "Webhooks WhatsApp - rate",
       "targets": [
         {
           "expr": "sum(rate(http_requests_total{endpoint=~\"/api/v1/whatsapp.*/webhook\"}[1m])) by (status)",

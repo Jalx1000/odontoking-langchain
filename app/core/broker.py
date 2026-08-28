@@ -1,8 +1,8 @@
-"""Message broker abstraction — Redis Streams (Fase 2) and RabbitMQ (Fase 5) backends.
+"""Message broker abstraction - Redis Streams (Fase 2) and RabbitMQ (Fase 5) backends.
 
 Provides at-least-once delivery for WhatsApp messages:
   1. Webhook publishes to the broker and returns 200 immediately.
-  2. Worker process reads messages — they stay pending until explicitly ACKed.
+  2. Worker process reads messages - they stay pending until explicitly ACKed.
   3. If the worker crashes, another worker reclaims pending messages.
   4. After MAX_RETRIES failures the message moves to the Dead Letter Queue (DLQ).
 
@@ -22,7 +22,7 @@ RabbitMQ topology (per tenant):
   Queue       : wa.{tenant_slug}.messages (durable, x-dead-letter-exchange)
   DLX         : wa.{tenant_slug}.dlx     (direct, durable)
   DLQ queue   : wa.{tenant_slug}.dlq     (durable)
-  DLQ in-mem  : broker._dlq dict        (lost on restart — email alert compensates)
+  DLQ in-mem  : broker._dlq dict        (lost on restart - email alert compensates)
 """
 
 import asyncio
@@ -81,7 +81,7 @@ def _retry_key(stream_id: str) -> str:
 # ── Abstract interface ────────────────────────────────────────────────────────
 
 class MessageBroker(ABC):
-    """Abstract broker interface — swap implementations without changing worker code."""
+    """Abstract broker interface - swap implementations without changing worker code."""
 
     @abstractmethod
     async def publish(self, tenant_slug: str, wa_id: str, payload: dict[str, Any]) -> None:
@@ -121,7 +121,7 @@ class RedisStreamBroker(MessageBroker):
         self._consumer = os.getenv("WORKER_CONSUMER_NAME", socket.gethostname())
 
     async def publish(self, tenant_slug: str, wa_id: str, payload: dict[str, Any]) -> None:
-        """XADD — publish a message. Called from the webhook, must be fast.
+        """XADD - publish a message. Called from the webhook, must be fast.
 
         Flat wire format: a single field "data" containing the full payload as
         JSON, with wa_id merged in. Consumers parse `data` and receive the same
@@ -138,14 +138,14 @@ class RedisStreamBroker(MessageBroker):
             raise
 
     async def setup(self, tenant_slug: str) -> None:
-        """Create the consumer group (idempotent — safe to call multiple times)."""
+        """Create the consumer group (idempotent - safe to call multiple times)."""
         key = _stream_key(tenant_slug)
         try:
             await self._r.xgroup_create(key, _GROUP, id="0", mkstream=True)
             logger.info("broker_group_created", tenant=tenant_slug, group=_GROUP)
         except Exception as e:
             if "BUSYGROUP" in str(e):
-                pass  # group already exists — normal on restarts
+                pass  # group already exists - normal on restarts
             else:
                 logger.warning("broker_group_create_error", tenant=tenant_slug, error=str(e))
 
@@ -350,14 +350,14 @@ class RabbitMQBroker(MessageBroker):
                 aio_pika.ExchangeType.DIRECT,  # type: ignore[union-attr]
                 durable=True,
             )
-            # Main queue — messages dead-lettered to DLX on nack(requeue=False)
+            # Main queue - messages dead-lettered to DLX on nack(requeue=False)
             queue = await channel.declare_queue(
                 self._queue_name(tenant_slug),
                 durable=True,
                 arguments={"x-dead-letter-exchange": self._dlx_name(tenant_slug)},
             )
             await queue.bind(exchange, routing_key="messages")
-            # DLQ queue — receives dead-lettered messages for inspection
+            # DLQ queue - receives dead-lettered messages for inspection
             dlq_queue = await channel.declare_queue(self._dlq_name(tenant_slug), durable=True)
             await dlq_queue.bind(dlx, routing_key="")
         logger.info("rabbitmq_setup_done", tenant=tenant_slug)
@@ -366,7 +366,7 @@ class RabbitMQBroker(MessageBroker):
         """Publish a persistent message to the tenant exchange.
 
         Flat wire format: the message body is the JSON of `{"wa_id": ..., **payload}`.
-        Consumers parse a single JSON object — no payload-in-payload nesting.
+        Consumers parse a single JSON object - no payload-in-payload nesting.
         """
         # Declare topology once per tenant per process so the first publish
         # works even if the consumer hasn't started yet.
@@ -520,7 +520,7 @@ class RabbitMQBroker(MessageBroker):
 class InMemoryBroker(MessageBroker):
     """Fallback broker when neither Redis nor RabbitMQ is configured.
 
-    No persistence — messages are lost if the process crashes.
+    No persistence - messages are lost if the process crashes.
     Suitable for local development without external services.
     """
 

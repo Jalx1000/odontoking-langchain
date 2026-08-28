@@ -2,8 +2,8 @@
 
 Defines a provider-agnostic interface for sending WhatsApp replies. Two concrete
 implementations exist:
-  - MetaGateway  — talks directly to Meta Cloud API (existing behaviour).
-  - CrmGateway   — routes replies through the Krayin CRM middleware (sofo-crm),
+  - MetaGateway  - talks directly to Meta Cloud API (existing behaviour).
+  - CrmGateway   - routes replies through the Krayin CRM middleware (sofo-crm),
                    which in turn delivers via Kommo salesbot / Cloud API.
 
 Selection is driven by settings.WHATSAPP_GATEWAY (see app/services/gateway/__init__.py).
@@ -17,7 +17,7 @@ from typing import Optional, Protocol, runtime_checkable
 
 @dataclass
 class Destination:
-    """Where to send an outbound message — carries what each provider needs.
+    """Where to send an outbound message - carries what each provider needs.
 
     Meta uses wa_id + phone_number_id + token. The CRM uses conversation_id /
     reply_url (both arrive in the inbound message.received event). wa_id is always

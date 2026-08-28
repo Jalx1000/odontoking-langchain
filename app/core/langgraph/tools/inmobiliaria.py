@@ -1,11 +1,11 @@
-"""CENTURY 21 (Sofía) CRM tools — inmuebles, disponibilidad-less v1, leads and handoff.
+"""CENTURY 21 (Sofía) CRM tools - inmuebles, disponibilidad-less v1, leads and handoff.
 
 Flow: WhatsApp → Krayin CRM (c21.sofopolis.com) → agent → CRM. The agent receives conversation_id +
 wa_id; the ONLY identifier the LLM handles is the public property `codigo` (it appears in the listing
 the client saw). conversation_id / person_id / lead_id are injected server-side via config.metadata
 and never touch the LLM surface (weak models hallucinate ids → corrupt data).
 
-Design note — one coarse tool per action, only `codigo` + plain fields. Every action (catalog, leads,
+Design note - one coarse tool per action, only `codigo` + plain fields. Every action (catalog, leads,
 historial, handoff, media, location, telefono) lives under /api/v1/inmobiliaria/conversations/{id}/…
 (verified against the live CRM). Base URL + Bearer come from CRM_BASE_URL / CRM_API_KEY (same pair the
 reply gateway already uses successfully), NOT the impresión token.
@@ -28,7 +28,7 @@ from app.core.logging import logger
 
 _BASE = settings.CRM_BASE_URL
 # Every conversation action lives under /api/v1/inmobiliaria/conversations/{id}/… (catalog, leads,
-# historial, handoff, media, location, telefono) — verified against the live CRM instance.
+# historial, handoff, media, location, telefono) - verified against the live CRM instance.
 _NS_INMO = "/api/v1/inmobiliaria"
 _MEDIA_MAX = 8                           # hard cap per the CRM contract (asking for more returns 8)
 
@@ -94,7 +94,7 @@ def _phone_ask_allowed(
     """Code-owned gate for whether the agent may ASK for the phone (Messenger only).
 
     Asking is allowed only when the CRM flags the phone missing, the 3 attempts aren't exhausted, and it
-    isn't already captured/refused. Capturing a number the client volunteers is ALWAYS allowed — this
+    isn't already captured/refused. Capturing a number the client volunteers is ALWAYS allowed - this
     gates asking only. Absent/false `phone_required` reads as not-required.
     """
     if not phone_required or phone_prompt_exhausted:
@@ -102,7 +102,7 @@ def _phone_ask_allowed(
     return (phone_prompt_state or "pending") not in ("captured", "refused")
 
 
-# ── Catalog tools (codigo is public — the LLM handles it) ─────────────────────
+# ── Catalog tools (codigo is public - the LLM handles it) ─────────────────────
 
 @tool
 async def buscar_inmuebles(
@@ -197,7 +197,7 @@ async def enviar_media(
     """Envía al cliente los archivos de un inmueble (fotos, plano, video o tour).
 
     Usala SOLO después de confirmar con `get_inmueble` que el inmueble tiene ese material
-    (campos `tiene_fotos` / `tiene_plano` / `tiene_tour`) — si no, promete algo que no puede cumplir.
+    (campos `tiene_fotos` / `tiene_plano` / `tiene_tour`) - si no, promete algo que no puede cumplir.
     La galería vive en el CRM: elige los archivos y el orden (portada primero, caption solo en la
     primera). El agente nunca ve URLs. Para una primera muestra 3-4 fotos alcanzan (tope duro 8).
 
@@ -279,13 +279,13 @@ async def enviar_ubicacion(codigo: str, config: RunnableConfig) -> str:
         return json.dumps({"enviado": False, "error": str(e) or type(e).__name__}, ensure_ascii=False)
 
 
-# ── Lead tools (UPSERT per conversation — the CRM dedups by conversation_id) ───
+# ── Lead tools (UPSERT per conversation - the CRM dedups by conversation_id) ───
 
 async def _post_conversation(path: str, body: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """POST to /inmobiliaria/conversations/{id}/<path>, filling nombre from context when absent.
 
     Shared by solicitud/captacion/postventa. Returns the CRM json (with lead_id/referencia) or an
-    {"error": ...} dict; never raises — a lead failure must not break the reply.
+    {"error": ...} dict; never raises - a lead failure must not break the reply.
     """
     conversation_id = _ctx_conversation_id(config)
     log = logger.bind(conversation_id=conversation_id, accion=path)
@@ -329,7 +329,7 @@ async def registrar_solicitud(
     """Registra o actualiza el interés del cliente (lead comprador/inquilino).
 
     UPSERT por conversación: llamala apenas tengas algo que registrar y actualizala con cada dato
-    nuevo — NO crea duplicados, es la misma solicitud de esta conversación. Toda conversación debe
+    nuevo - NO crea duplicados, es la misma solicitud de esta conversación. Toda conversación debe
     quedar registrada.
 
     Args:
@@ -378,7 +378,7 @@ async def registrar_captacion(
 ) -> str:
     """Registra a un PROPIETARIO que quiere listar su inmueble (lead de captación).
 
-    No lo trates como comprador. No tases ni cotices comisión — eso lo ve el asesor.
+    No lo trates como comprador. No tases ni cotices comisión - eso lo ve el asesor.
 
     Args:
         tipo: Tipo de inmueble.
@@ -505,7 +505,7 @@ async def guardar_telefono(
         return json.dumps({"status": "error", "error": str(e) or type(e).__name__}, ensure_ascii=False)
 
 
-# ── Handoff (signal only — the webhook POSTs after the client notice) ──────────
+# ── Handoff (signal only - the webhook POSTs after the client notice) ──────────
 
 @tool
 async def derivar_a_asesor(reason: str, codigo: Optional[str] = None) -> str:
@@ -517,7 +517,7 @@ async def derivar_a_asesor(reason: str, codigo: Optional[str] = None) -> str:
     Usala cuando el cliente pida hablar con una persona, pida rebaja/condiciones especiales, pregunte
     por documentación/gravámenes/riesgos legales, haya un reclamo, o cuando la consulta exceda lo que
     podés resolver. NO derives por precio publicado, características, zonas, requisitos generales ni
-    horarios — eso lo resolvés vos.
+    horarios - eso lo resolvés vos.
 
     El mensaje que escribís en ESTA misma respuesta es el aviso al cliente (breve, sin prometer
     tiempos). Después de derivar NO vuelvas a escribir en esta conversación. No derives dos veces.
@@ -534,7 +534,7 @@ async def derivar_a_asesor(reason: str, codigo: Optional[str] = None) -> str:
 async def request_handoff(conversation_id: int, reason: str, codigo: Optional[str] = None) -> dict:
     """Derive a conversation to the property's titular advisor: POST .../handoff {codigo, reason}.
 
-    Not a tool — the webhook calls this AFTER sending the client notice (once derived the CRM 409s any
+    Not a tool - the webhook calls this AFTER sending the client notice (once derived the CRM 409s any
     further /messages, so order matters). Idempotent CRM-side. Best-effort: logs and returns {} on
     failure, never raises.
     """

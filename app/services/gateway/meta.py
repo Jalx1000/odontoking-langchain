@@ -1,4 +1,4 @@
-"""Meta Cloud API gateway — thin adapter over app/services/whatsapp_client.py."""
+"""Meta Cloud API gateway - thin adapter over app/services/whatsapp_client.py."""
 
 from app.services.gateway.base import Destination
 from app.services.whatsapp_client import (

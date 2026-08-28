@@ -1,4 +1,4 @@
-"""WhatsApp Cloud API client — send messages and transcribe audio."""
+"""WhatsApp Cloud API client - send messages and transcribe audio."""
 
 import io
 import re
@@ -127,10 +127,10 @@ def build_interactive_payload(mensaje: str, to: str) -> Optional[dict]:
     button_titles = [(t, _clean_title(t, 20)) for t in options]
     list_titles = [_clean_title(t, 24) for t in options]
     if any(not t for _, t in button_titles[:3]) and len(options) <= 3:
-        return None  # a title became empty after cleaning — fall back to plain text
+        return None  # a title became empty after cleaning - fall back to plain text
 
     # Use only the preamble (text before first numbered option) as body.
-    # Never fall back to the full message — that would duplicate options in body+buttons.
+    # Never fall back to the full message - that would duplicate options in body+buttons.
     # WhatsApp interactive body limit is 1024 chars.
     body_text = (option_pattern.split(mensaje)[0].strip() or "Seleccione una opción:")[:1024]
 
@@ -227,7 +227,7 @@ async def send_response(
     phone_number_id: str = "",
     token: str = "",
 ) -> None:
-    """Send a WhatsApp response — interactive if options detected, plain text otherwise."""
+    """Send a WhatsApp response - interactive if options detected, plain text otherwise."""
     # Safety net: the LLM sometimes emits Markdown (e.g. **bold**) despite the prompt ban;
     # WhatsApp shows the markers literally, so strip them from the outgoing body.
     mensaje = _strip_body_markdown(mensaje)

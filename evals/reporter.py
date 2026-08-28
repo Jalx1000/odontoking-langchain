@@ -74,7 +74,7 @@ def print_console_report(report: dict) -> None:
         f"[bold]Fallaron:[/bold] {report['failed']}\n"
         f"[bold]Tasa de éxito:[/bold] {report['pass_rate']}    "
         f"[bold]Nota promedio:[/bold] {report['avg_score']}/10",
-        title="OdontokingAgent — Reporte de Evaluación",
+        title="OdontokingAgent - Reporte de Evaluación",
         border_style="blue",
     )
     _console.print(header)
@@ -92,7 +92,7 @@ def print_console_report(report: dict) -> None:
 
         if s.get("error"):
             status_text = Text("ERROR", style="bold yellow")
-            score_str = "—"
+            score_str = "-"
         elif passed:
             status_text = Text("PASÓ", style="bold green")
         else:
@@ -121,8 +121,8 @@ def print_console_report(report: dict) -> None:
             score_val = s.get("score")
             score_str = f"{score_val:.1f}" if score_val is not None else "N/A"
             _console.print(f"[bold red]FALLÓ:[/bold red] {s['id']} (nota: {score_str})")
-            _console.print(f"  Criterio: {s.get('criteria_reasoning', '—')}")
-            _console.print(f"  Juez: {s.get('summary', '—')}")
+            _console.print(f"  Criterio: {s.get('criteria_reasoning', '-')}")
+            _console.print(f"  Juez: {s.get('summary', '-')}")
             _console.print()
 
     if not failed_scenarios and not errored_scenarios:

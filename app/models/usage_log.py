@@ -1,4 +1,4 @@
-"""UsageLog SQLModel — daily message and token counters per tenant."""
+"""UsageLog SQLModel - daily message and token counters per tenant."""
 
 import uuid
 from datetime import date as date_type

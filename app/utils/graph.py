@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.schemas import Message
 
-# Cache tiktoken encoding at module level — thread-safe and reusable
+# Cache tiktoken encoding at module level - thread-safe and reusable
 try:
     _TIKTOKEN_ENCODING = tiktoken.encoding_for_model(settings.DEFAULT_LLM_MODEL)
 except KeyError:
@@ -16,7 +16,7 @@ except KeyError:
 
 
 def _count_tokens_tiktoken(messages: list) -> int:
-    """Count tokens locally using tiktoken — no API call needed."""
+    """Count tokens locally using tiktoken - no API call needed."""
     num_tokens = 0
     for message in messages:
         # Every message has overhead tokens for role/name

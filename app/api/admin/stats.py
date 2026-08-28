@@ -1,4 +1,4 @@
-"""Admin monitoring endpoints — queue depths, error rates, conversation stats."""
+"""Admin monitoring endpoints - queue depths, error rates, conversation stats."""
 
 from datetime import date, timedelta
 

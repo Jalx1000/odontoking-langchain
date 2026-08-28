@@ -1,12 +1,12 @@
-"""Fase 4 — Multitenancy platform: tenants, usage_logs, user.is_admin.
+"""Fase 4 - Multitenancy platform: tenants, usage_logs, user.is_admin.
 
 Revision ID: c3f1a2b4d5e6
 Revises: 352d5a24eefc
 Create Date: 2026-05-14
 
 Changes:
-  + Table  tenants      — per-client WhatsApp + CRM + billing config
-  + Table  usage_logs   — daily message/token counters per tenant
+  + Table  tenants      - per-client WhatsApp + CRM + billing config
+  + Table  usage_logs   - daily message/token counters per tenant
   + Column user.is_admin BOOLEAN NOT NULL DEFAULT FALSE
 """
 

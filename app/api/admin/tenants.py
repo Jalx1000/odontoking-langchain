@@ -77,14 +77,14 @@ class TenantResponse(BaseModel):
     llm_model: str
     crm_url: str
     agent_endpoint_url: Optional[str] = None
-    # agent_api_key is write-only — never returned in responses
+    # agent_api_key is write-only - never returned in responses
     billing_model: str
     billing_tier: str
     msg_limit_month: int
     is_active: bool
     created_at: datetime
     updated_at: datetime
-    # Sensitive fields are masked — never returned in plaintext
+    # Sensitive fields are masked - never returned in plaintext
     wa_access_token_masked: str
     verify_token_masked: str
 

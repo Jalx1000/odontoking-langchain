@@ -1,22 +1,22 @@
-"""IMPRIMIR CRM tool — Krayin contacts, leads, products, activities and tags.
+"""IMPRIMIR CRM tool - Krayin contacts, leads, products, activities and tags.
 
 Flow: WhatsApp → Krayin CRM → agent → CrmGateway. The agent receives conversation_id + wa_id,
 drives the quotation, and replies in plain text (the gateway sends it).
 
-Design note — ONE coarse tool per action:
+Design note - ONE coarse tool per action:
 The naive design (resolve_person → ensure_organization → create_lead → add_lead_product →
 add_lead_note → tag_lead as six separate LLM tools) forces the model to thread person_id / lead_id
 between calls. Weaker models call them in parallel in a single turn and hallucinate those ids
 (e.g. person_id=0). So the LLM-facing surface is just:
 
-    register_cotizacion(...)          — ventas: does the whole resolve→org→lead→product→note→tag
-    registrar_consulta_postventa(...) — postventa: creates a lead in the postventa pipeline
-    get_person_leads(wa_id)           — what this contact already has
+    register_cotizacion(...)          - ventas: does the whole resolve→org→lead→product→note→tag
+    registrar_consulta_postventa(...) - postventa: creates a lead in the postventa pipeline
+    get_person_leads(wa_id)           - what this contact already has
 
-Each takes only wa_id (always in context) plus plain fields — no ids to thread. The step functions
+Each takes only wa_id (always in context) plus plain fields - no ids to thread. The step functions
 below are internal helpers, not tools.
 
-Reuses the ODONTOKING_API_URL / ODONTOKING_API_TOKEN settings — those env vars point at the
+Reuses the ODONTOKING_API_URL / ODONTOKING_API_TOKEN settings - those env vars point at the
 IMPRIMIR Krayin instance (https://imprimir.sofopolis.com), authenticated with a sanctum_admin
 Bearer token.
 """
@@ -45,7 +45,7 @@ _SOURCE_WHATSAPP = 6          # lead_source_id "WhatsApp"
 _LEAD_TYPE_VENTA = 1          # New Business
 _LEAD_TYPE_POSTVENTA = 2      # Existing Business
 _OWNER_USER_ID = 1            # default lead owner
-# Initial stage of the sales pipeline. Krayin's REST lead-create REQUIRES lead_pipeline_stage_id —
+# Initial stage of the sales pipeline. Krayin's REST lead-create REQUIRES lead_pipeline_stage_id -
 # omitting it 500s with "Undefined array key lead_pipeline_stage_id". Krayin's default first stage
 # is id 1; adjust if the IMPRIMIR sales pipeline's initial stage differs.
 _VENTA_STAGE_ID = 1
@@ -62,7 +62,7 @@ _TEMP_ALIASES = {
 }
 
 # Static catalog → product_id map: fallback when the live product search misses. These are the
-# REAL ids from the IMPRIMIR Krayin catalog (verified via GET /api/v1/products) — the live
+# REAL ids from the IMPRIMIR Krayin catalog (verified via GET /api/v1/products) - the live
 # products/search is still tried first, this is only the last resort.
 _PRODUCT_IDS = {
     "bolsa pouch": 12,
@@ -81,7 +81,7 @@ _PLACEHOLDER_NAME = "Cliente WhatsApp"
 # ── City → sales pipeline routing (agent-quotes.md §1) ────────────────────────
 # The CRM's default pipeline is Santa Cruz, so EVERY messaging lead is born there regardless of the
 # client's city; the agent moves it once the city is confirmed. The ids are NOT correlative (2, 3, 5
-# are absent) — never generate or assume them: use this map, or resolve by name via
+# are absent) - never generate or assume them: use this map, or resolve by name via
 # GET /api/v1/settings/pipelines.
 _CITY_PIPELINE_IDS = {
     "santa cruz": 1,
@@ -91,7 +91,7 @@ _CITY_PIPELINE_IDS = {
     "cochabamba": 8,
     "sucre": 9,
 }
-_PIPELINE_SIN_CIUDAD = 10  # fallback: no city / unrecognised city — keeps Santa Cruz metrics clean
+_PIPELINE_SIN_CIUDAD = 10  # fallback: no city / unrecognised city - keeps Santa Cruz metrics clean
 
 # The CRM auto-creates the lead in this initial stage. A lead in ANY other stage means a human
 # advisor already took it, so the agent must NOT move or modify it (see the Q1 "mixta" rule).
@@ -134,7 +134,7 @@ async def _request(client: httpx.AsyncClient, method: str, path: str, **kwargs: 
 
 
 def _normalize_wa_id(wa_id: str) -> str:
-    """Digits-only WhatsApp id — strip '+', spaces so the CRM lookup never misses."""
+    """Digits-only WhatsApp id - strip '+', spaces so the CRM lookup never misses."""
     return (wa_id or "").replace("+", "").replace(" ", "").strip()
 
 
@@ -145,7 +145,7 @@ def _clean_name(name: Optional[str]) -> str:
 
 
 def _real_name_or_none(name: Optional[str]) -> Optional[str]:
-    """Return the name only if it is real — not empty and not the placeholder."""
+    """Return the name only if it is real - not empty and not the placeholder."""
     clean = name.strip() if isinstance(name, str) else ""
     return clean if clean and clean != _PLACEHOLDER_NAME else None
 
@@ -174,7 +174,7 @@ def _ctx_ids(config: Optional[RunnableConfig]) -> tuple[Optional[int], Optional[
     """Read (lead_id, person_id) injected by the graph via config.metadata.
 
     These come from the CRM event (contact.lead_id / contact.person_id) and are injected server-side
-    so the LLM never sees or passes them — the module deliberately keeps ids off the LLM surface to
+    so the LLM never sees or passes them - the module deliberately keeps ids off the LLM surface to
     avoid hallucinated ids.
     """
     metadata = (config or {}).get("metadata") or {}
@@ -190,7 +190,7 @@ def _ctx_conversation_id(config: Optional[RunnableConfig]) -> Optional[int]:
 def _ctx_contact_name(config: Optional[RunnableConfig]) -> Optional[str]:
     """Best contact name from metadata (registered name, else WhatsApp/Messenger profile), or None.
 
-    Used as the quote subject when there's no company — an individual client (common on Messenger)
+    Used as the quote subject when there's no company - an individual client (common on Messenger)
     must not end up with a generic "Cotización WhatsApp" subject.
     """
     metadata = (config or {}).get("metadata") or {}
@@ -206,7 +206,7 @@ def _phone_ask_allowed(
 
     Asking is allowed only when the CRM flags the phone missing, the 3 attempts are not exhausted, and
     it is not already captured/refused. WHEN to ask within that (the conversation must have qualified)
-    and the wording are the model's job. Capturing a number the client volunteers is ALWAYS allowed —
+    and the wording are the model's job. Capturing a number the client volunteers is ALWAYS allowed -
     this gates asking only. Absent/false `phone_required` reads as not-required (§4 compatibility), so a
     CRM that hasn't deployed phone-capture never triggers an ask.
     """
@@ -231,7 +231,7 @@ def _resolve_pipeline_id(ciudad: Optional[str]) -> tuple[int, bool]:
 async def _initial_stage_id(client: httpx.AsyncClient, pipeline_id: int) -> Optional[int]:
     """Resolve the initial stage of a pipeline (lowest sort_order).
 
-    Never hardcode stage ids — each pipeline has its own set (agent-quotes.md §1). Returns None if
+    Never hardcode stage ids - each pipeline has its own set (agent-quotes.md §1). Returns None if
     the pipeline has no resolvable stages; the caller then omits the stage and lets Krayin default it.
     """
     resp = await _request(client, "GET", f"/api/v1/settings/pipelines/{pipeline_id}")
@@ -267,7 +267,7 @@ def _is_unattended(lead: dict[str, Any]) -> bool:
     """True if the lead is still in the initial 'No atendido' stage (safe to move/enrich).
 
     When the stage is unknown we return True: the fresh auto-created lead is the common case, and
-    the CRM PUT is idempotent, so a re-move is harmless — whereas wrongly skipping loses the routing.
+    the CRM PUT is idempotent, so a re-move is harmless - whereas wrongly skipping loses the routing.
     """
     name = _lead_stage_name(lead)
     return name in ("", _UNATTENDED_STAGE_NAME)
@@ -276,7 +276,7 @@ def _is_unattended(lead: dict[str, Any]) -> bool:
 def _build_quote_items(items: Any) -> list[dict[str, Any]]:
     """Normalise LLM-provided items into Krayin quote line items with prices at 0.
 
-    Each line needs name, quantity, price, total. Prices are 0 by policy — the agent does not quote
+    Each line needs name, quantity, price, total. Prices are 0 by policy - the agent does not quote
     money; the advisor prices the document later. Entries without a name are skipped. `items` must
     end up non-empty: QuoteRepository::create() does foreach($data['items']) with no guard, so an
     empty/absent items 500s instead of 422 (agent-quotes.md §2).
@@ -313,7 +313,7 @@ async def _resolve_product_id(client: httpx.AsyncClient, name: str) -> Optional[
         for item in data if isinstance(data, list) else []:
             if isinstance(item, dict) and str(item.get("name", "")).strip().lower() == clean.lower():
                 return item.get("id")
-    except Exception as e:  # noqa: BLE001 — search is best-effort; fall back to the static map
+    except Exception as e:  # noqa: BLE001 - search is best-effort; fall back to the static map
         logger.warning("imprimir_product_search_failed", producto=clean[:60], error=str(e))
     return _PRODUCT_IDS.get(clean.lower())
 
@@ -326,7 +326,7 @@ async def _build_quote_line_items(
     Every line is resolved to a real catalog product_id (live search + static map). Resolved products
     carry their product_id so the quote line links to the catalog; names that don't match any product
     are still kept (nothing is silently dropped) but returned separately so the caller can surface
-    them. Prices/totals stay 0 — the advisor prices the document later.
+    them. Prices/totals stay 0 - the advisor prices the document later.
     """
     line_items = _build_quote_items(items)
     unresolved: list[str] = []
@@ -359,7 +359,7 @@ async def _resolve_person(client: httpx.AsyncClient, wa_id: str, nombre: Optiona
 async def _find_organization_by_name(client: httpx.AsyncClient, name: str) -> Optional[int]:
     """Return the id of an organization whose name matches exactly, or None. Best-effort.
 
-    This Krayin build has NO /organizations/search route (calling it 500s — `/search` is caught by
+    This Krayin build has NO /organizations/search route (calling it 500s - `/search` is caught by
     `/organizations/{id}` and hits show("search")). The index endpoint instead filters by column,
     so `?name=<value>` does an exact `where name in (<value>)`. That gives us reliable reuse without
     the broken search route.
@@ -373,7 +373,7 @@ async def _find_organization_by_name(client: httpx.AsyncClient, name: str) -> Op
         for item in data if isinstance(data, list) else []:
             if isinstance(item, dict) and str(item.get("name", "")).strip().lower() == clean.lower():
                 return item.get("id")
-    except Exception as e:  # noqa: BLE001 — lookup is best-effort
+    except Exception as e:  # noqa: BLE001 - lookup is best-effort
         logger.warning("imprimir_org_lookup_failed", empresa=clean[:60], error=str(e))
     return None
 
@@ -398,7 +398,7 @@ async def _ensure_organization(
             org = _data(resp)
             org_id = org.get("id") if isinstance(org, dict) else None
         except httpx.HTTPStatusError as e:
-            # 409/422 usually means the name was taken between our lookup and create — resolve it.
+            # 409/422 usually means the name was taken between our lookup and create - resolve it.
             logger.warning("imprimir_org_create_conflict", empresa=empresa[:60], status=e.response.status_code)
             org_id = await _find_organization_by_name(client, empresa)
         except Exception as e:  # noqa: BLE001
@@ -421,7 +421,7 @@ async def _ensure_organization(
                     "entity_type": "persons",
                 },
             )
-        except Exception as e:  # noqa: BLE001 — org exists even if linking failed
+        except Exception as e:  # noqa: BLE001 - org exists even if linking failed
             logger.warning("imprimir_organization_link_failed", organization_id=org_id, error=str(e))
     return org_id
 
@@ -440,7 +440,7 @@ async def _create_lead(
     """Create the lead linked to the existing person; return lead_id."""
     etiqueta = (nombre_empresa or nombre or "Cliente").strip()
     prefix = "Postventa WhatsApp" if es_postventa else "Cotización WhatsApp"
-    descripcion = " — ".join(p for p in (categoria, resumen) if p and p.strip()) or "Vía WhatsApp"
+    descripcion = " - ".join(p for p in (categoria, resumen) if p and p.strip()) or "Vía WhatsApp"
     # Link the EXISTING person by id. Sending contact_numbers for a number Krayin already has makes
     # the lead-create 422 ("person.contact_numbers.0.value has already been taken"). Only fall back
     # to contact_numbers if we somehow have no person_id.
@@ -461,7 +461,7 @@ async def _create_lead(
         "person": person,
         "entity_type": "leads",
     }
-    # Always send a stage id — Krayin's REST lead-create 500s ("Undefined array key
+    # Always send a stage id - Krayin's REST lead-create 500s ("Undefined array key
     # lead_pipeline_stage_id") when it is omitted. Postventa uses its own stage when known.
     body["lead_pipeline_stage_id"] = (
         _POSTVENTA_STAGE_ID if (es_postventa and _POSTVENTA_STAGE_ID is not None) else _VENTA_STAGE_ID
@@ -568,7 +568,7 @@ async def register_cotizacion(
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             # Q1 "mixta": the CRM already auto-created ONE lead for this conversation
-            # (contact.lead_id). Reuse it — never create a duplicate. Enrich it only while it is
+            # (contact.lead_id). Reuse it - never create a duplicate. Enrich it only while it is
             # still the untouched auto-created lead ("No atendido"); if an advisor already advanced
             # it, leave it exactly as-is.
             if lead_ctx:
@@ -582,7 +582,7 @@ async def register_cotizacion(
                     )
                 lead_id: Optional[int] = lead_ctx
             else:
-                # Fallback: no auto-created lead in context (contact.lead_id was null) — create one.
+                # Fallback: no auto-created lead in context (contact.lead_id was null) - create one.
                 person_id = person_ctx or await _resolve_person(client, wa, contacto)
                 org_id = (
                     await _ensure_organization(client, person_id, nombre_empresa)
@@ -595,7 +595,7 @@ async def register_cotizacion(
                 log.error("register_cotizacion_no_lead_id")
                 return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
 
-            # Best-effort enrichment — a failure here must not lose the lead.
+            # Best-effort enrichment - a failure here must not lose the lead.
             attached = False
             try:
                 attached = await _add_lead_product(client, lead_id, producto, cantidad)
@@ -821,11 +821,11 @@ async def crear_quote(
 
     Una sola llamada, y SOLO después de que el cliente confirme el resumen con un "sí". El ASUNTO de
     la cotización es el nombre de la empresa. Los ítems SON los productos: usá el nombre EXACTO del
-    catálogo en cada uno (se validan contra el catálogo). Los PRECIOS van en 0 — el asesor pone los
+    catálogo en cada uno (se validan contra el catálogo). Los PRECIOS van en 0 - el asesor pone los
     precios reales; nunca inventes montos. No manejas ids: person_id y lead_id vienen del contexto.
 
     Args:
-        nombre_empresa: Nombre de la empresa del cliente — va como asunto de la cotización.
+        nombre_empresa: Nombre de la empresa del cliente - va como asunto de la cotización.
         items: Lista de ítems (productos), al menos uno. Cada ítem: {"name": str, "quantity": int}.
             `name` debe ser el nombre EXACTO del producto del catálogo.
         config: Interno; lo inyecta el sistema. No lo pases.
@@ -834,15 +834,15 @@ async def crear_quote(
     lead_id, person_id = _ctx_ids(config)
     log = logger.bind(lead_id=lead_id, person_id=person_id)
     if not person_id:
-        # §4.3: person_id must exist and must never be invented — without it we cannot create.
+        # §4.3: person_id must exist and must never be invented - without it we cannot create.
         log.warning("crear_quote_no_person_id")
         return json.dumps({"quote_id": None, "error": "no_person_id"}, ensure_ascii=False)
-    # Subject is the company name; for an individual (no company — common on Messenger) fall back to
+    # Subject is the company name; for an individual (no company - common on Messenger) fall back to
     # the contact's name from context, never to a generic "Cotización WhatsApp".
     subject = (nombre_empresa or "").strip() or _ctx_contact_name(config) or "Cotización"
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            # Items ARE the products — validate each against the catalog and attach its product_id.
+            # Items ARE the products - validate each against the catalog and attach its product_id.
             line_items, unresolved = await _build_quote_line_items(client, items)
             if not line_items:
                 log.warning("crear_quote_no_items")
@@ -853,14 +853,14 @@ async def crear_quote(
                 "subject": subject,
                 "person_id": person_id,
                 "user_id": _OWNER_USER_ID,
-                # §2: the 7-day expiry lives in the web form, not the API — compute it or the POST 422s.
+                # §2: the 7-day expiry lives in the web form, not the API - compute it or the POST 422s.
                 "expired_at": (date.today() + timedelta(days=7)).isoformat(),
                 "sub_total": 0,
                 "grand_total": 0,
                 "items": line_items,
             }
             if lead_id:
-                # Always link the quote to the lead — it ties the quote to the city pipeline, and the
+                # Always link the quote to the lead - it ties the quote to the city pipeline, and the
                 # PUT path detaches the lead when lead_id is omitted (§3), so keep it present.
                 body["lead_id"] = lead_id
             if descripcion and descripcion.strip():
@@ -895,7 +895,7 @@ async def derivar_a_asesor(conversation_id: int, reason: str) -> str:
     muestre enojo o frustración, o cuando la consulta exceda lo que podés resolver: descuentos por
     volumen, precios especiales, reclamos por un trabajo entregado, pagos, facturación o cambios
     sobre un pedido ya confirmado. NO derives por precios de lista, tiempos de entrega, formatos,
-    materiales, horarios ni dirección — eso lo resolvés vos.
+    materiales, horarios ni dirección - eso lo resolvés vos.
 
     Importante: el mensaje que escribes en ESTA misma respuesta es el aviso que recibe el cliente
     (breve y natural, sin prometer tiempos; ej. "Te comunico con un asesor del equipo, en un
@@ -915,7 +915,7 @@ async def derivar_a_asesor(conversation_id: int, reason: str) -> str:
 async def request_handoff(conversation_id: int, reason: str) -> dict:
     """Derive a conversation to a human advisor: POST /whatsapp/conversations/{id}/handoff.
 
-    Not a tool — the gateway calls this AFTER sending the client notice (once derived, the CRM 409s
+    Not a tool - the gateway calls this AFTER sending the client notice (once derived, the CRM 409s
     any further /messages, so order matters). Idempotent: a second call returns handoff.changed=false.
     Best-effort: logs and returns {} on failure, never raises. Uses the same Bearer token as the
     other CRM calls (verified: the route authenticates and 404s only on an unknown conversation).
@@ -957,7 +957,7 @@ async def submit_contact_phone(
 ) -> dict[str, Any]:
     """Report a captured phone (or a refusal) to the CRM: POST .../contact-phone.
 
-    Not a tool — `guardar_telefono_contacto` calls this. Sends the number VERBATIM; the CRM normalises
+    Not a tool - `guardar_telefono_contacto` calls this. Sends the number VERBATIM; the CRM normalises
     and validates it (§3), so we never clean/format it here. Idempotent on the CRM side. Best-effort:
     never raises. Maps the documented statuses:
       200 → {"status": "ok"}            registered; don't ask again
@@ -967,7 +967,7 @@ async def submit_contact_phone(
     """
     log = logger.bind(conversation_id=conversation_id)
     if not refused and not (phone or "").strip():
-        # Guard: never POST an empty capture — treat it like an invalid number so the model re-asks.
+        # Guard: never POST an empty capture - treat it like an invalid number so the model re-asks.
         return {"status": "invalid", "reason": "empty_phone"}
     payload: dict[str, Any] = (
         {"refused": True} if refused else {"phone": phone, "source": "ai", "confidence": "stated"}
@@ -1019,6 +1019,6 @@ async def guardar_telefono_contacto(
         return json.dumps({"status": "error", "error": "no_conversation_id"}, ensure_ascii=False)
     result = await submit_contact_phone(conversation_id, phone=telefono, refused=rechazado)
     if result.get("status") == "invalid":
-        # 422 / empty: the number was not saved — the model should re-ask once if attempts remain.
+        # 422 / empty: the number was not saved - the model should re-ask once if attempts remain.
         result["repreguntar"] = True
     return json.dumps(result, ensure_ascii=False)

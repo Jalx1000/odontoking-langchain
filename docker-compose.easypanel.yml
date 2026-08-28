@@ -1,7 +1,7 @@
 version: '3.8'
 
 # ============================================================
-# Easypanel production stack — Odontoking WhatsApp Agent
+# Easypanel production stack - Odontoking WhatsApp Agent
 #
 # Variables requeridas (configurar en Easypanel → Environment):
 #   POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD
@@ -15,7 +15,7 @@ version: '3.8'
 services:
 
   # ----------------------------------------------------------
-  # PostgreSQL con pgvector — necesario para checkpointing
+  # PostgreSQL con pgvector - necesario para checkpointing
   # y (opcional) para memoria a largo plazo con mem0
   # ----------------------------------------------------------
   db:
@@ -36,7 +36,7 @@ services:
       - internal
 
   # ----------------------------------------------------------
-  # Valkey — cache + message buffer por wa_id
+  # Valkey - cache + message buffer por wa_id
   # ----------------------------------------------------------
   valkey:
     image: valkey/valkey:8.1.6-alpine
@@ -53,7 +53,7 @@ services:
       - internal
 
   # ----------------------------------------------------------
-  # API — FastAPI + LangGraph agent
+  # API - FastAPI + LangGraph agent
   # El command corre migraciones antes de levantar uvicorn
   # ----------------------------------------------------------
   app:
@@ -74,7 +74,7 @@ services:
       LOG_LEVEL: WARNING
       LOG_FORMAT: json
 
-      # Base de datos — apunta al servicio 'db' interno
+      # Base de datos - apunta al servicio 'db' interno
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
       POSTGRES_DB: ${POSTGRES_DB:-odontoking}
@@ -83,7 +83,7 @@ services:
       POSTGRES_POOL_SIZE: "5"
       POSTGRES_MAX_OVERFLOW: "10"
 
-      # Valkey — apunta al servicio 'valkey' interno
+      # Valkey - apunta al servicio 'valkey' interno
       VALKEY_HOST: valkey
       VALKEY_PORT: "6379"
       VALKEY_PASSWORD: ${VALKEY_PASSWORD:-}

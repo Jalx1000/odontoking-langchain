@@ -24,7 +24,7 @@ class CrmContact(BaseModel):
 
     # Messenger phone-capture signalling. All optional and staged: the CRM rolls this out gradually,
     # so when the fields are ABSENT they must read as "don't ask" (phone_required=False). The CRM owns
-    # the counters — we only read them (§4). `phone_required` is a SIGNAL that the phone is missing,
+    # the counters - we only read them (§4). `phone_required` is a SIGNAL that the phone is missing,
     # not an order to ask now; the agent decides when (once the conversation qualifies).
     phone_required: bool = False
     phone_prompt_state: Optional[str] = None      # pending | asked | captured | refused | null
@@ -57,7 +57,7 @@ class CrmHistoryItem(BaseModel):
 
         Kommo/CRM sends `content: null` (and sometimes role/type) for non-text history items
         (images, audio, system notes). Since `content` is typed `str`, a literal null used to
-        raise a ValidationError that rejected the WHOLE `message.received` event — so the agent
+        raise a ValidationError that rejected the WHOLE `message.received` event - so the agent
         never ran and never replied. History is context-only (not the trigger), so a null there
         must never break the event.
         """

@@ -166,15 +166,15 @@ class Settings:
         self.JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
         self.JWT_ACCESS_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_DAYS", "30"))
 
-        # Security — Fernet key for encrypting tenant credentials in DB
+        # Security - Fernet key for encrypting tenant credentials in DB
         # Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
         self.ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
 
-        # Admin panel — static API key for accessing /admin endpoints
+        # Admin panel - static API key for accessing /admin endpoints
         # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
         self.ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 
-        # Internal API key — used by agent services to call POST /internal/usage
+        # Internal API key - used by agent services to call POST /internal/usage
         # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
         self.INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
 
@@ -200,7 +200,7 @@ class Settings:
         self.POSTGRES_MAX_OVERFLOW = int(os.getenv("POSTGRES_MAX_OVERFLOW", "10"))
         self.CHECKPOINT_TABLES = ["checkpoint_blobs", "checkpoint_writes", "checkpoints"]
 
-        # Valkey/Redis Cache Configuration (optional — if host is set, caching is enabled)
+        # Valkey/Redis Cache Configuration (optional - if host is set, caching is enabled)
         self.VALKEY_HOST = os.getenv("VALKEY_HOST", "")
         self.VALKEY_PORT = int(os.getenv("VALKEY_PORT", "6379"))
         self.VALKEY_DB = int(os.getenv("VALKEY_DB", "0"))
@@ -208,7 +208,7 @@ class Settings:
         self.VALKEY_MAX_CONNECTIONS = int(os.getenv("VALKEY_MAX_CONNECTIONS", "20"))
         self.CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "60"))
 
-        # RabbitMQ / CloudAMQP (optional — Fase 5, higher priority than Redis Streams)
+        # RabbitMQ / CloudAMQP (optional - Fase 5, higher priority than Redis Streams)
         # Set to enable enterprise-grade message broker with native DLQ and management UI.
         # Format: amqp://user:password@host:5672/vhost  (amqps:// for TLS)
         # Install: uv add aio-pika --optional rabbitmq
@@ -271,7 +271,7 @@ class Settings:
         self.BUFFER_WINDOW_SECONDS = float(os.getenv("BUFFER_WINDOW_SECONDS", "3.0"))
         self.BUFFER_MAX_MESSAGES = int(os.getenv("BUFFER_MAX_MESSAGES", "10"))
 
-        # Alert Notifications — SMTP email
+        # Alert Notifications - SMTP email
         self.MAIL_HOST = os.getenv("MAIL_HOST", "")
         self.MAIL_PORT = int(os.getenv("MAIL_PORT", "465"))
         self.MAIL_USERNAME = os.getenv("MAIL_USERNAME", "")

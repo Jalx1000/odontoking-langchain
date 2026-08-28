@@ -247,7 +247,7 @@ class LLMService:
 
         One-off path (any override set):
             ``get_target`` builds a fresh registry instance each attempt.
-            ``advance`` increments a local index — ``self._llm`` is never touched.
+            ``advance`` increments a local index - ``self._llm`` is never touched.
 
         Default path (no overrides):
             ``get_target`` returns ``self._llm`` (tool-bound).
@@ -294,7 +294,7 @@ class LLMService:
         get_target: Callable[[int], Any],
         advance: Callable[[int], Optional[int]],
     ) -> Any:
-        """Shared fallback loop — try each model in turn until one succeeds.
+        """Shared fallback loop - try each model in turn until one succeeds.
 
         Args:
             messages: Messages to send.

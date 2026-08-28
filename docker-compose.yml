@@ -21,7 +21,7 @@ services:
     networks:
       - monitoring
 
-  # PostgreSQL dev — usuario dev/dev en puerto 5433 (para desarrollo local)
+  # PostgreSQL dev - usuario dev/dev en puerto 5433 (para desarrollo local)
   db-dev:
     image: pgvector/pgvector:pg16
     platform: linux/amd64
@@ -42,7 +42,7 @@ services:
     networks:
       - monitoring
 
-  # Valkey (Redis-compatible) cache — optional, set VALKEY_HOST=valkey in your .env to enable
+  # Valkey (Redis-compatible) cache - optional, set VALKEY_HOST=valkey in your .env to enable
   valkey:
     image: valkey/valkey:8.1.6-alpine
     ports:

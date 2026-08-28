@@ -1,4 +1,4 @@
-"""Message buffer service — debounce and batch WhatsApp messages per user.
+"""Message buffer service - debounce and batch WhatsApp messages per user.
 
 Accumulates messages within BUFFER_WINDOW_SECONDS per wa_id, then processes them
 as a single combined input. A single worker per user guarantees FIFO sequential
@@ -130,7 +130,7 @@ class _RedisMessageBuffer:
             logger.warning("message_buffer_redis_release_failed", wa_id=wa_id, error=str(e))
 
     async def renew_lock(self, wa_id: str) -> None:
-        """Extend the worker lock TTL — call every _LOCK_RENEW_INTERVAL during processing."""
+        """Extend the worker lock TTL - call every _LOCK_RENEW_INTERVAL during processing."""
         try:
             await self._r.expire(self._lock_key(wa_id), self._lock_ttl())
         except Exception as e:
@@ -208,7 +208,7 @@ class MessageBufferService:
         try:
             await self._backend.push(wa_id, text)
         except Exception:
-            # Redis push failed — fall back to immediate processing
+            # Redis push failed - fall back to immediate processing
             logger.warning("message_buffer_push_failed_fallback", wa_id=wa_id)
             await process_fn(wa_id, text)
             return
@@ -233,7 +233,7 @@ class MessageBufferService:
         assert backend is not None
 
         try:
-            # Single debounce window — accumulate rapid-fire messages
+            # Single debounce window - accumulate rapid-fire messages
             await asyncio.sleep(settings.BUFFER_WINDOW_SECONDS)
             while True:
                 messages = await backend.drain(wa_id)

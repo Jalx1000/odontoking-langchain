@@ -172,7 +172,7 @@ class ProfilingMiddleware(BaseHTTPMiddleware):
             settings.PROFILING_DIR.mkdir(parents=True, exist_ok=True)
             filepath = settings.PROFILING_DIR / f"{raw_id}.json"
 
-            # Top 20 memory allocators — exclude profiler and stdlib noise
+            # Top 20 memory allocators - exclude profiler and stdlib noise
             _excluded = ("tracemalloc", "pyinstrument", "<frozen", "logging/__init__")
             top_allocs = [
                 {

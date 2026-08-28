@@ -1,4 +1,4 @@
-"""Internal API — endpoints called by agent services, not external clients."""
+"""Internal API - endpoints called by agent services, not external clients."""
 
 import hmac
 from datetime import UTC, date, datetime

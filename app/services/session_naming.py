@@ -77,7 +77,7 @@ async def _persist_session_name(session_id: str, user_message: str) -> None:
 def maybe_name_session(session_id: str, session_name: str, messages: list) -> None:
     """Trigger session auto-naming if the session is still unnamed.
 
-    Safe to call from any chat endpoint — concurrent callers for the same
+    Safe to call from any chat endpoint - concurrent callers for the same
     session are deduplicated by the Postgres claim.
     """
     if session_name:

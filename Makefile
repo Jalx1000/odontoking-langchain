@@ -124,7 +124,7 @@ pre-commit-update:
 	uv run pre-commit autoupdate
 
 # ---------------------------------------------------------------------------
-# Docker — single service (API + DB)
+# Docker - single service (API + DB)
 # ---------------------------------------------------------------------------
 docker-build:
 	$(call check_env)
@@ -143,7 +143,7 @@ docker-logs:
 	@APP_ENV=$(ENV) $(DOCKER_COMPOSE) --env-file .env.$(ENV) logs -f app db
 
 # ---------------------------------------------------------------------------
-# Docker — full stack (API + DB + Prometheus + Grafana)
+# Docker - full stack (API + DB + Prometheus + Grafana)
 # ---------------------------------------------------------------------------
 stack-up:
 	$(call load_env_file)
@@ -158,7 +158,7 @@ stack-logs:
 	@APP_ENV=$(ENV) $(DOCKER_COMPOSE) --env-file .env.$(ENV) logs -f
 
 # ---------------------------------------------------------------------------
-# Railway — borrado de historial conversacional (Postgres + Redis)
+# Railway - borrado de historial conversacional (Postgres + Redis)
 # ---------------------------------------------------------------------------
 # Usa los endpoints PÚBLICOS de Railway. Las URLs se leen de los servicios y se
 # pasan por env al script SIN imprimirse (no quedan en pantalla ni en el shell).
@@ -237,12 +237,12 @@ help:
 	@echo "  docker-down          Stop containers"
 	@echo "  docker-logs          Tail container logs"
 	@echo ""
-	@echo "Docker (full stack — includes Prometheus + Grafana):"
+	@echo "Docker (full stack - includes Prometheus + Grafana):"
 	@echo "  stack-up             Start entire stack"
 	@echo "  stack-down           Stop entire stack"
 	@echo "  stack-logs           Tail all service logs"
 	@echo ""
-	@echo "Railway — borrar historial del agente (Postgres + Redis):"
+	@echo "Railway - borrar historial del agente (Postgres + Redis):"
 	@echo "  history-check        Cuenta qué se borraría (no borra nada)"
 	@echo "  history-wipe         Respalda y borra (CONFIRM=yes salta la pregunta; NO_BACKUP=1 omite respaldo)"
 	@echo ""

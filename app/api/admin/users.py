@@ -1,4 +1,4 @@
-"""Admin endpoints — user management."""
+"""Admin endpoints - user management."""
 
 from typing import Optional
 

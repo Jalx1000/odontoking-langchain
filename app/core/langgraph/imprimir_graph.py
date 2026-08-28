@@ -1,4 +1,4 @@
-"""ImprimirAgent — LangGraph agent for the IMPRIMIR WhatsApp B2B quotation assistant (Valentina).
+"""ImprimirAgent - LangGraph agent for the IMPRIMIR WhatsApp B2B quotation assistant (Valentina).
 
 Flow: WhatsApp → Krayin CRM → agent → CrmGateway. The agent receives conversation_id + wa_id,
 drives the quotation conversation, writes to the CRM via the crm.py tools, and returns plain text
@@ -99,7 +99,7 @@ def _load_imprimir_prompt(
         context_lines.append("nombre_registrado: null  # pide el nombre del contacto")
 
     # Phone-capture block: only when the CRM flags the phone missing (messenger). The ask gate is
-    # evaluated in code here so the model just reads sí/no — see "Pedido de teléfono" in imprimir.md.
+    # evaluated in code here so the model just reads sí/no - see "Pedido de teléfono" in imprimir.md.
     pp = phone_prompt or {}
     if pp.get("required"):
         allowed = _phone_ask_allowed(True, pp.get("state"), bool(pp.get("exhausted")))
@@ -173,7 +173,7 @@ class ImprimirAgent:
                         "connect_timeout": 10,
                         "prepare_threshold": None,
                         "row_factory": dict_row,
-                        # TCP keepalives — prevent the remote server from closing idle connections.
+                        # TCP keepalives - prevent the remote server from closing idle connections.
                         "keepalives": 1,
                         "keepalives_idle": 30,
                         "keepalives_interval": 10,
@@ -199,7 +199,7 @@ class ImprimirAgent:
             nombre_registrado=metadata.get("nombre_registrado"),
             nombre_whatsapp=metadata.get("nombre_whatsapp"),
         )
-        # Build messages with LangChain types directly — bypasses Message max_length validation.
+        # Build messages with LangChain types directly - bypasses Message max_length validation.
         langchain_messages = [SystemMessage(content=system_prompt)] + list(state.messages)
 
         try:
@@ -225,7 +225,7 @@ class ImprimirAgent:
         async def _execute(tc: dict) -> ToolMessage:
             try:
                 # Forward config so tools can read injected metadata (lead_id, person_id) without the
-                # LLM ever seeing or passing those ids — avoids the id-hallucination this module warns
+                # LLM ever seeing or passing those ids - avoids the id-hallucination this module warns
                 # about. Tools that don't declare a `config` param simply ignore it.
                 result = await self.tools_by_name[tc["name"]].ainvoke(tc["args"], config)
             except GraphBubbleUp:

@@ -148,7 +148,7 @@ stubPath = "typings"
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
 
-# Tightened from defaults — cheap real-bug catchers
+# Tightened from defaults - cheap real-bug catchers
 reportDuplicateImport = "error"
 reportInvalidTypeVarUse = "error"
 reportSelfClsParameterName = "error"

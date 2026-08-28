@@ -1,8 +1,8 @@
-"""C21Agent — LangGraph agent for the CENTURY 21 (Sofía) WhatsApp real-estate assistant.
+"""C21Agent - LangGraph agent for the CENTURY 21 (Sofía) WhatsApp real-estate assistant.
 
 Flow: WhatsApp → Krayin CRM (c21.sofopolis.com) → agent → CRM. Same Postgres checkpointer / Langfuse
 infrastructure as the IMPRIMIR agent; the difference is the prompt (c21.md) and the tool set
-(inmobiliaria.py). v1 does NOT schedule visits — Sofía captures a visit preference and hands off to the
+(inmobiliaria.py). v1 does NOT schedule visits - Sofía captures a visit preference and hands off to the
 titular advisor. The ONLY id the LLM handles is the public property `codigo`; conversation_id /
 person_id / lead_id are injected via config.metadata and never reach the model.
 """

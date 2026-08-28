@@ -1,4 +1,4 @@
-"""sofo-crm gateway — routes replies through the Krayin CRM middleware.
+"""sofo-crm gateway - routes replies through the Krayin CRM middleware.
 
 The CRM persists the message and delivers it to the customer via the active gateway
 (Kommo salesbot / Cloud API), transparent to us. We authenticate with a Sanctum API
@@ -34,7 +34,7 @@ async def _post_text(dest: Destination, text: str) -> None:
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(url, json=payload, headers=headers)
         # 422 = outside the 24h WhatsApp window (free text rejected) or a validation error.
-        # Never retry free text in that case — log and drop.
+        # Never retry free text in that case - log and drop.
         if resp.status_code == 422:
             logger.warning("crm_reply_rejected", wa_id=dest.wa_id, status=422, body=resp.text[:300])
             return

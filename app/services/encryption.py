@@ -48,7 +48,7 @@ def decrypt(value: str) -> str:
     try:
         return f.decrypt(value.encode()).decode()
     except (InvalidToken, Exception):
-        # Value might not be encrypted (e.g. legacy plain text) — return as-is
+        # Value might not be encrypted (e.g. legacy plain text) - return as-is
         return value
 
 

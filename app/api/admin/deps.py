@@ -1,4 +1,4 @@
-"""Admin API dependencies — authentication and common utilities."""
+"""Admin API dependencies - authentication and common utilities."""
 
 from fastapi import Header, HTTPException, status
 

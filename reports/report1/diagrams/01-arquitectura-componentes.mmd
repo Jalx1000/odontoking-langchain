@@ -1,4 +1,4 @@
-%% Diagrama de arquitectura de componentes — 01.odontoking
+%% Diagrama de arquitectura de componentes - 01.odontoking
 %% Render: VSCode (Markdown Preview Mermaid Support) o https://mermaid.live
 flowchart TB
     subgraph EXT["Servicios externos"]
@@ -20,7 +20,7 @@ flowchart TB
         BROKER["Broker (publish)\nRedis Streams / RabbitMQ"]
     end
 
-    subgraph WORKER["Worker (app.worker) — 1 por tenant"]
+    subgraph WORKER["Worker (app.worker) - 1 por tenant"]
         WCONS["Consumer Redis Streams"]
         WAGENT["OdontokingAgent"]
     end

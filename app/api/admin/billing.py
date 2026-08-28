@@ -1,4 +1,4 @@
-"""Admin billing endpoints — monthly usage reports and CSV export."""
+"""Admin billing endpoints - monthly usage reports and CSV export."""
 
 import csv
 import io

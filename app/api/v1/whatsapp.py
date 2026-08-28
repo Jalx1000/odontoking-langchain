@@ -1,4 +1,4 @@
-"""WhatsApp Cloud API webhook — multi-tenant router (Plan B).
+"""WhatsApp Cloud API webhook - multi-tenant router (Plan B).
 
 Each Meta Developer App configures its own endpoint:
   GET/POST /api/v1/whatsapp/{tenant_slug}/webhook
@@ -43,7 +43,7 @@ from app.services.whatsapp_client import (
 
 router = APIRouter()
 
-# Background task set — prevents GC of fire-and-forget tasks
+# Background task set - prevents GC of fire-and-forget tasks
 _background_tasks: set[asyncio.Task] = set()
 
 # Per-wa_id sliding-window rate limit (in-memory, single process)
@@ -55,7 +55,7 @@ _WA_RATE_MAX_MESSAGES = 20
 # Meta retries webhook delivery when it doesn't get a 200 fast enough,
 # which can cause the same message to be processed twice.
 _seen_message_ids: dict[str, float] = {}
-_MSG_DEDUPE_TTL = 60.0  # seconds — covers Meta's full retry window
+_MSG_DEDUPE_TTL = 60.0  # seconds - covers Meta's full retry window
 
 _WAITING_MSG = (
     "La consulta está tardando un poco más de lo normal. "
@@ -342,7 +342,7 @@ async def _handle_webhook_payload(
                             message_id=msg.id,
                         )
                     except Exception as e:
-                        # Never raise — Meta would retry. Log and drop; DLQ on the
+                        # Never raise - Meta would retry. Log and drop; DLQ on the
                         # consumer side will surface persistent issues separately.
                         logger.exception(
                             "whatsapp_broker_publish_failed",
@@ -401,7 +401,7 @@ async def receive_message_tenant(tenant_slug: str, request: Request) -> dict:
     return await _handle_webhook_payload(raw, tenant, message_buffer_service)
 
 
-# ── Legacy route — backward-compatible alias for odontoking ─────────────────
+# ── Legacy route - backward-compatible alias for odontoking ─────────────────
 
 @router.get("/webhook")
 async def verify_webhook_legacy(
@@ -409,7 +409,7 @@ async def verify_webhook_legacy(
     hub_verify_token: str = Query(alias="hub.verify_token", default=""),
     hub_challenge: str = Query(alias="hub.challenge", default=""),
 ) -> PlainTextResponse:
-    """Legacy verification endpoint — routes to odontoking tenant."""
+    """Legacy verification endpoint - routes to odontoking tenant."""
     return await verify_webhook_tenant(
         tenant_slug="odontoking",
         hub_mode=hub_mode,
@@ -421,7 +421,7 @@ async def verify_webhook_legacy(
 @router.post("/webhook")
 @limiter.limit("100 per minute")
 async def receive_message_legacy(request: Request) -> dict:
-    """Legacy POST webhook — backward-compatible alias for odontoking tenant.
+    """Legacy POST webhook - backward-compatible alias for odontoking tenant.
 
     Meta's webhook is still configured to POST /api/v1/whatsapp/webhook while
     the new tenant-specific route /api/v1/whatsapp/{tenant_slug}/webhook is
