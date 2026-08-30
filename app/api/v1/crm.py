@@ -14,8 +14,7 @@ from hashlib import sha256
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core.config import settings
-from app.core.langgraph.c21_graph import c21_agent
-from app.core.langgraph.tools.inmobiliaria import request_handoff
+from app.core.langgraph.kohlberg_graph import kohlberg_agent
 from app.core.limiter import limiter
 from app.core.logging import logger
 from app.schemas import Message
@@ -83,24 +82,19 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
         messages = [Message(role="user", content=text)]
         turn_id = sha256(f"sofo-crm:{wa_id}:{time.monotonic_ns()}:{text}".encode()).hexdigest()[:16]
         agent_task: asyncio.Task | None = None
-        # Filled by the agent (via handoff_callback) when it calls derivar_a_asesor this turn.
-        handoff: dict = {}
-
-        async def _on_handoff(signal: dict) -> None:
-            handoff.update(signal)
 
         try:
             logger.info("crm_agent_turn_started", wa_id=wa_id, turn_id=turn_id, text_preview=text[:120])
             agent_task = asyncio.create_task(
-                c21_agent.get_response(
+                kohlberg_agent.get_response(
                     messages,
                     wa_id,
                     conversation_id=dest.conversation_id,
+                    lead_id=patient_ctx.get("lead_id"),
+                    person_id=patient_ctx.get("person_id"),
                     channel=patient_ctx.get("channel"),
-                    phone_prompt=patient_ctx.get("phone_prompt"),
                     nombre_registrado=patient_ctx.get("nombre_registrado"),
                     nombre_whatsapp=patient_ctx.get("nombre_whatsapp"),
-                    handoff_callback=_on_handoff,
                 )
             )
             try:
@@ -115,10 +109,6 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
                 )
             await gateway.send_response(dest, response_text)
             logger.info("crm_response_sent", wa_id=wa_id, turn_id=turn_id, preview=response_text[:120])
-            # Derive AFTER the reply (the reply is the client's notice): once derived the CRM 409s
-            # any further /messages, so the order matters. Handoff goes to the titular of `codigo`.
-            if "reason" in handoff and dest.conversation_id is not None:
-                await request_handoff(dest.conversation_id, handoff.get("reason", ""), handoff.get("codigo"))
         except asyncio.TimeoutError:
             logger.warning("crm_agent_hard_timeout", wa_id=wa_id, turn_id=turn_id)
             if agent_task is not None:
@@ -201,14 +191,10 @@ async def receive_crm_event(request: Request) -> dict:
     patient_ctx: dict = {
         "nombre_whatsapp": event.contact.name or None,
         "channel": event.contact.channel or event.gateway,
-        # Phone-capture signalling (messenger). The CRM owns the counters; we just forward them so the
-        # agent knows whether the phone is missing and whether it may still ask. Absent → not required.
-        "phone_prompt": {
-            "required": event.contact.phone_required,
-            "state": event.contact.phone_prompt_state,
-            "attempts": event.contact.phone_prompt_attempts,
-            "exhausted": event.contact.phone_prompt_exhausted,
-        },
+        # The CRM auto-opens ONE lead per conversation (contact.lead_id / contact.person_id). We forward
+        # them so registrar_pedido enriches that lead instead of creating a duplicate.
+        "lead_id": event.contact.lead_id,
+        "person_id": event.contact.person_id,
     }
 
     logger.info(

@@ -259,6 +259,13 @@ class Settings:
         self.ODONTOKING_API_TOKEN = os.getenv("ODONTOKING_API_TOKEN", "")
         self.ODONTOKING_MEMORY_ENABLED = os.getenv("ODONTOKING_MEMORY_ENABLED", "false").lower() in ("true", "1", "yes")
         self.ODONTOKING_LLM_MODEL = os.getenv("ODONTOKING_LLM_MODEL", "gpt-4o-mini")
+
+        # Kohlberg API (Krayin CRM, kohlberg.sofopolis.com) - "Club del Vino" wine sales agent (Sofía).
+        # Same CRM as the other tenants, different subdomain. Falls back to the sofo-crm gateway pair
+        # (CRM_BASE_URL / CRM_API_KEY) so a single sofo-crm deploy works without extra config.
+        self.KOHLBERG_API_URL = (os.getenv("KOHLBERG_API_URL", "").rstrip("/") or self.CRM_BASE_URL)
+        self.KOHLBERG_API_TOKEN = os.getenv("KOHLBERG_API_TOKEN", "") or self.CRM_API_KEY
+        self.KOHLBERG_LLM_MODEL = os.getenv("KOHLBERG_LLM_MODEL", self.ODONTOKING_LLM_MODEL)
         # Deterministic intake (steps 1-6 forced by code). Disable to fall back to LLM-only flow.
         self.INTAKE_ENABLED = os.getenv("INTAKE_ENABLED", "true").lower() in ("true", "1", "yes")
         # Booking mode flag: when true, the LLM agent (LangGraph) drives the whole conversation

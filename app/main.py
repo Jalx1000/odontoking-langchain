@@ -33,7 +33,7 @@ from app.core.middleware import (
     ProfilingMiddleware,
 )
 from app.core.observability import langfuse_init
-from app.core.langgraph.c21_graph import c21_agent
+from app.core.langgraph.kohlberg_graph import kohlberg_agent
 from app.services.database import database_service
 from app.services.memory import memory_service
 from app.services.message_buffer import message_buffer_service
@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
     # to avoid cold-start latency on the first request
     try:
         await agent.create_graph()
-        await c21_agent.create_graph()
+        await kohlberg_agent.create_graph()
         logger.info("graph_pre_warmed")
     except Exception as e:
         logger.exception("graph_pre_warm_failed", error=str(e))
@@ -97,7 +97,7 @@ async def lifespan(app: FastAPI):
 
     # Cleanup on shutdown - order matters: buffer first (drains workers), then agents
     await message_buffer_service.close()
-    await c21_agent.close()  # awaits pending persist tasks + closes pool
+    await kohlberg_agent.close()  # awaits pending persist tasks + closes pool
     await cache_service.close()
     try:
         await broker.close()
