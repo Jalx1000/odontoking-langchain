@@ -184,6 +184,22 @@ def _to_int(valor: Any) -> Optional[int]:
         return None
 
 
+def _parse_ciudades(valor: Any) -> list[int]:
+    """Parse a product's `ciudad_producto_sucursal` (comma-separated ids, or list) into ints > 0.
+
+    Mirrors the n8n `parsearCiudades`.
+    """
+    if valor in (None, ""):
+        return []
+    raw = valor if isinstance(valor, list) else str(valor).split(",")
+    out: list[int] = []
+    for part in raw:
+        s = str(part).strip()
+        if s.lstrip("-").isdigit() and int(s) > 0:
+            out.append(int(s))
+    return out
+
+
 def _parse_combo(valor: Any) -> list[Any]:
     """Parse a combos field: array, JSON string, bare id ('15'), or empty (mirrors n8n `parseCombo`)."""
     if valor in (None, ""):
@@ -415,24 +431,23 @@ def _clean_product(item: dict[str, Any]) -> dict[str, Any]:
 
 # ── LLM-facing tools ──────────────────────────────────────────────────────────
 
-async def _fetch_products_by_city(
-    client: httpx.AsyncClient, ciudad_id: int, max_pages: int = 20
-) -> list[dict[str, Any]]:
-    """Fetch products for a city via the dedicated endpoint (server-side city + 'todas'=10 filter).
+async def _fetch_all_products(client: httpx.AsyncClient, max_pages: int = 20) -> list[dict[str, Any]]:
+    """Fetch the FULL Krayin product list (with the flat custom attributes), following pagination.
 
-    GET /api/productos/por-ciudad-sucursal already returns only the products whose
-    `ciudad_producto_sucursal` matches `ciudad_id` OR is 10 ('todas'), paginated (meta.last_page).
+    The n8n flow reads the whole `/api/v1/products` list and filters by `products` (enabled),
+    `product_type` and `ciudad_producto_sucursal` in code - those flat custom fields come on this
+    list, not on the trimmed por-ciudad endpoint. So we replicate that: fetch all, filter here.
     """
     productos: list[dict[str, Any]] = []
     page = 1
     while page <= max_pages:
-        resp = await _request(
-            client,
-            "GET",
-            "/api/productos/por-ciudad-sucursal",
-            params={"ciudad_producto_sucursal": ciudad_id, "page": page, "limit": 100},
-        )
+        resp = await _request(client, "GET", "/api/v1/products", params={"page": page, "limit": 100})
         payload = resp.json() if resp.content else {}
+        # This endpoint wraps the page in a one-element array: [{data:[...], meta:{...}}] (the n8n flow
+        # handles the same: `if Array.isArray(rawJson) items = rawJson[0].data`). Unwrap it, but also
+        # tolerate the plain {data:[...]} shape.
+        if isinstance(payload, list):
+            payload = payload[0] if payload else {}
         data = payload.get("data", payload) if isinstance(payload, dict) else payload
         productos.extend(p for p in (data if isinstance(data, list) else []) if isinstance(p, dict))
         meta = payload.get("meta") if isinstance(payload, dict) else None
@@ -448,11 +463,11 @@ async def get_promos(ciudad: Optional[str] = None) -> str:
     """Obtiene las promociones y vinos ACTIVOS del Club del Vino Kohlberg (única fuente de verdad).
 
     Es la ÚNICA fuente válida de vinos, precios y promociones: nunca inventes ninguno de esos datos.
-    Filtra por la CIUDAD del cliente (pásala apenas la conozcas): solo devuelve productos disponibles en
-    esa ciudad (o disponibles para todas). Separa `vinos` y `packs`. Cada ítem trae su `product_id`
-    (úsalo tal cual al registrar el pedido), `name` (nombre exacto, respétalo), su descripción y su
-    precio. Si un vino no trae precio de descuento, NO muestres "Precio Club del Vino" con un precio
-    inventado. Muestra máximo 3 por respuesta.
+    Filtra por la CIUDAD del cliente (pásala apenas la conozcas): solo devuelve productos habilitados y
+    disponibles en esa ciudad (o disponibles para todas). Separa `vinos` y `packs`. Cada ítem trae su
+    `product_id` (úsalo tal cual al registrar el pedido), `name` (nombre exacto, respétalo), su
+    descripción y su precio. Si un vino no trae precio de descuento, NO muestres "Precio Club del Vino"
+    con un precio inventado. Muestra máximo 3 por respuesta.
 
     Args:
         ciudad: Ciudad del cliente (texto libre; se normaliza por dentro). Sin ciudad → solo productos
@@ -464,28 +479,30 @@ async def get_promos(ciudad: Optional[str] = None) -> str:
     ciudad_id = _city_product_id(ciudad)
     try:
         async with httpx.AsyncClient(timeout=25) as client:
-            items = await _fetch_products_by_city(client, ciudad_id)
+            items = await _fetch_all_products(client)
         vinos: list[dict[str, Any]] = []
         packs: list[dict[str, Any]] = []
         vistos: set[Any] = set()
         for prod in items:
             pid = prod.get("id")
-            if pid in vistos:                                     # dedup por id
+            if pid in vistos:                                     # dedup por id (n8n `vistos`)
                 continue
-            # The endpoint already filtered by city. The enable/type fields are custom attributes that
-            # may or may not come flat on this payload, so filter DEFENSIVELY: apply each only when the
-            # field is present (mirrors the n8n `products==1` + product_type split when available).
-            if "products" in prod and _to_int(prod.get("products")) != 1:
+            if _to_int(prod.get("products")) != 1:               # estaHabilitado: Number(products)===1
                 continue
-            tipo = _to_int(prod.get("product_type")) if "product_type" in prod else None
-            vistos.add(pid)
-            clean = _clean_product(prod)
-            if tipo == _TIPO_PACK:
-                packs.append(clean)
-            elif tipo in (_TIPO_VINO, None):   # vino, or no type field -> show it as a wine
-                vinos.append(clean)
-            # any other explicit product_type is ignored
-        log.info("kohlberg_get_promos_ok", ciudad_id=ciudad_id, vinos=len(vinos), packs=len(packs))
+            ciudades = _parse_ciudades(prod.get("ciudad_producto_sucursal"))
+            if ciudad_id not in ciudades and _TODAS_CITY_ID not in ciudades:  # matchCiudad
+                continue
+            tipo = _to_int(prod.get("product_type"))             # 10=vino, 11=pack, otros se ignoran
+            if tipo == _TIPO_VINO:
+                vinos.append(_clean_product(prod))
+                vistos.add(pid)
+            elif tipo == _TIPO_PACK:
+                packs.append(_clean_product(prod))
+                vistos.add(pid)
+        log.info(
+            "kohlberg_get_promos_ok",
+            ciudad_id=ciudad_id, total_items=len(items), vinos=len(vinos), packs=len(packs),
+        )
         return json.dumps(
             {
                 "ciudad_input": ciudad or "",
