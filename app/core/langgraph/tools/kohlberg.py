@@ -40,22 +40,24 @@ _PLACEHOLDER_NAME = "Cliente WhatsApp"
 _SOURCE_WHATSAPP = 6          # lead_source_id "WhatsApp"
 _LEAD_TYPE_VENTA = 1          # New Business
 _OWNER_USER_ID = 1           # default lead owner
-_VENTA_STAGE_ID = 1          # Krayin's REST lead-create REQUIRES a stage id (500s without it)
 
-# Lead temperature -> tag id (internal only; never shown to the client).
-_TAG_IDS = {"caliente": 1, "tibio": 2, "frio": 3}
-
-# Canonical city -> sales pipeline id (for routing the order lead). Real Kohlberg pipeline ids.
-_CITY_PIPELINE_IDS: dict[str, int] = {
-    "tarija": 1,
-    "santa cruz": 3,
-    "potosi": 4,
-    "oruro": 6,
-    "la paz": 7,
-    "cochabamba": 8,
-    "sucre": 9,
+# Real Kohlberg per-city pipeline + stage ids. Each city is its own pipeline; the STAGE is what marks
+# an order's state, so we move the lead by stage id (never by a tag - tags here mean delivery type and
+# tagging with a wrong id mislabels the lead). "entregado" ("Pedidos entregados") is a concreted order
+# and is immutable. Key is the canonical city (see _CITY_ALIASES); unknown/absent city -> "sin ciudad".
+_CITY_STAGES: dict[str, dict[str, int]] = {
+    "tarija":     {"pipeline": 1,  "no_atendido": 1,  "confirmado": 2,  "sin_interes": 39, "entregado": 5,  "cancelado": 6,  "otros": 58},
+    "santa cruz": {"pipeline": 3,  "no_atendido": 11, "confirmado": 12, "sin_interes": 45, "entregado": 13, "cancelado": 14, "otros": 51},
+    "potosi":     {"pipeline": 4,  "no_atendido": 15, "confirmado": 16, "sin_interes": 50, "entregado": 17, "cancelado": 18, "otros": 57},
+    "oruro":      {"pipeline": 6,  "no_atendido": 23, "confirmado": 24, "sin_interes": 49, "entregado": 25, "cancelado": 26, "otros": 56},
+    "la paz":     {"pipeline": 7,  "no_atendido": 27, "confirmado": 28, "sin_interes": 48, "entregado": 29, "cancelado": 30, "otros": 55},
+    "cochabamba": {"pipeline": 8,  "no_atendido": 31, "confirmado": 32, "sin_interes": 47, "entregado": 33, "cancelado": 34, "otros": 54},
+    "sucre":      {"pipeline": 9,  "no_atendido": 35, "confirmado": 36, "sin_interes": 46, "entregado": 37, "cancelado": 38, "otros": 53},
+    "sin ciudad": {"pipeline": 10, "no_atendido": 40, "confirmado": 41, "sin_interes": 44, "entregado": 42, "cancelado": 43, "otros": 52},
 }
-_PIPELINE_SIN_CIUDAD = 10  # fallback pipeline for no/unrecognised city ("Sin ciudad")
+# Stage-id sets (across every city) for classifying a lead by its lead_pipeline_stage_id.
+_STAGE_NO_ATENDIDO_IDS = {s["no_atendido"] for s in _CITY_STAGES.values()}
+_STAGE_ENTREGADO_IDS = {s["entregado"] for s in _CITY_STAGES.values()}
 
 # Canonical city -> product-city id (the `ciudad_producto_sucursal` values on each product). These are
 # a DIFFERENT id space from the pipeline ids above - do not conflate them. A product is available in a
@@ -168,6 +170,12 @@ def _city_product_id(ciudad: Optional[str]) -> int:
     return _CITY_PRODUCT_IDS.get(key, _TODAS_CITY_ID) if key else _TODAS_CITY_ID
 
 
+def _city_stages(ciudad: Optional[str]) -> dict[str, int]:
+    """Pipeline + stage ids for a free-text city; falls back to 'sin ciudad' when unrecognised."""
+    key = _resolve_city_key(ciudad)
+    return _CITY_STAGES.get(key, _CITY_STAGES["sin ciudad"]) if key else _CITY_STAGES["sin ciudad"]
+
+
 def _to_int(valor: Any) -> Optional[int]:
     """Coerce to int like JS Number() for the enable/type flags; None when not an integer."""
     try:
@@ -235,19 +243,38 @@ async def _get_lead(client: httpx.AsyncClient, lead_id: int) -> Optional[dict[st
 
 
 def _lead_stage_name(lead: dict[str, Any]) -> str:
-    """Current stage name of a lead, lowercased/stripped ('' when unknown)."""
+    """Current stage name of a lead, normalized to lowercase with hyphens as spaces ('' when unknown)."""
     stage = lead.get("lead_pipeline_stage") or lead.get("stage") or {}
     name = stage.get("name") if isinstance(stage, dict) else None
-    return (name or "").strip().lower()
+    return (name or "").strip().lower().replace("-", " ")
+
+
+def _lead_stage_id(lead: dict[str, Any]) -> Optional[int]:
+    """Current stage id of a lead (top-level or nested), or None."""
+    sid = lead.get("lead_pipeline_stage_id")
+    if sid is None:
+        stage = lead.get("lead_pipeline_stage") or lead.get("stage") or {}
+        sid = stage.get("id") if isinstance(stage, dict) else None
+    return _to_int(sid)
 
 
 def _is_unattended(lead: dict[str, Any]) -> bool:
-    """True if the lead is still the untouched auto-created lead (safe to enrich)."""
+    """True if the lead is still the untouched auto-created lead (safe to enrich).
+
+    Prefers the real stage id (per-city 'No atendido'); falls back to the stage name when the id is
+    absent, so a fresh lead with unknown stage is still treated as enrichable.
+    """
+    sid = _lead_stage_id(lead)
+    if sid is not None:
+        return sid in _STAGE_NO_ATENDIDO_IDS
     return _lead_stage_name(lead) in ("", "no atendido")
 
 
 def _is_delivered(lead: dict[str, Any]) -> bool:
     """True if the lead is a concreted/delivered order ('Pedidos entregados') - immutable."""
+    sid = _lead_stage_id(lead)
+    if sid is not None and sid in _STAGE_ENTREGADO_IDS:
+        return True
     return _lead_stage_name(lead) == "pedidos entregados"
 
 
@@ -290,22 +317,6 @@ def _is_fresh_for_order(lead: dict[str, Any]) -> bool:
     return _is_unattended(lead) and not _lead_has_products(lead)
 
 
-async def _initial_stage_id(client: httpx.AsyncClient, pipeline_id: int) -> Optional[int]:
-    """Resolve the initial stage (lowest sort_order) of a pipeline, or None (best-effort)."""
-    try:
-        resp = await _request(client, "GET", f"/api/v1/settings/pipelines/{pipeline_id}")
-        data = _data(resp)
-        stages = data.get("stages") if isinstance(data, dict) else None
-        values = list(stages.values()) if isinstance(stages, dict) else (stages or [])
-        stage_list = [s for s in values if isinstance(s, dict) and s.get("id") is not None]
-        if not stage_list:
-            return None
-        return min(stage_list, key=lambda s: s.get("sort_order") or 0).get("id")
-    except Exception as e:  # noqa: BLE001
-        logger.warning("kohlberg_initial_stage_failed", pipeline_id=pipeline_id, error=str(e))
-        return None
-
-
 async def _create_lead(
     client: httpx.AsyncClient,
     person_id: Optional[int],
@@ -313,17 +324,16 @@ async def _create_lead(
     nombre: Optional[str],
     titulo: Optional[str],
     descripcion: str,
-    pipeline_id: int,
+    ciudad: Optional[str],
 ) -> Optional[int]:
-    """Create a fresh order lead in the given city pipeline (for a separate order); return lead_id."""
+    """Create a fresh order lead in the city's pipeline ('No atendido' stage); return lead_id."""
+    stages = _city_stages(ciudad)
     etiqueta = (nombre or "Cliente").strip()
     person: dict[str, Any] = {"name": _clean_name(nombre)}
     if person_id:
         person["id"] = person_id
     else:
         person["contact_numbers"] = [{"value": wa_id, "label": "work"}]
-    # Resolve the pipeline's own initial stage - hardcoding a stage id from another pipeline 500s.
-    stage_id = await _initial_stage_id(client, pipeline_id)
     body: dict[str, Any] = {
         "title": (titulo or f"Pedido Club del Vino - {etiqueta}").strip(),
         "description": descripcion or "Pedido vía WhatsApp",
@@ -331,10 +341,8 @@ async def _create_lead(
         "lead_source_id": _SOURCE_WHATSAPP,
         "lead_type_id": _LEAD_TYPE_VENTA,
         "user_id": _OWNER_USER_ID,
-        "lead_pipeline_id": pipeline_id,
-        # Krayin's REST lead-create REQUIRES a stage id (500s without it). Use the pipeline's resolved
-        # initial stage; fall back to _VENTA_STAGE_ID only if resolution failed.
-        "lead_pipeline_stage_id": stage_id if stage_id is not None else _VENTA_STAGE_ID,
+        "lead_pipeline_id": stages["pipeline"],
+        "lead_pipeline_stage_id": stages["no_atendido"],
         "person": person,
         "entity_type": "leads",
     }
@@ -378,24 +386,18 @@ async def _add_lead_note(
     )
 
 
-async def _tag_lead(client: httpx.AsyncClient, lead_id: int, temperatura: str) -> None:
-    """Attach the temperature tag to the lead (internal signal, never shown to the client)."""
-    tag_id = _TAG_IDS.get(str(temperatura).strip().lower())
-    if not tag_id:
-        return
-    await _request(client, "POST", f"/api/v1/leads/{lead_id}/tags", json={"tag_id": tag_id})
+async def _move_lead(client: httpx.AsyncClient, lead_id: int, ciudad: Optional[str], stage_key: str) -> None:
+    """Move the lead to the given stage of the city's pipeline (e.g. 'confirmado', 'cancelado').
 
-
-def _resolve_pipeline_id(ciudad: Optional[str]) -> int:
-    """City -> sales pipeline id, falling back to 'Sin ciudad' (10) for no/unrecognised city."""
-    key = _resolve_city_key(ciudad)
-    return _CITY_PIPELINE_IDS.get(key, _PIPELINE_SIN_CIUDAD) if key else _PIPELINE_SIN_CIUDAD
-
-
-async def _route_lead_by_city(client: httpx.AsyncClient, lead_id: int, ciudad: Optional[str]) -> None:
-    """Move the order lead to the city's sales pipeline (falls back to 'Sin ciudad' = 10)."""
-    pipeline_id = _resolve_pipeline_id(ciudad)
-    await _request(client, "PUT", f"/api/v1/leads/{lead_id}", json={"lead_pipeline_id": pipeline_id})
+    Uses the real per-city pipeline + stage ids. Never touches tags: a tag here means delivery type, so
+    tagging with a wrong id mislabels the order (e.g. as 'Delivery' when it's pickup-only).
+    """
+    stages = _city_stages(ciudad)
+    body: dict[str, Any] = {"lead_pipeline_id": stages["pipeline"]}
+    stage_id = stages.get(stage_key)
+    if stage_id is not None:
+        body["lead_pipeline_stage_id"] = stage_id
+    await _request(client, "PUT", f"/api/v1/leads/{lead_id}", json=body)
 
 
 def _clean_product(item: dict[str, Any]) -> dict[str, Any]:
@@ -633,7 +635,7 @@ async def registrar_pedido(
                         client, fresh_lead, "Pedido cancelado",
                         [("Cliente", nombre), ("Ciudad", ciudad_del_cliente), ("Detalle", mensaje)],
                     )
-                    await _tag_lead(client, fresh_lead, "frio")
+                    await _move_lead(client, fresh_lead, ciudad_del_cliente, "cancelado")
                 except Exception as e:  # noqa: BLE001
                     log.warning("registrar_pedido_cancel_note_failed", lead_id=fresh_lead, error=str(e))
                 log.info("kohlberg_pedido_cancelado", lead_id=fresh_lead)
@@ -651,8 +653,7 @@ async def registrar_pedido(
                 wa = _ctx_wa_id(config)
                 person_id = person_ctx or await _resolve_person(client, wa, nombre)
                 lead_id = await _create_lead(
-                    client, person_id, wa, nombre, titulo_de_pedido, descripcion,
-                    _resolve_pipeline_id(ciudad_del_cliente),
+                    client, person_id, wa, nombre, titulo_de_pedido, descripcion, ciudad_del_cliente,
                 )
                 nuevo = True
             if not lead_id:
@@ -684,17 +685,13 @@ async def registrar_pedido(
                 )
             except Exception as e:  # noqa: BLE001
                 log.warning("registrar_pedido_note_failed", lead_id=lead_id, error=str(e))
-            # A newly created lead is already born in the city pipeline; only the reused fresh lead
-            # still needs routing.
-            if not nuevo:
+            # On confirmation, advance the lead to the city's "Confirmado" stage (this also anchors it
+            # in the right pipeline). Not tagged: tags here are delivery type, not order state.
+            if es_pedido_confirmado:
                 try:
-                    await _route_lead_by_city(client, lead_id, ciudad_del_cliente)
+                    await _move_lead(client, lead_id, ciudad_del_cliente, "confirmado")
                 except Exception as e:  # noqa: BLE001
-                    log.warning("registrar_pedido_route_failed", lead_id=lead_id, error=str(e))
-            try:
-                await _tag_lead(client, lead_id, "caliente" if es_pedido_confirmado else "tibio")
-            except Exception as e:  # noqa: BLE001
-                log.warning("registrar_pedido_tag_failed", lead_id=lead_id, error=str(e))
+                    log.warning("registrar_pedido_move_failed", lead_id=lead_id, error=str(e))
 
             log.info(
                 "kohlberg_pedido_registered",
