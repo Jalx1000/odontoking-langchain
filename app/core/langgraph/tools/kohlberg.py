@@ -18,6 +18,8 @@ from get_promos - the LLM passes those ids straight through (they are catalog id
 """
 
 import json
+import asyncio
+import time
 import unicodedata
 from typing import Any, Optional
 
@@ -91,13 +93,15 @@ _CITY_ALIASES = {
 # ── Low-level HTTP ────────────────────────────────────────────────────────────
 
 def _is_transient(exc: BaseException) -> bool:
-    """Retry only on transient failures: 429, 5xx, network timeouts/connection errors."""
+    """Retry only on transient failures: 5xx and network timeouts/connection errors.
+
+    Deliberately does NOT retry 429 (Too Many Attempts): the CRM's throttle is shared across every
+    call this agent makes with one Sanctum token, so retrying a 429 hammers it further and deepens the
+    throttle. On 429 we fail fast and let the turn degrade gracefully.
+    """
     if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError)):
         return True
-    return (
-        isinstance(exc, httpx.HTTPStatusError)
-        and (exc.response.status_code == 429 or exc.response.status_code >= 500)
-    )
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
 
 
 @retry(
@@ -117,6 +121,25 @@ def _data(resp: httpx.Response) -> Any:
     """Return the 'data' field of a Krayin JSON response (dict or list), else the raw json."""
     payload = resp.json() if resp.content else {}
     return payload.get("data", payload) if isinstance(payload, dict) else payload
+
+
+def _data_list(resp: httpx.Response) -> list[dict[str, Any]]:
+    """Return the list of records from a Krayin response, tolerating the shapes we've seen live.
+
+    - `[{"data":[...], "meta":{...}}]`  (the one-element array wrapper, e.g. /api/v1/products)
+    - `{"data":[...]}`                   (standard paginated resource)
+    - `[ {...}, {...} ]`                 (a bare list of records)
+    """
+    payload = resp.json() if resp.content else []
+    if isinstance(payload, list):
+        if payload and isinstance(payload[0], dict) and isinstance(payload[0].get("data"), list):
+            payload = payload[0]
+        else:
+            return [x for x in payload if isinstance(x, dict)]
+    if isinstance(payload, dict):
+        data = payload.get("data", payload)
+        return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []
+    return []
 
 
 def _normalize_wa_id(wa_id: str) -> str:
@@ -303,16 +326,25 @@ def _lead_has_products(lead: dict[str, Any]) -> bool:
 
 
 def _lead_line_items(lead: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract [{producto, cantidad}] from a lead's product lines (handles list/dict, products/lead_products)."""
+    """Extract [{product_id, producto, cantidad}] from a lead's product lines.
+
+    Handles both `products` and `lead_products`, list or dict, and the id/name whether flat or nested
+    under `product`. `product_id` lets a "repeat order" reuse the same ids without re-resolving names.
+    """
     raw = lead.get("products") or lead.get("lead_products") or []
     values = list(raw.values()) if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
     items: list[dict[str, Any]] = []
     for it in values:
         if not isinstance(it, dict):
             continue
-        name = it.get("name") or (it.get("product") or {}).get("name")
+        prod_obj = it.get("product")
+        prod: dict[str, Any] = prod_obj if isinstance(prod_obj, dict) else {}
+        name = it.get("name") or prod.get("name")
         if name:
-            items.append({"producto": name, "cantidad": it.get("quantity")})
+            items.append(
+                {"product_id": _to_int(it.get("product_id") or prod.get("id")),
+                 "producto": name, "cantidad": it.get("quantity")}
+            )
     return items
 
 
@@ -322,6 +354,13 @@ def _lead_stage_display(lead: dict[str, Any]) -> Optional[str]:
     name = stage.get("name") if isinstance(stage, dict) else None
     clean = name.strip() if isinstance(name, str) else ""
     return clean or None
+
+
+def _lead_person_id(lead: dict[str, Any]) -> Optional[int]:
+    """Person id of a lead (from the nested person object or the flat person_id), or None."""
+    person = lead.get("person")
+    pid = person.get("id") if isinstance(person, dict) else lead.get("person_id")
+    return _to_int(pid)
 
 
 def _is_fresh_for_order(lead: dict[str, Any]) -> bool:
@@ -458,6 +497,34 @@ async def _fetch_all_products(client: httpx.AsyncClient, max_pages: int = 20) ->
     return productos
 
 
+# Short-TTL cache of the FULL catalog (shared across cities and conversations). The catalog changes
+# rarely, so this collapses the heaviest CRM call (the whole product list) to once per window across
+# every user - the main lever against the CRM's 429 throttle. Only successful (non-empty) fetches are
+# cached, per the project caching rule.
+_PROMOS_CACHE_TTL = float(getattr(settings, "KOHLBERG_PROMOS_CACHE_TTL", 60) or 60)
+_promos_cache: dict[str, Any] = {"items": None, "at": 0.0}
+_promos_lock = asyncio.Lock()
+
+
+async def _get_products_cached() -> list[dict[str, Any]]:
+    """Return the full product list, served from a short-TTL in-process cache on a hit."""
+    now = time.monotonic()
+    cached = _promos_cache.get("items")
+    if cached is not None and (now - _promos_cache["at"]) < _PROMOS_CACHE_TTL:
+        return cached
+    async with _promos_lock:
+        now = time.monotonic()  # re-check: another coroutine may have filled it while we waited
+        cached = _promos_cache.get("items")
+        if cached is not None and (now - _promos_cache["at"]) < _PROMOS_CACHE_TTL:
+            return cached
+        async with httpx.AsyncClient(timeout=25) as client:
+            items = await _fetch_all_products(client)
+        if items:  # cache only successful, non-empty responses
+            _promos_cache["items"] = items
+            _promos_cache["at"] = time.monotonic()
+        return items
+
+
 @tool
 async def get_promos(ciudad: Optional[str] = None) -> str:
     """Obtiene las promociones y vinos ACTIVOS del Club del Vino Kohlberg (única fuente de verdad).
@@ -478,8 +545,7 @@ async def get_promos(ciudad: Optional[str] = None) -> str:
     log = logger.bind(tool="get_promos", ciudad=(ciudad or "")[:40])
     ciudad_id = _city_product_id(ciudad)
     try:
-        async with httpx.AsyncClient(timeout=25) as client:
-            items = await _fetch_all_products(client)
+        items = await _get_products_cached()  # short-TTL cache; one CRM fetch serves every city/turn
         vinos: list[dict[str, Any]] = []
         packs: list[dict[str, Any]] = []
         vistos: set[Any] = set()
@@ -747,8 +813,9 @@ async def get_pedidos(config: RunnableConfig) -> str:
     Devuelve {"total": <n>, "pedidos": [{lead_id, titulo, etapa, entregado, productos, fecha}]}.
     """
     _, person_id = _ctx_ids(config)
+    person_id_int = _to_int(person_id)
     log = logger.bind(tool="get_pedidos", person_id=person_id)
-    if not person_id:
+    if not person_id_int:
         return json.dumps({"pedidos": [], "total": 0, "note": "sin_contacto"}, ensure_ascii=False)
     try:
         async with httpx.AsyncClient(timeout=20) as client:
@@ -756,12 +823,16 @@ async def get_pedidos(config: RunnableConfig) -> str:
                 client,
                 "GET",
                 "/api/v1/leads/get",
-                params={"search": f"person_id:{person_id};", "searchFields": "person_id:=;", "limit": 50},
+                params={"search": f"person_id:{person_id_int};", "searchFields": "person_id:=;", "limit": 50},
             )
-            data = _data(resp)
-            leads = [ld for ld in (data if isinstance(data, list) else []) if isinstance(ld, dict)]
+            leads = _data_list(resp)
         pedidos: list[dict[str, Any]] = []
         for lead in leads:
+            # The server-side person filter isn't guaranteed, so narrow client-side: keep the lead only
+            # if its person matches (or the person is unknown on the record - then trust the search).
+            lead_person = _lead_person_id(lead)
+            if lead_person is not None and lead_person != person_id_int:
+                continue
             items = _lead_line_items(lead)
             if not items:  # skip empty auto-created leads with no order
                 continue
@@ -775,7 +846,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
                     "fecha": lead.get("created_at"),
                 }
             )
-        log.info("kohlberg_get_pedidos_ok", count=len(pedidos))
+        log.info("kohlberg_get_pedidos_ok", leads_recibidos=len(leads), pedidos=len(pedidos))
         return json.dumps({"pedidos": pedidos, "total": len(pedidos)}, ensure_ascii=False)
     except httpx.HTTPStatusError as e:
         log.warning("kohlberg_get_pedidos_http_error", status=e.response.status_code)
