@@ -759,7 +759,6 @@ async def registrar_pedido(
     resumen = ", ".join(
         f"{qtys[i] if i < len(qtys) else '?'} x {names[i]}" for i in range(len(names))
     )
-    descripcion = " - ".join(p for p in (descripcion_corta, mensaje, resumen) if p and p.strip()) or "Pedido vía WhatsApp"
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             # Only the FRESH auto-created lead (No atendido, sin productos) is enrichable. A lead that
@@ -810,6 +809,20 @@ async def registrar_pedido(
 
             products_map, total = _build_products_map(ids, names, qtys, price_by_id)
 
+            # Fold all client/order detail into the lead description so we DON'T need a separate note
+            # activity - one fewer CRM call per order (matters against the 429 throttle).
+            detalle = [
+                f"Cliente: {nombre}" if nombre else None,
+                f"Edad: {edad_del_cliente}" if edad_del_cliente else None,
+                f"Ciudad: {ciudad_del_cliente}" if ciudad_del_cliente else None,
+                f"Ubicación: {ubicacion_del_cliente}" if ubicacion_del_cliente else None,
+                f"Pedido: {resumen}" if resumen else None,
+                f"Total: Bs {total:.2f}" if total else None,
+                descripcion_corta or None,
+                mensaje or None,
+            ]
+            descripcion = " | ".join(x for x in detalle if x) or "Pedido vía WhatsApp"
+
             # Person for the lead body: from context, else find/create by wa_id.
             person_id = person_ctx
             if person_id is None:
@@ -830,23 +843,6 @@ async def registrar_pedido(
             if not lead_id:
                 log.error("registrar_pedido_no_lead_id")
                 return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
-
-            try:
-                await _add_lead_note(
-                    client, lead_id, "Datos del pedido",
-                    [
-                        ("Cliente", nombre),
-                        ("Edad", edad_del_cliente),
-                        ("Ciudad", ciudad_del_cliente),
-                        ("Ubicación", ubicacion_del_cliente),
-                        ("Pedido", resumen),
-                        ("Total (Bs)", f"{total:.2f}" if total else None),
-                        ("Detalle", mensaje),
-                        ("Confirmado", "sí" if es_pedido_confirmado else "no"),
-                    ],
-                )
-            except Exception as e:  # noqa: BLE001
-                log.warning("registrar_pedido_note_failed", lead_id=lead_id, error=str(e))
 
             log.info(
                 "kohlberg_pedido_registered",
