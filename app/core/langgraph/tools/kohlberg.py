@@ -866,9 +866,186 @@ async def registrar_pedido(
         log.exception("registrar_pedido_failed", error=str(e))
         return json.dumps({"lead_id": None, "error": str(e) or type(e).__name__}, ensure_ascii=False)
 
-
 @tool
 async def get_pedidos(config: RunnableConfig) -> str:
+    """Consulta TODOS los pedidos del cliente por su número de teléfono.
+
+    Usa el endpoint dedicado GET /api/pedidos/por-telefono, que resuelve internamente
+    a la persona mediante el mismo matching de teléfono usado por el webhook de
+    WhatsApp. El número puede venir con o sin código de país, "+" o espacios.
+
+    Devuelve todos los pedidos del cliente en una sola llamada, ordenados por
+    `creado_en` descendente (el más reciente primero).
+
+    Úsala cuando el cliente pregunta por:
+    - sus pedidos anteriores;
+    - el estado de un pedido;
+    - su historial de compras.
+
+    Un cliente sin pedidos NO es un error: devuelve total=0 y pedidos=[].
+
+    Args:
+        config: Interno; lo inyecta el sistema. No lo pases.
+
+    Devuelve:
+        {
+            "telefono": "...",
+            "persona": {...} | null,
+            "pedidos": [...],
+            "total": 0
+        }
+
+    En caso de rate limit (429), devuelve también `retry_after` cuando el
+    servidor envía el header Retry-After.
+    """
+    telefono = _ctx_wa_id(config)
+    log = logger.bind(tool="get_pedidos", telefono=telefono)
+
+    # El endpoint requiere al menos 7 dígitos. Si no tenemos el teléfono del
+    # contexto, no hacemos una llamada inválida al CRM.
+    digits = "".join(c for c in telefono if c.isdigit())
+    if len(digits) < 7:
+        return json.dumps(
+            {
+                "telefono": telefono or None,
+                "persona": None,
+                "pedidos": [],
+                "total": 0,
+                "note": "sin_telefono_valido",
+            },
+            ensure_ascii=False,
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await _request(
+                client,
+                "GET",
+                "/api/pedidos/por-telefono",
+                params={"telefono": digits},
+            )
+
+            payload = resp.json() if resp.content else {}
+
+        # El endpoint dedicado devuelve directamente el objeto final, no el
+        # wrapper estándar {"data": ...} de algunos endpoints de Krayin.
+        if not isinstance(payload, dict):
+            log.warning(
+                "kohlberg_get_pedidos_invalid_response",
+                response_type=type(payload).__name__,
+            )
+            return json.dumps(
+                {
+                    "telefono": digits,
+                    "persona": None,
+                    "pedidos": [],
+                    "total": 0,
+                    "error": "respuesta_invalida",
+                },
+                ensure_ascii=False,
+            )
+
+        persona = payload.get("persona")
+        pedidos = payload.get("pedidos")
+        total = payload.get("total")
+
+        # Toleramos respuestas incompletas sin romper al agente.
+        if not isinstance(pedidos, list):
+            pedidos = []
+
+        total_int = _to_int(total)
+        if total_int is None:
+            total_int = len(pedidos)
+
+        resultado = {
+            "telefono": payload.get("telefono") or digits,
+            "persona": persona if isinstance(persona, dict) else None,
+            "pedidos": pedidos,
+            "total": total_int,
+        }
+
+        log.info(
+            "kohlberg_get_pedidos_ok",
+            telefono=digits,
+            persona_id=(
+                resultado["persona"].get("id")
+                if isinstance(resultado["persona"], dict)
+                else None
+            ),
+            pedidos=total_int,
+        )
+
+        return json.dumps(resultado, ensure_ascii=False)
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        retry_after = e.response.headers.get("Retry-After")
+
+        log.warning(
+            "kohlberg_get_pedidos_http_error",
+            telefono=digits,
+            status=status,
+            retry_after=retry_after,
+        )
+
+        # 429 NO se reintenta aquí. _request() tampoco lo reintenta
+        # automáticamente porque solo reintenta errores transitorios/5xx.
+        if status == 429:
+            resultado: dict[str, Any] = {
+                "telefono": digits,
+                "persona": None,
+                "pedidos": [],
+                "total": 0,
+                "error": "api_429",
+            }
+
+            if retry_after:
+                resultado["retry_after"] = retry_after
+
+            return json.dumps(resultado, ensure_ascii=False)
+
+        # Intentamos preservar el mensaje que devuelve el endpoint
+        # (por ejemplo, 400 o 401).
+        message: Optional[str] = None
+        try:
+            error_payload = e.response.json()
+            if isinstance(error_payload, dict):
+                raw_message = error_payload.get("message")
+                if isinstance(raw_message, str):
+                    message = raw_message
+        except Exception:  # noqa: BLE001
+            pass
+
+        resultado = {
+            "telefono": digits,
+            "persona": None,
+            "pedidos": [],
+            "total": 0,
+            "error": f"api_{status}",
+        }
+
+        if message:
+            resultado["message"] = message
+
+        return json.dumps(resultado, ensure_ascii=False)
+
+    except Exception as e:  # noqa: BLE001
+        log.exception(
+            "kohlberg_get_pedidos_failed",
+            telefono=digits,
+            error=str(e),
+        )
+
+        return json.dumps(
+            {
+                "telefono": digits,
+                "persona": None,
+                "pedidos": [],
+                "total": 0,
+                "error": str(e) or type(e).__name__,
+            },
+            ensure_ascii=False,
+        )
     """Consulta el historial de pedidos del contacto (sus leads con productos) en el CRM.
 
     Úsala cuando el cliente pregunta por sus pedidos anteriores o por el estado de su pedido. No manejas
@@ -923,7 +1100,6 @@ async def get_pedidos(config: RunnableConfig) -> str:
     except Exception as e:  # noqa: BLE001
         log.exception("kohlberg_get_pedidos_failed", error=str(e))
         return json.dumps({"pedidos": [], "error": str(e) or type(e).__name__}, ensure_ascii=False)
-
 
 @tool
 async def think(pensamiento: str) -> str:
