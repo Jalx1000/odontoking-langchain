@@ -586,33 +586,62 @@ def _build_lead_body(
     total: float,
     products: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    """Build the FULL lead object for create/update (Krayin fills products only from the whole object).
+    """Build the FULL lead object for create/update."""
 
-    Sets lead_value, the city's pipeline + stage, the city's sales rep as owner (user_id), the person,
-    and the inline `products` map. Sending a partial body (or the separate /leads/product endpoint) did
-    NOT populate the product lines / value reliably - the full object does.
-    """
     stages = _city_stages(ciudad)
     etiqueta = (nombre or "Cliente").strip()
-    person: dict[str, Any] = {"name": _clean_name(nombre)}
+
+    # Aseguramos que total sea un número decimal válido.
+    total_decimal = round(float(total or 0), 2)
+
+    person: dict[str, Any] = {
+        "name": _clean_name(nombre),
+    }
+
     if person_id:
         person["id"] = person_id
     else:
-        person["contact_numbers"] = [{"value": wa_id, "label": "work"}]
+        person["contact_numbers"] = [
+            {
+                "value": wa_id,
+                "label": "work",
+            }
+        ]
+
     body: dict[str, Any] = {
         "title": (titulo or f"Pedido Club del Vino - {etiqueta}").strip(),
         "description": descripcion or "Pedido vía WhatsApp",
-        "lead_value": f"{total:.2f}",
+
+        # IMPORTANTE: enviar como número, no como string.
+        "lead_value": total_decimal,
+
         "lead_source_id": _SOURCE_WHATSAPP,
         "lead_type_id": _LEAD_TYPE_VENTA,
         "user_id": _city_sales_rep(ciudad),
         "lead_pipeline_id": stages["pipeline"],
-        "lead_pipeline_stage_id": stages.get(stage_key, stages["no_atendido"]),
+        "lead_pipeline_stage_id": stages.get(
+            stage_key,
+            stages["no_atendido"],
+        ),
         "person": person,
         "entity_type": "leads",
     }
+
     if products:
         body["products"] = products
+
+    logger.info(
+        "kohlberg_build_lead_body",
+        person_id=person_id,
+        total_input=total,
+        total_decimal=total_decimal,
+        lead_value=body["lead_value"],
+        lead_value_type=type(body["lead_value"]).__name__,
+        products_count=len(products),
+        products=products,
+        body=body,
+    )
+
     return body
 
 
