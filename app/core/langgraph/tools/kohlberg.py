@@ -207,6 +207,22 @@ def _to_int(valor: Any) -> Optional[int]:
         return None
 
 
+def _to_float(valor: Any) -> Optional[float]:
+    """Coerce to float; None when not a number (e.g. an empty precio_promocion string)."""
+    try:
+        return float(str(valor).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _product_price(prod: dict[str, Any]) -> float:
+    """Effective unit price of a catalog product: the promo price if set, else the base price."""
+    promo = _to_float(prod.get("precio_promocion"))
+    if promo and promo > 0:
+        return promo
+    return _to_float(prod.get("price")) or 0.0
+
+
 def _parse_ciudades(valor: Any) -> list[int]:
     """Parse a product's `ciudad_producto_sucursal` (comma-separated ids, or list) into ints > 0.
 
@@ -407,9 +423,17 @@ async def _create_lead(
 
 
 async def _add_lead_product(
-    client: httpx.AsyncClient, lead_id: int, product_id: int, name: str, quantity: int
-) -> None:
-    """Attach a catalog product (by its real id from get_promos) to the lead."""
+    client: httpx.AsyncClient, lead_id: int, product_id: int, name: str, quantity: int, price: float
+) -> float:
+    """Attach a catalog product (by its real id from get_promos) to the lead; return the line amount.
+
+    `is_new=True` (with `id=None`) is what ADDS a new line - `is_new=False` means "update an existing
+    line with this id", so with id=None nothing was being attached (that was the bug). Price/amount are
+    the real catalog values so the lead value reflects the order.
+    """
+    qty = max(int(quantity or 1), 1)
+    unit = round(float(price or 0), 2)
+    amount = round(unit * qty, 2)
     await _request(
         client,
         "PUT",
@@ -417,13 +441,14 @@ async def _add_lead_product(
         json={
             "product_id": product_id,
             "name": (name or "").strip(),
-            "price": 0,
-            "quantity": max(int(quantity or 1), 1),
-            "amount": 0,
-            "is_new": False,
+            "price": unit,
+            "quantity": qty,
+            "amount": amount,
+            "is_new": True,
             "id": None,
         },
     )
+    return amount
 
 
 async def _add_lead_note(
@@ -441,17 +466,26 @@ async def _add_lead_note(
     )
 
 
-async def _move_lead(client: httpx.AsyncClient, lead_id: int, ciudad: Optional[str], stage_key: str) -> None:
-    """Move the lead to the given stage of the city's pipeline (e.g. 'confirmado', 'cancelado').
+async def _move_lead(
+    client: httpx.AsyncClient,
+    lead_id: int,
+    ciudad: Optional[str],
+    stage_key: str,
+    lead_value: Optional[float] = None,
+) -> None:
+    """Move the lead to the given stage of the city's pipeline and, optionally, set its lead_value.
 
     Uses the real per-city pipeline + stage ids. Never touches tags: a tag here means delivery type, so
-    tagging with a wrong id mislabels the order (e.g. as 'Delivery' when it's pickup-only).
+    tagging with a wrong id mislabels the order (e.g. as 'Delivery' when it's pickup-only). Krayin
+    accepts this partial PUT (same shape the IMPRIMIR agent uses in production).
     """
     stages = _city_stages(ciudad)
     body: dict[str, Any] = {"lead_pipeline_id": stages["pipeline"]}
     stage_id = stages.get(stage_key)
     if stage_id is not None:
         body["lead_pipeline_stage_id"] = stage_id
+    if lead_value is not None:
+        body["lead_value"] = str(round(lead_value, 2))
     await _request(client, "PUT", f"/api/v1/leads/{lead_id}", json=body)
 
 
@@ -743,13 +777,26 @@ async def registrar_pedido(
                 log.error("registrar_pedido_no_lead_id")
                 return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
 
+            # Real unit prices from the (cached) catalog, so the lead's product lines and lead_value
+            # reflect the order - the LLM never passes prices (it could hallucinate them).
+            price_by_id: dict[int, float] = {}
+            try:
+                for p in await _get_products_cached():
+                    pidc = _to_int(p.get("id"))
+                    if pidc is not None:
+                        price_by_id[pidc] = _product_price(p)
+            except Exception as e:  # noqa: BLE001
+                log.warning("registrar_pedido_price_lookup_failed", error=str(e))
+
             # Best-effort enrichment - a failure here must not lose the lead.
             adjuntados = 0
+            total = 0.0
             for i, pid in enumerate(ids):
                 name_i = names[i] if i < len(names) else ""
-                qty_i = qtys[i] if i < len(qtys) else 1
+                qty_i = int(qtys[i]) if i < len(qtys) and qtys[i] is not None else 1
+                price_i = price_by_id.get(int(pid), 0.0)
                 try:
-                    await _add_lead_product(client, lead_id, int(pid), name_i, int(qty_i))
+                    total += await _add_lead_product(client, lead_id, int(pid), name_i, qty_i, price_i)
                     adjuntados += 1
                 except Exception as e:  # noqa: BLE001
                     log.warning("registrar_pedido_product_failed", lead_id=lead_id, product_id=pid, error=str(e))
@@ -762,17 +809,18 @@ async def registrar_pedido(
                         ("Ciudad", ciudad_del_cliente),
                         ("Ubicación", ubicacion_del_cliente),
                         ("Pedido", resumen),
+                        ("Total (Bs)", f"{total:.2f}" if total else None),
                         ("Detalle", mensaje),
                         ("Confirmado", "sí" if es_pedido_confirmado else "no"),
                     ],
                 )
             except Exception as e:  # noqa: BLE001
                 log.warning("registrar_pedido_note_failed", lead_id=lead_id, error=str(e))
-            # On confirmation, advance the lead to the city's "Confirmado" stage (this also anchors it
-            # in the right pipeline). Not tagged: tags here are delivery type, not order state.
+            # On confirmation, advance the lead to the city's "Confirmado" stage and set its lead_value
+            # (same partial PUT). Not tagged: tags here are delivery type, not order state.
             if es_pedido_confirmado:
                 try:
-                    await _move_lead(client, lead_id, ciudad_del_cliente, "confirmado")
+                    await _move_lead(client, lead_id, ciudad_del_cliente, "confirmado", lead_value=total)
                 except Exception as e:  # noqa: BLE001
                     log.warning("registrar_pedido_move_failed", lead_id=lead_id, error=str(e))
 
@@ -781,12 +829,13 @@ async def registrar_pedido(
                 lead_id=lead_id,
                 lineas=len(ids),
                 adjuntados=adjuntados,
+                total=round(total, 2),
                 confirmado=es_pedido_confirmado,
                 nuevo_lead=nuevo,
             )
             return json.dumps(
                 {"lead_id": lead_id, "solicitud": f"#{lead_id}", "productos_adjuntados": adjuntados,
-                 "confirmado": es_pedido_confirmado, "nuevo_lead": nuevo},
+                 "total": round(total, 2), "confirmado": es_pedido_confirmado, "nuevo_lead": nuevo},
                 ensure_ascii=False,
             )
     except httpx.HTTPStatusError as e:
