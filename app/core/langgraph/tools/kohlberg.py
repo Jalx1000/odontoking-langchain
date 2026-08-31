@@ -870,54 +870,58 @@ async def registrar_pedido(
 async def get_pedidos(config: RunnableConfig) -> str:
     """Consulta TODOS los pedidos del cliente por su número de teléfono.
 
-    Usa el endpoint dedicado GET /api/pedidos/por-telefono, que resuelve internamente
-    a la persona mediante el mismo matching de teléfono usado por el webhook de
-    WhatsApp. El número puede venir con o sin código de país, "+" o espacios.
-
-    Devuelve todos los pedidos del cliente en una sola llamada, ordenados por
-    `creado_en` descendente (el más reciente primero).
-
-    Úsala cuando el cliente pregunta por:
-    - sus pedidos anteriores;
-    - el estado de un pedido;
-    - su historial de compras.
-
-    Un cliente sin pedidos NO es un error: devuelve total=0 y pedidos=[].
-
-    Args:
-        config: Interno; lo inyecta el sistema. No lo pases.
-
-    Devuelve:
-        {
-            "telefono": "...",
-            "persona": {...} | null,
-            "pedidos": [...],
-            "total": 0
-        }
-
-    En caso de rate limit (429), devuelve también `retry_after` cuando el
-    servidor envía el header Retry-After.
+    Usa GET /api/pedidos/por-telefono y devuelve todos los pedidos en una
+    sola llamada.
     """
     telefono = _ctx_wa_id(config)
-    log = logger.bind(tool="get_pedidos", telefono=telefono)
-
-    # El endpoint requiere al menos 7 dígitos. Si no tenemos el teléfono del
-    # contexto, no hacemos una llamada inválida al CRM.
+    metadata = (config or {}).get("metadata") or {}
     digits = "".join(c for c in telefono if c.isdigit())
+
+    log = logger.bind(
+        tool="get_pedidos",
+        telefono_original=telefono,
+        telefono_digits=digits,
+        metadata_keys=list(metadata.keys()),
+        wa_id_raw=metadata.get("wa_id"),
+        person_id=metadata.get("person_id"),
+    )
+
+    # LOG 1: confirmar qué información llega realmente al tool
+    log.info(
+        "kohlberg_get_pedidos_start",
+        telefono_original=telefono,
+        telefono_digits=digits,
+        metadata_keys=list(metadata.keys()),
+        wa_id_raw=metadata.get("wa_id"),
+    )
+
     if len(digits) < 7:
-        return json.dumps(
-            {
-                "telefono": telefono or None,
-                "persona": None,
-                "pedidos": [],
-                "total": 0,
-                "note": "sin_telefono_valido",
-            },
-            ensure_ascii=False,
+        resultado = {
+            "telefono": telefono or None,
+            "persona": None,
+            "pedidos": [],
+            "total": 0,
+            "note": "sin_telefono_valido",
+        }
+
+        log.warning(
+            "kohlberg_get_pedidos_invalid_phone",
+            resultado=resultado,
         )
+
+        return json.dumps(resultado, ensure_ascii=False)
 
     try:
         async with httpx.AsyncClient(timeout=20) as client:
+
+            # LOG 2: antes de realizar la petición
+            log.info(
+                "kohlberg_get_pedidos_request",
+                method="GET",
+                url=f"{_BASE}/api/pedidos/por-telefono",
+                params={"telefono": digits},
+            )
+
             resp = await _request(
                 client,
                 "GET",
@@ -925,35 +929,72 @@ async def get_pedidos(config: RunnableConfig) -> str:
                 params={"telefono": digits},
             )
 
+            # LOG 3: respuesta HTTP
+            log.info(
+                "kohlberg_get_pedidos_response",
+                status=resp.status_code,
+                content_length=len(resp.content or b""),
+                response_text=resp.text[:5000],
+            )
+
             payload = resp.json() if resp.content else {}
 
-        # El endpoint dedicado devuelve directamente el objeto final, no el
-        # wrapper estándar {"data": ...} de algunos endpoints de Krayin.
+        # LOG 4: payload ya parseado
+        log.info(
+            "kohlberg_get_pedidos_payload",
+            payload=payload,
+            payload_type=type(payload).__name__,
+        )
+
+        # El endpoint debería devolver directamente un objeto.
         if not isinstance(payload, dict):
             log.warning(
                 "kohlberg_get_pedidos_invalid_response",
                 response_type=type(payload).__name__,
+                payload=payload,
             )
-            return json.dumps(
-                {
-                    "telefono": digits,
-                    "persona": None,
-                    "pedidos": [],
-                    "total": 0,
-                    "error": "respuesta_invalida",
-                },
-                ensure_ascii=False,
+
+            resultado = {
+                "telefono": digits,
+                "persona": None,
+                "pedidos": [],
+                "total": 0,
+                "error": "respuesta_invalida",
+            }
+
+            log.info(
+                "kohlberg_get_pedidos_output",
+                resultado=resultado,
             )
+
+            return json.dumps(resultado, ensure_ascii=False)
 
         persona = payload.get("persona")
         pedidos = payload.get("pedidos")
         total = payload.get("total")
 
-        # Toleramos respuestas incompletas sin romper al agente.
+        # LOG 5: inspeccionar específicamente los campos importantes
+        log.info(
+            "kohlberg_get_pedidos_fields",
+            telefono_response=payload.get("telefono"),
+            persona=persona,
+            pedidos_type=type(pedidos).__name__,
+            pedidos_count=len(pedidos) if isinstance(pedidos, list) else None,
+            total_raw=total,
+            payload_keys=list(payload.keys()),
+        )
+
         if not isinstance(pedidos, list):
+            log.warning(
+                "kohlberg_get_pedidos_pedidos_not_list",
+                pedidos_value=pedidos,
+                pedidos_type=type(pedidos).__name__,
+            )
             pedidos = []
 
         total_int = _to_int(total)
+
+        # Si el endpoint no manda total correctamente, usamos la cantidad real.
         if total_int is None:
             total_int = len(pedidos)
 
@@ -964,15 +1005,12 @@ async def get_pedidos(config: RunnableConfig) -> str:
             "total": total_int,
         }
 
+        # LOG 6: RESULTADO FINAL EXACTO QUE SALE DEL TOOL
         log.info(
-            "kohlberg_get_pedidos_ok",
-            telefono=digits,
-            persona_id=(
-                resultado["persona"].get("id")
-                if isinstance(resultado["persona"], dict)
-                else None
-            ),
-            pedidos=total_int,
+            "kohlberg_get_pedidos_output",
+            resultado=resultado,
+            pedidos_count=len(pedidos),
+            total=total_int,
         )
 
         return json.dumps(resultado, ensure_ascii=False)
@@ -981,15 +1019,16 @@ async def get_pedidos(config: RunnableConfig) -> str:
         status = e.response.status_code
         retry_after = e.response.headers.get("Retry-After")
 
+        body_text = e.response.text[:5000] if e.response is not None else ""
+
         log.warning(
             "kohlberg_get_pedidos_http_error",
-            telefono=digits,
             status=status,
             retry_after=retry_after,
+            response_body=body_text,
+            telefono=digits,
         )
 
-        # 429 NO se reintenta aquí. _request() tampoco lo reintenta
-        # automáticamente porque solo reintenta errores transitorios/5xx.
         if status == 429:
             resultado: dict[str, Any] = {
                 "telefono": digits,
@@ -1002,21 +1041,37 @@ async def get_pedidos(config: RunnableConfig) -> str:
             if retry_after:
                 resultado["retry_after"] = retry_after
 
+            log.info(
+                "kohlberg_get_pedidos_output",
+                resultado=resultado,
+            )
+
             return json.dumps(resultado, ensure_ascii=False)
 
-        # Intentamos preservar el mensaje que devuelve el endpoint
-        # (por ejemplo, 400 o 401).
         message: Optional[str] = None
+
         try:
             error_payload = e.response.json()
+
+            log.warning(
+                "kohlberg_get_pedidos_error_payload",
+                error_payload=error_payload,
+            )
+
             if isinstance(error_payload, dict):
                 raw_message = error_payload.get("message")
+
                 if isinstance(raw_message, str):
                     message = raw_message
-        except Exception:  # noqa: BLE001
-            pass
 
-        resultado = {
+        except Exception as parse_error:  # noqa: BLE001
+            log.warning(
+                "kohlberg_get_pedidos_error_parse_failed",
+                error=str(parse_error),
+                response_body=body_text,
+            )
+
+        resultado: dict[str, Any] = {
             "telefono": digits,
             "persona": None,
             "pedidos": [],
@@ -1027,6 +1082,11 @@ async def get_pedidos(config: RunnableConfig) -> str:
         if message:
             resultado["message"] = message
 
+        log.info(
+            "kohlberg_get_pedidos_output",
+            resultado=resultado,
+        )
+
         return json.dumps(resultado, ensure_ascii=False)
 
     except Exception as e:  # noqa: BLE001
@@ -1034,72 +1094,23 @@ async def get_pedidos(config: RunnableConfig) -> str:
             "kohlberg_get_pedidos_failed",
             telefono=digits,
             error=str(e),
+            error_type=type(e).__name__,
         )
 
-        return json.dumps(
-            {
-                "telefono": digits,
-                "persona": None,
-                "pedidos": [],
-                "total": 0,
-                "error": str(e) or type(e).__name__,
-            },
-            ensure_ascii=False,
+        resultado = {
+            "telefono": digits,
+            "persona": None,
+            "pedidos": [],
+            "total": 0,
+            "error": str(e) or type(e).__name__,
+        }
+
+        log.info(
+            "kohlberg_get_pedidos_output",
+            resultado=resultado,
         )
-    """Consulta el historial de pedidos del contacto (sus leads con productos) en el CRM.
 
-    Úsala cuando el cliente pregunta por sus pedidos anteriores o por el estado de su pedido. No manejas
-    ids: el contacto se toma del contexto. Solo devuelve leads que ya tienen un pedido (con productos);
-    ignora los leads vacíos "No atendido". Cada pedido trae su etapa (p. ej. "Pedidos entregados"), sus
-    productos y su fecha. No modifica nada: es solo lectura.
-
-    Args:
-        config: Interno; lo inyecta el sistema. No lo pases.
-
-    Devuelve {"total": <n>, "pedidos": [{lead_id, titulo, etapa, entregado, productos, fecha}]}.
-    """
-    _, person_id = _ctx_ids(config)
-    person_id_int = _to_int(person_id)
-    log = logger.bind(tool="get_pedidos", person_id=person_id)
-    if not person_id_int:
-        return json.dumps({"pedidos": [], "total": 0, "note": "sin_contacto"}, ensure_ascii=False)
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await _request(
-                client,
-                "GET",
-                "/api/v1/leads/get",
-                params={"search": f"person_id:{person_id_int};", "searchFields": "person_id:=;", "limit": 50},
-            )
-            leads = _data_list(resp)
-        pedidos: list[dict[str, Any]] = []
-        for lead in leads:
-            # The server-side person filter isn't guaranteed, so narrow client-side: keep the lead only
-            # if its person matches (or the person is unknown on the record - then trust the search).
-            lead_person = _lead_person_id(lead)
-            if lead_person is not None and lead_person != person_id_int:
-                continue
-            items = _lead_line_items(lead)
-            if not items:  # skip empty auto-created leads with no order
-                continue
-            pedidos.append(
-                {
-                    "lead_id": lead.get("id"),
-                    "titulo": lead.get("title"),
-                    "etapa": _lead_stage_display(lead),
-                    "entregado": _is_delivered(lead),
-                    "productos": items,
-                    "fecha": lead.get("created_at"),
-                }
-            )
-        log.info("kohlberg_get_pedidos_ok", leads_recibidos=len(leads), pedidos=len(pedidos))
-        return json.dumps({"pedidos": pedidos, "total": len(pedidos)}, ensure_ascii=False)
-    except httpx.HTTPStatusError as e:
-        log.warning("kohlberg_get_pedidos_http_error", status=e.response.status_code)
-        return json.dumps({"pedidos": [], "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
-    except Exception as e:  # noqa: BLE001
-        log.exception("kohlberg_get_pedidos_failed", error=str(e))
-        return json.dumps({"pedidos": [], "error": str(e) or type(e).__name__}, ensure_ascii=False)
+        return json.dumps(resultado, ensure_ascii=False)
 
 @tool
 async def think(pensamiento: str) -> str:
