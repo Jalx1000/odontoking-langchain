@@ -61,6 +61,18 @@ _CITY_STAGES: dict[str, dict[str, int]] = {
 _STAGE_NO_ATENDIDO_IDS = {s["no_atendido"] for s in _CITY_STAGES.values()}
 _STAGE_ENTREGADO_IDS = {s["entregado"] for s in _CITY_STAGES.values()}
 
+# Canonical city -> sales rep user id (lead owner). The order lead is assigned to the city's rep.
+_CITY_SALES_REP: dict[str, int] = {
+    "tarija": 14,
+    "la paz": 4,
+    "santa cruz": 9,
+    "oruro": 3,
+    "sucre": 7,
+    "potosi": 8,
+    "cochabamba": 15,
+}
+_DEFAULT_SALES_REP = _OWNER_USER_ID  # no/unrecognised city -> default owner
+
 # Canonical city -> product-city id (the `ciudad_producto_sucursal` values on each product). These are
 # a DIFFERENT id space from the pipeline ids above - do not conflate them. A product is available in a
 # city if its list includes that id OR the "todas" id.
@@ -197,6 +209,12 @@ def _city_stages(ciudad: Optional[str]) -> dict[str, int]:
     """Pipeline + stage ids for a free-text city; falls back to 'sin ciudad' when unrecognised."""
     key = _resolve_city_key(ciudad)
     return _CITY_STAGES.get(key, _CITY_STAGES["sin ciudad"]) if key else _CITY_STAGES["sin ciudad"]
+
+
+def _city_sales_rep(ciudad: Optional[str]) -> int:
+    """Sales-rep user id (lead owner) for a free-text city; default owner when unrecognised."""
+    key = _resolve_city_key(ciudad)
+    return _CITY_SALES_REP.get(key, _DEFAULT_SALES_REP) if key else _DEFAULT_SALES_REP
 
 
 def _to_int(valor: Any) -> Optional[int]:
@@ -388,16 +406,51 @@ def _is_fresh_for_order(lead: dict[str, Any]) -> bool:
     return _is_unattended(lead) and not _lead_has_products(lead)
 
 
-async def _create_lead(
-    client: httpx.AsyncClient,
+def _build_products_map(
+    ids: list[Any], names: list[Any], qtys: list[Any], price_by_id: dict[int, float]
+) -> tuple[dict[str, dict[str, Any]], float]:
+    """Build Krayin's `products` object ({product_0: {...}, ...}) and the order total.
+
+    Prices come from the catalog (`price_by_id`), never from the LLM. Krayin expects product_id/price
+    as strings and quantity as an int (see the lead create/update schema).
+    """
+    products: dict[str, dict[str, Any]] = {}
+    total = 0.0
+    for i, pid in enumerate(ids):
+        pid_int = _to_int(pid)
+        if pid_int is None:
+            continue
+        name_i = str(names[i]).strip() if i < len(names) and names[i] else ""
+        qty_i = _to_int(qtys[i]) if i < len(qtys) else None
+        qty_i = qty_i if qty_i and qty_i > 0 else 1
+        unit = round(price_by_id.get(pid_int, 0.0), 2)
+        products[f"product_{len(products)}"] = {
+            "name": name_i,
+            "product_id": str(pid_int),
+            "price": f"{unit:.2f}",
+            "quantity": qty_i,
+        }
+        total += unit * qty_i
+    return products, round(total, 2)
+
+
+def _build_lead_body(
     person_id: Optional[int],
     wa_id: str,
     nombre: Optional[str],
     titulo: Optional[str],
     descripcion: str,
     ciudad: Optional[str],
-) -> Optional[int]:
-    """Create a fresh order lead in the city's pipeline ('No atendido' stage); return lead_id."""
+    stage_key: str,
+    total: float,
+    products: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the FULL lead object for create/update (Krayin fills products only from the whole object).
+
+    Sets lead_value, the city's pipeline + stage, the city's sales rep as owner (user_id), the person,
+    and the inline `products` map. Sending a partial body (or the separate /leads/product endpoint) did
+    NOT populate the product lines / value reliably - the full object does.
+    """
     stages = _city_stages(ciudad)
     etiqueta = (nombre or "Cliente").strip()
     person: dict[str, Any] = {"name": _clean_name(nombre)}
@@ -408,47 +461,30 @@ async def _create_lead(
     body: dict[str, Any] = {
         "title": (titulo or f"Pedido Club del Vino - {etiqueta}").strip(),
         "description": descripcion or "Pedido vía WhatsApp",
-        "lead_value": "0",
+        "lead_value": f"{total:.2f}",
         "lead_source_id": _SOURCE_WHATSAPP,
         "lead_type_id": _LEAD_TYPE_VENTA,
-        "user_id": _OWNER_USER_ID,
+        "user_id": _city_sales_rep(ciudad),
         "lead_pipeline_id": stages["pipeline"],
-        "lead_pipeline_stage_id": stages["no_atendido"],
+        "lead_pipeline_stage_id": stages.get(stage_key, stages["no_atendido"]),
         "person": person,
         "entity_type": "leads",
     }
+    if products:
+        body["products"] = products
+    return body
+
+
+async def _upsert_lead(
+    client: httpx.AsyncClient, lead_id: Optional[int], body: dict[str, Any]
+) -> Optional[int]:
+    """PUT the full body to an existing lead, or POST a new one. Returns the lead id."""
+    if lead_id:
+        await _request(client, "PUT", f"/api/v1/leads/{lead_id}", json=body)
+        return lead_id
     resp = await _request(client, "POST", "/api/v1/leads", json=body)
     data = _data(resp)
     return data.get("id") if isinstance(data, dict) else None
-
-
-async def _add_lead_product(
-    client: httpx.AsyncClient, lead_id: int, product_id: int, name: str, quantity: int, price: float
-) -> float:
-    """Attach a catalog product (by its real id from get_promos) to the lead; return the line amount.
-
-    `is_new=True` (with `id=None`) is what ADDS a new line - `is_new=False` means "update an existing
-    line with this id", so with id=None nothing was being attached (that was the bug). Price/amount are
-    the real catalog values so the lead value reflects the order.
-    """
-    qty = max(int(quantity or 1), 1)
-    unit = round(float(price or 0), 2)
-    amount = round(unit * qty, 2)
-    await _request(
-        client,
-        "PUT",
-        f"/api/v1/leads/product/{lead_id}",
-        json={
-            "product_id": product_id,
-            "name": (name or "").strip(),
-            "price": unit,
-            "quantity": qty,
-            "amount": amount,
-            "is_new": True,
-            "id": None,
-        },
-    )
-    return amount
 
 
 async def _add_lead_note(
@@ -761,24 +797,8 @@ async def registrar_pedido(
                     ensure_ascii=False,
                 )
 
-            # Order registration: reuse the fresh lead, else open a NEW lead in the city pipeline so a
-            # registered/delivered order is never edited (separate orders => separate leads).
-            if fresh_lead is not None:
-                lead_id: Optional[int] = fresh_lead
-                nuevo = False
-            else:
-                wa = _ctx_wa_id(config)
-                person_id = person_ctx or await _resolve_person(client, wa, nombre)
-                lead_id = await _create_lead(
-                    client, person_id, wa, nombre, titulo_de_pedido, descripcion, ciudad_del_cliente,
-                )
-                nuevo = True
-            if not lead_id:
-                log.error("registrar_pedido_no_lead_id")
-                return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
-
-            # Real unit prices from the (cached) catalog, so the lead's product lines and lead_value
-            # reflect the order - the LLM never passes prices (it could hallucinate them).
+            # Real unit prices from the (cached) catalog, so the product lines and lead_value reflect
+            # the order - the LLM never passes prices (it could hallucinate them).
             price_by_id: dict[int, float] = {}
             try:
                 for p in await _get_products_cached():
@@ -788,18 +808,29 @@ async def registrar_pedido(
             except Exception as e:  # noqa: BLE001
                 log.warning("registrar_pedido_price_lookup_failed", error=str(e))
 
-            # Best-effort enrichment - a failure here must not lose the lead.
-            adjuntados = 0
-            total = 0.0
-            for i, pid in enumerate(ids):
-                name_i = names[i] if i < len(names) else ""
-                qty_i = int(qtys[i]) if i < len(qtys) and qtys[i] is not None else 1
-                price_i = price_by_id.get(int(pid), 0.0)
-                try:
-                    total += await _add_lead_product(client, lead_id, int(pid), name_i, qty_i, price_i)
-                    adjuntados += 1
-                except Exception as e:  # noqa: BLE001
-                    log.warning("registrar_pedido_product_failed", lead_id=lead_id, product_id=pid, error=str(e))
+            products_map, total = _build_products_map(ids, names, qtys, price_by_id)
+
+            # Person for the lead body: from context, else find/create by wa_id.
+            person_id = person_ctx
+            if person_id is None:
+                person_id = await _resolve_person(client, _ctx_wa_id(config), nombre)
+
+            # ONE full-object write does everything: product lines (inline), lead_value, the city's
+            # pipeline + stage (Confirmado on confirm, else No atendido) and the city's sales rep as
+            # owner. Krayin only fills the product lines/value from the WHOLE object (a partial PUT or
+            # the /leads/product endpoint did not) - so reuse the fresh lead with a full PUT, or POST a
+            # new one for a separate order.
+            stage_key = "confirmado" if es_pedido_confirmado else "no_atendido"
+            body = _build_lead_body(
+                person_id, _ctx_wa_id(config), nombre, titulo_de_pedido, descripcion,
+                ciudad_del_cliente, stage_key, total, products_map,
+            )
+            lead_id = await _upsert_lead(client, fresh_lead, body)
+            nuevo = fresh_lead is None
+            if not lead_id:
+                log.error("registrar_pedido_no_lead_id")
+                return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
+
             try:
                 await _add_lead_note(
                     client, lead_id, "Datos del pedido",
@@ -816,26 +847,19 @@ async def registrar_pedido(
                 )
             except Exception as e:  # noqa: BLE001
                 log.warning("registrar_pedido_note_failed", lead_id=lead_id, error=str(e))
-            # On confirmation, advance the lead to the city's "Confirmado" stage and set its lead_value
-            # (same partial PUT). Not tagged: tags here are delivery type, not order state.
-            if es_pedido_confirmado:
-                try:
-                    await _move_lead(client, lead_id, ciudad_del_cliente, "confirmado", lead_value=total)
-                except Exception as e:  # noqa: BLE001
-                    log.warning("registrar_pedido_move_failed", lead_id=lead_id, error=str(e))
 
             log.info(
                 "kohlberg_pedido_registered",
                 lead_id=lead_id,
-                lineas=len(ids),
-                adjuntados=adjuntados,
-                total=round(total, 2),
+                lineas=len(products_map),
+                total=total,
+                user_id=_city_sales_rep(ciudad_del_cliente),
                 confirmado=es_pedido_confirmado,
                 nuevo_lead=nuevo,
             )
             return json.dumps(
-                {"lead_id": lead_id, "solicitud": f"#{lead_id}", "productos_adjuntados": adjuntados,
-                 "total": round(total, 2), "confirmado": es_pedido_confirmado, "nuevo_lead": nuevo},
+                {"lead_id": lead_id, "solicitud": f"#{lead_id}", "productos_registrados": len(products_map),
+                 "total": total, "confirmado": es_pedido_confirmado, "nuevo_lead": nuevo},
                 ensure_ascii=False,
             )
     except httpx.HTTPStatusError as e:
