@@ -849,8 +849,8 @@ async def get_sucursales(ciudad: Optional[str] = None) -> str:
 
 @tool
 async def registrar_pedido(
-    mensaje: str,
     config: RunnableConfig,
+    mensaje: Optional[str] = None,
     product_id: Optional[list[int]] = None,
     product_name: Optional[list[str]] = None,
     cantidad_product: Optional[list[int]] = None,
@@ -863,42 +863,36 @@ async def registrar_pedido(
     es_pedido_confirmado: bool = False,
     es_pedido_cancelado: bool = False,
 ) -> str:
-    """Registra el pedido del cliente como oportunidad (lead) en el CRM Kohlberg.
+    """Registra el pedido del cliente como oportunidad (lead) en el CRM Kohlberg."""
 
-    Cada pedido confirmado es un registro propio: el primero enriquece la oportunidad que el CRM abrió
-    para la conversación, y un pedido POSTERIOR distinto abre un lead nuevo (pedidos separados). Un
-    pedido ya registrado, en proceso de un asesor o ENTREGADO ("Pedidos entregados") es intocable: no
-    se edita ni se cancela desde aquí. Tú solo pasas los datos; no manejas ids internos. Los
-    `product_id` y `product_name` DEBEN venir de get_promos, en el mismo orden que `cantidad_product`
-    (arreglos paralelos). Llámala UNA vez por pedido, al confirmar (`es_pedido_confirmado=True`) o al
-    cancelar (`es_pedido_cancelado=True`).
-
-    Nunca combines el mensaje de este paso con el de la sucursal en una misma respuesta.
-
-    Args:
-        mensaje: Resumen en texto libre del pedido/estado para dejar registrado en el CRM.
-        config: Interno; lo inyecta el sistema. No lo pases.
-        product_id: Ids de los vinos (de get_promos), en orden paralelo a cantidad_product.
-        product_name: Nombres EXACTOS de los vinos (de get_promos), en el mismo orden.
-        cantidad_product: Cantidad de cada vino, en el mismo orden.
-        nombre_del_cliente: Nombre del cliente (si no lo pasas, se toma del contexto).
-        edad_del_cliente: Edad del cliente (no se vende a menores de 18).
-        titulo_de_pedido: Título corto del pedido.
-        ciudad_del_cliente: Ciudad del cliente.
-        ubicacion_del_cliente: Referencia/ubicación indicada por el cliente, si la hay.
-        descripcion_corta: Descripción corta del pedido.
-        es_pedido_confirmado: True cuando el cliente confirma el pedido.
-        es_pedido_cancelado: True cuando el cliente cancela el pedido.
-    """
     lead_ctx, person_ctx = _ctx_ids(config)
+
+    log = logger.bind(
+        tool="registrar_pedido",
+        lead_id=lead_ctx,
+        cancelado=es_pedido_cancelado,
+    )
+
+    log.info(
+        "registrar_pedido_entered",
+        mensaje=mensaje,
+        product_id=product_id,
+        product_name=product_name,
+        cantidad_product=cantidad_product,
+        nombre_del_cliente=nombre_del_cliente,
+        ciudad_del_cliente=ciudad_del_cliente,
+        es_pedido_confirmado=es_pedido_confirmado,
+        es_pedido_cancelado=es_pedido_cancelado,
+    )
+
     nombre = (nombre_del_cliente or "").strip() or _ctx_contact_name(config)
     ids = list(product_id or [])
     names = list(product_name or [])
     qtys = list(cantidad_product or [])
-    log = logger.bind(tool="registrar_pedido", lead_id=lead_ctx, cancelado=es_pedido_cancelado)
 
     resumen = ", ".join(
-        f"{qtys[i] if i < len(qtys) else '?'} x {names[i]}" for i in range(len(names))
+        f"{qtys[i] if i < len(qtys) else '?'} x {names[i]}"
+        for i in range(len(names))
     )
     try:
         async with httpx.AsyncClient(timeout=20) as client:
