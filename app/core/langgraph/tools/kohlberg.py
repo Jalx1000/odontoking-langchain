@@ -407,32 +407,173 @@ def _is_fresh_for_order(lead: dict[str, Any]) -> bool:
 
 
 def _build_products_map(
-    ids: list[Any], names: list[Any], qtys: list[Any], price_by_id: dict[int, float]
+    ids: list[Any],
+    names: list[Any],
+    qtys: list[Any],
+    price_by_id: dict[int, float],
 ) -> tuple[dict[str, dict[str, Any]], float]:
-    """Build Krayin's `products` object ({product_0: {...}, ...}) and the order total.
+    """Build Krayin's `products` object ({product_0: {...}, ...}) and order total.
 
-    Prices come from the catalog (`price_by_id`), never from the LLM. Krayin expects product_id/price
-    as strings and quantity as an int (see the lead create/update schema).
+    Logs every transformation so product mapping problems can be diagnosed.
+
+    Expected parallel arrays:
+        ids[i]   -> product id
+        names[i] -> product name
+        qtys[i]  -> product quantity
     """
+
+    log = logger.bind(
+        method="_build_products_map",
+        ids_count=len(ids),
+        names_count=len(names),
+        qtys_count=len(qtys),
+        catalog_prices_count=len(price_by_id),
+    )
+
+    # LOG 1: Datos completos de entrada.
+    log.info(
+        "kohlberg_products_map_start",
+        ids=ids,
+        names=names,
+        qtys=qtys,
+        price_by_id=price_by_id,
+    )
+
+    # LOG 2: Detectar inmediatamente si los arrays paralelos no coinciden.
+    if not (len(ids) == len(names) == len(qtys)):
+        log.warning(
+            "kohlberg_products_map_array_length_mismatch",
+            ids_count=len(ids),
+            names_count=len(names),
+            qtys_count=len(qtys),
+            ids=ids,
+            names=names,
+            qtys=qtys,
+        )
+
     products: dict[str, dict[str, Any]] = {}
     total = 0.0
+
     for i, pid in enumerate(ids):
+
+        raw_id = pid
+        raw_name = names[i] if i < len(names) else None
+        raw_qty = qtys[i] if i < len(qtys) else None
+
+        # LOG 3: Datos originales de esta posición.
+        log.info(
+            "kohlberg_products_map_item_input",
+            index=i,
+            raw_product_id=raw_id,
+            raw_name=raw_name,
+            raw_quantity=raw_qty,
+        )
+
         pid_int = _to_int(pid)
+
+        # Si el ID no es válido, actualmente el producto se pierde.
         if pid_int is None:
+            log.warning(
+                "kohlberg_products_map_invalid_product_id",
+                index=i,
+                raw_product_id=raw_id,
+                raw_name=raw_name,
+                raw_quantity=raw_qty,
+                action="skipped",
+            )
             continue
-        name_i = str(names[i]).strip() if i < len(names) and names[i] else ""
-        qty_i = _to_int(qtys[i]) if i < len(qtys) else None
-        qty_i = qty_i if qty_i and qty_i > 0 else 1
-        unit = round(price_by_id.get(pid_int, 0.0), 2)
-        products[f"product_{len(products)}"] = {
+
+        # Nombre
+        if i < len(names) and names[i] not in (None, ""):
+            name_i = str(names[i]).strip()
+        else:
+            name_i = ""
+
+        if not name_i:
+            log.warning(
+                "kohlberg_products_map_missing_name",
+                index=i,
+                product_id=pid_int,
+                available_names_count=len(names),
+            )
+
+        # Cantidad
+        qty_raw_int = _to_int(raw_qty)
+        qty_i = qty_raw_int if qty_raw_int and qty_raw_int > 0 else 1
+
+        if qty_raw_int is None or qty_raw_int <= 0:
+            log.warning(
+                "kohlberg_products_map_invalid_quantity_defaulted",
+                index=i,
+                product_id=pid_int,
+                raw_quantity=raw_qty,
+                resolved_quantity=qty_i,
+            )
+
+        # Precio
+        price_found = pid_int in price_by_id
+        raw_price = price_by_id.get(pid_int)
+
+        if not price_found:
+            log.error(
+                "kohlberg_products_map_price_not_found",
+                index=i,
+                product_id=pid_int,
+                available_product_ids=list(price_by_id.keys())[:100],
+                action="using_zero_price",
+            )
+
+        unit = round(_to_float(raw_price) or 0.0, 2)
+
+        # LOG 4: Producto después de normalizar los datos.
+        log.info(
+            "kohlberg_products_map_item_resolved",
+            index=i,
+            product_id=pid_int,
+            name=name_i,
+            quantity=qty_i,
+            price_found=price_found,
+            raw_price=raw_price,
+            unit_price=unit,
+            subtotal=round(unit * qty_i, 2),
+        )
+
+        product_key = f"product_{len(products)}"
+
+        mapped_product = {
             "name": name_i,
             "product_id": str(pid_int),
             "price": f"{unit:.2f}",
             "quantity": qty_i,
         }
-        total += unit * qty_i
-    return products, round(total, 2)
 
+        products[product_key] = mapped_product
+
+        total += unit * qty_i
+
+        # LOG 5: Ver exactamente cómo está quedando el objeto acumulado.
+        log.info(
+            "kohlberg_products_map_item_added",
+            index=i,
+            product_key=product_key,
+            mapped_product=mapped_product,
+            running_total=round(total, 2),
+            products_so_far=products,
+        )
+
+    total = round(total, 2)
+
+    # LOG 6: RESULTADO FINAL EXACTO.
+    log.info(
+        "kohlberg_products_map_complete",
+        input_ids_count=len(ids),
+        mapped_products_count=len(products),
+        skipped_products_count=len(ids) - len(products),
+        products=products,
+        total=total,
+    )
+
+    return products, total
 
 def _build_lead_body(
     person_id: Optional[int],
