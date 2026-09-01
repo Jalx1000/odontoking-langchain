@@ -135,25 +135,6 @@ def _data(resp: httpx.Response) -> Any:
     return payload.get("data", payload) if isinstance(payload, dict) else payload
 
 
-def _data_list(resp: httpx.Response) -> list[dict[str, Any]]:
-    """Return the list of records from a Krayin response, tolerating the shapes we've seen live.
-
-    - `[{"data":[...], "meta":{...}}]`  (the one-element array wrapper, e.g. /api/v1/products)
-    - `{"data":[...]}`                   (standard paginated resource)
-    - `[ {...}, {...} ]`                 (a bare list of records)
-    """
-    payload = resp.json() if resp.content else []
-    if isinstance(payload, list):
-        if payload and isinstance(payload[0], dict) and isinstance(payload[0].get("data"), list):
-            payload = payload[0]
-        else:
-            return [x for x in payload if isinstance(x, dict)]
-    if isinstance(payload, dict):
-        data = payload.get("data", payload)
-        return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []
-    return []
-
-
 def _normalize_wa_id(wa_id: str) -> str:
     """Digits-only WhatsApp id - strip '+', spaces so the CRM lookup never misses."""
     return (wa_id or "").replace("+", "").replace(" ", "").strip()
@@ -359,44 +340,6 @@ def _lead_has_products(lead: dict[str, Any]) -> bool:
     return bool(products) if isinstance(products, list) else False
 
 
-def _lead_line_items(lead: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract [{product_id, producto, cantidad}] from a lead's product lines.
-
-    Handles both `products` and `lead_products`, list or dict, and the id/name whether flat or nested
-    under `product`. `product_id` lets a "repeat order" reuse the same ids without re-resolving names.
-    """
-    raw = lead.get("products") or lead.get("lead_products") or []
-    values = list(raw.values()) if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
-    items: list[dict[str, Any]] = []
-    for it in values:
-        if not isinstance(it, dict):
-            continue
-        prod_obj = it.get("product")
-        prod: dict[str, Any] = prod_obj if isinstance(prod_obj, dict) else {}
-        name = it.get("name") or prod.get("name")
-        if name:
-            items.append(
-                {"product_id": _to_int(it.get("product_id") or prod.get("id")),
-                 "producto": name, "cantidad": it.get("quantity")}
-            )
-    return items
-
-
-def _lead_stage_display(lead: dict[str, Any]) -> Optional[str]:
-    """Original-case stage name of a lead (for display), or None."""
-    stage = lead.get("lead_pipeline_stage") or lead.get("stage") or {}
-    name = stage.get("name") if isinstance(stage, dict) else None
-    clean = name.strip() if isinstance(name, str) else ""
-    return clean or None
-
-
-def _lead_person_id(lead: dict[str, Any]) -> Optional[int]:
-    """Person id of a lead (from the nested person object or the flat person_id), or None."""
-    person = lead.get("person")
-    pid = person.get("id") if isinstance(person, dict) else lead.get("person_id")
-    return _to_int(pid)
-
-
 def _is_fresh_for_order(lead: dict[str, Any]) -> bool:
     """A lead is enrichable only while it is the untouched auto-created lead AND has no order yet.
 
@@ -421,7 +364,6 @@ def _build_products_map(
         names[i] -> product name
         qtys[i]  -> product quantity
     """
-
     log = logger.bind(
         method="_build_products_map",
         ids_count=len(ids),
@@ -587,7 +529,6 @@ def _build_lead_body(
     products: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     """Build the FULL lead object for create/update."""
-
     stages = _city_stages(ciudad)
     etiqueta = (nombre or "Cliente").strip()
 
@@ -893,7 +834,6 @@ async def registrar_pedido(
     es_pedido_cancelado: bool = False,
 ) -> str:
     """Registra el pedido del cliente como oportunidad (lead) en el CRM Kohlberg."""
-
     lead_ctx, person_ctx = _ctx_ids(config)
 
     log = logger.bind(

@@ -25,7 +25,7 @@ Herramientas disponibles
 get_promos → Obtiene promociones y vinos activos filtrados por la CIUDAD del cliente. Devuelve `vinos` y `packs`, cada uno con product_id, name, descripción y precio. Pásale siempre la ciudad del cliente apenas la conozcas.
 registrar_pedido → Registra el pedido del cliente en el CRM
 get_sucursales → Verifica la información por sucursal según la ciudad (y el teléfono del asesor por ciudad)
-get_pedidos → Consulta el historial de pedidos del cliente (solo lectura, por el contacto). Úsala cuando el cliente: (a) pregunte por sus pedidos anteriores o el estado de un pedido; (b) pida "repetir mi pedido" → toma el pedido más reciente de get_pedidos (trae product_id, producto y cantidad) y regístralo con registrar_pedido usando esos mismos product_id. Un pedido en etapa "Pedidos entregados" ya fue concretado y NO se modifica; si el cliente lo repite, se crea un pedido nuevo.
+get_pedidos → Consulta TODOS los pedidos del cliente por su teléfono (solo lectura, una sola llamada). Devuelve `pedidos` (más reciente primero), cada uno con `id`, `titulo`, `monto`, `etapa`, `pipeline` (ciudad), `asesor`, `creado_en` y `productos` (cada uno con `producto_id`, `nombre`, `cantidad`, `precio`). Úsala cuando el cliente: (a) pregunte por sus pedidos anteriores o el estado de un pedido; (b) pida "repetir mi pedido" → toma el pedido más reciente y regístralo con registrar_pedido usando los `producto_id` como `product_id` (mismos vinos y cantidades). Un pedido en etapa "Pedidos entregados" ya fue concretado y NO se modifica; si el cliente lo repite, se crea un pedido nuevo.
 think → Verifica coherencia del flujo antes de responder
 
 Reglas críticas
