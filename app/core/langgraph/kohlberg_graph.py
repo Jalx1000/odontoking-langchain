@@ -7,15 +7,17 @@ advisor phone), registrar_pedido (the confirmed order as a Krayin lead) and thin
 
 The only ids the tools use (conversation_id / lead_id / person_id) are injected via config.metadata and
 never reach the model; the ONLY ids the LLM handles are the public product_id values it reads back from
-get_promos. There is no delivery and no human-handoff flow: a client who wants a person gets the branch
-phone from get_sucursales.
+get_promos. There is no delivery. A client who wants a person is handed off with derivar_a_asesor: the
+tool only SIGNALS, and the webhook POSTs the handoff AFTER the client notice is sent (once derived the
+CRM 409s any further /messages, so order matters).
 """
 
 import asyncio
 import json
 import os as _os
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
 
@@ -35,6 +37,7 @@ from pydantic import SecretStr
 
 from app.core.config import settings
 from app.core.langgraph.tools.kohlberg import (
+    derivar_a_asesor,
     get_pedidos,
     get_promos,
     get_sucursales,
@@ -49,7 +52,7 @@ from app.utils import dump_messages, process_llm_response
 
 PostgresConnPool = AsyncConnectionPool[AsyncConnection[DictRow]]
 
-_KOHLBERG_TOOLS = [get_promos, get_sucursales, registrar_pedido, get_pedidos, think]
+_KOHLBERG_TOOLS = [get_promos, get_sucursales, registrar_pedido, get_pedidos, derivar_a_asesor, think]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "kohlberg.md")
 _TZ_BOLIVIA = ZoneInfo("America/La_Paz")
@@ -262,8 +265,14 @@ class KohlbergAgent:
         channel: Optional[str] = None,
         nombre_registrado: Optional[str] = None,
         nombre_whatsapp: Optional[str] = None,
+        handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
-        """Process one WhatsApp message and return Sofía's plain-text reply."""
+        """Process one WhatsApp message and return Sofía's plain-text reply.
+
+        If the agent calls `derivar_a_asesor` this turn, `handoff_callback` is invoked with the reason
+        (and ciudad) so the caller POSTs /handoff AFTER sending the reply (the reply is the client's
+        notice; once derived the CRM 409s any further /messages).
+        """
         graph = await self._get_graph()
         callbacks: list[BaseCallbackHandler] = (
             [langfuse_callback_handler] if settings.LANGFUSE_TRACING_ENABLED else []
@@ -306,6 +315,21 @@ class KohlbergAgent:
                 task = asyncio.create_task(_persist_messages_async(wa_id, new_msgs))
                 self._persist_tasks.add(task)
                 task.add_done_callback(self._persist_tasks.discard)
+
+            # Handoff signal: if derivar_a_asesor was called THIS turn, surface reason + ciudad so the
+            # caller derives AFTER sending the reply (the reply is the client's notice).
+            if handoff_callback is not None:
+                for m in new_msgs:
+                    for tc in getattr(m, "tool_calls", None) or []:
+                        if tc.get("name") == "derivar_a_asesor":
+                            args = tc.get("args") or {}
+                            reason = str(args.get("reason") or "").strip()
+                            ciudad = args.get("ciudad")
+                            logger.info("kohlberg_handoff_signaled", wa_id=wa_id, ciudad=ciudad, reason=reason[:80])
+                            try:
+                                await handoff_callback({"reason": reason, "ciudad": ciudad})
+                            except Exception as e:  # noqa: BLE001
+                                logger.warning("kohlberg_handoff_callback_failed", wa_id=wa_id, error=str(e))
 
             ai_messages = [
                 m for m in response.get("messages", []) if isinstance(m, AIMessage) and m.content

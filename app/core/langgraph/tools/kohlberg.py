@@ -1229,3 +1229,70 @@ async def think(pensamiento: str) -> str:
         pensamiento: Tu razonamiento sobre el estado del flujo y el siguiente paso.
     """
     return json.dumps({"ok": True}, ensure_ascii=False)
+
+
+# ── Handoff (signal only - the webhook POSTs after the client notice) ──────────
+
+@tool
+async def derivar_a_asesor(reason: str, ciudad: Optional[str] = None) -> str:
+    """Deriva la conversación a un asesor humano de la ciudad del cliente.
+
+    Úsala cuando el cliente pida hablar con una persona/asesor, esté molesto o repita un reclamo, o
+    cuando la consulta exceda lo que podés resolver (reclamos por un pedido entregado, temas de pago,
+    precios especiales, cambios sobre un pedido ya confirmado). El mensaje que escribís en ESTA misma
+    respuesta es el aviso al cliente (breve, natural, sin prometer tiempos). Después de derivar NO
+    vuelvas a escribirle: lo atiende una persona. No derives dos veces.
+
+    Args:
+        reason: Motivo en una frase (español) para que el asesor entienda el contexto sin leer el chat.
+        ciudad: Ciudad del cliente SOLO si la sabés con certeza por la conversación (Tarija, Santa Cruz,
+            La Paz, Cochabamba, Sucre, Potosí, Oruro). Omitila si no estás seguro; NO la deduzcas del
+            código de área ni del nombre - una ciudad equivocada manda al cliente con el asesor
+            equivocado. Sin ciudad, la conversación cae al pool del equipo (igual es válido).
+    """
+    # Pure signal: the actual POST /handoff is done by the caller AFTER the client notice is sent
+    # (once derived the CRM 409s any further /messages, so order matters).
+    return json.dumps(
+        {"status": "handoff_signaled", "reason": reason, "ciudad": (ciudad or None)},
+        ensure_ascii=False,
+    )
+
+
+async def request_handoff(
+    conversation_id: int | str, reason: str, ciudad: Optional[str] = None
+) -> dict[str, Any]:
+    """Derive a conversation to an advisor: POST .../conversations/{id}/handoff {reason, ciudad?}.
+
+    Not a tool - the webhook calls this AFTER sending the client notice (once derived the CRM 409s any
+    further /messages, so order matters). The CRM routes to the city's Encargado (or the team pool);
+    idempotent CRM-side (a re-request returns changed=false). `assigned_user` in the response is an
+    INT (the id), never an object; `assigned_user_name` carries the name. Best-effort: logs and returns
+    {} on failure, never raises.
+    """
+    log = logger.bind(conversation_id=conversation_id, ciudad=(ciudad or "")[:40])
+    body: dict[str, Any] = {"reason": reason}
+    if ciudad and ciudad.strip():
+        body["ciudad"] = ciudad.strip()
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await _request(
+                client, "POST", f"/api/v1/whatsapp/conversations/{conversation_id}/handoff", json=body
+            )
+            payload = resp.json() if resp.content else {}
+            handoff = payload.get("handoff") if isinstance(payload, dict) else None
+            handoff = handoff if isinstance(handoff, dict) else {}
+            log.info(
+                "kohlberg_handoff_requested",
+                state=handoff.get("state"),
+                pooled=handoff.get("pooled"),
+                city=handoff.get("city"),
+                assigned_user=handoff.get("assigned_user"),
+                changed=handoff.get("changed"),
+            )
+            return payload if isinstance(payload, dict) else {}
+    except httpx.HTTPStatusError as e:
+        log.error("kohlberg_handoff_http_error", status=e.response.status_code)
+        return {}
+    except Exception as e:  # noqa: BLE001
+        log.exception("kohlberg_handoff_failed", error=str(e))
+        return {}
