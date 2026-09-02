@@ -176,8 +176,11 @@ async def receive_crm_event(request: Request) -> dict:
         )
         return {"status": "ignored"}
 
+    # Accept text AND interactive (button/list replies): the CRM now puts the selected option's label
+    # in `message.text` for interactive messages, so a city/option picker resolves to plain text. Any
+    # other type (image/audio/document/location) still carries no usable text and is ignored.
     text = (event.message.text or "").strip()
-    if event.message.type != "text" or not text:
+    if event.message.type not in ("text", "interactive") or not text:
         logger.info("crm_unsupported_message", msg_type=event.message.type)
         return {"status": "ignored"}
 
