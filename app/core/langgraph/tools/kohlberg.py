@@ -873,6 +873,14 @@ async def registrar_pedido(
             fresh_lead: Optional[int] = None
             if lead_ctx:
                 lead = await _get_lead(client, lead_ctx)
+                if lead is not None:
+                    log.info(
+                        "registrar_pedido_lead_fetched",
+                        stage_id=_lead_stage_id(lead),
+                        stage=_lead_stage_name(lead),
+                        has_products=_lead_has_products(lead),
+                        fresh=_is_fresh_for_order(lead),
+                    )
                 if lead is not None and _is_fresh_for_order(lead):
                     fresh_lead = lead_ctx
                 elif lead is not None:
@@ -939,13 +947,18 @@ async def registrar_pedido(
             # owner. Krayin only fills the product lines/value from the WHOLE object (a partial PUT or
             # the /leads/product endpoint did not) - so reuse the fresh lead with a full PUT, or POST a
             # new one for a separate order.
+            # A CONFIRMED order is ALWAYS its own pedido: never reuse/overwrite an existing lead, so the
+            # client can place N separate pedidos in one conversation (the CRM re-sends the same
+            # contact.lead_id every turn — reusing it collapsed every order into one modified lead).
+            # Only a non-confirmed draft may enrich the fresh auto-created lead.
+            target_lead = None if es_pedido_confirmado else fresh_lead
             stage_key = "confirmado" if es_pedido_confirmado else "no_atendido"
             body = _build_lead_body(
                 person_id, _ctx_wa_id(config), nombre, titulo_de_pedido, descripcion,
                 ciudad_del_cliente, stage_key, total, products_map,
             )
-            lead_id = await _upsert_lead(client, fresh_lead, body)
-            nuevo = fresh_lead is None
+            lead_id = await _upsert_lead(client, target_lead, body)
+            nuevo = target_lead is None
             if not lead_id:
                 log.error("registrar_pedido_no_lead_id")
                 return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
