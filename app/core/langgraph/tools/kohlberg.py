@@ -313,15 +313,17 @@ def _lead_stage_id(lead: dict[str, Any]) -> Optional[int]:
 
 
 def _is_unattended(lead: dict[str, Any]) -> bool:
-    """True if the lead is still the untouched auto-created lead (safe to enrich).
+    """True ONLY when we can positively confirm the lead is the untouched auto-created 'No atendido'.
 
-    Prefers the real stage id (per-city 'No atendido'); falls back to the stage name when the id is
-    absent, so a fresh lead with unknown stage is still treated as enrichable.
+    Fail-safe toward creating a NEW lead: reuse (modify) a lead only on a POSITIVE No-atendido signal
+    (the per-city stage id, or the explicit stage name). An unknown/empty stage is NOT treated as
+    enrichable — otherwise a sparse lead GET (no stage in the payload) makes every order look "fresh"
+    and each new order overwrites the same lead instead of opening a separate pedido.
     """
     sid = _lead_stage_id(lead)
     if sid is not None:
         return sid in _STAGE_NO_ATENDIDO_IDS
-    return _lead_stage_name(lead) in ("", "no atendido")
+    return _lead_stage_name(lead) == "no atendido"
 
 
 def _is_delivered(lead: dict[str, Any]) -> bool:
