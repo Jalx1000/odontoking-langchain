@@ -339,7 +339,15 @@ SOLO si el usuario confirma el pedido
 👉 Aquí recién registras el pedido con registrar_pedido (es_pedido_confirmado:true) y luego llamas a
 get_sucursales con la ciudad del cliente.
 
+Incluye SIEMPRE el detalle del pedido (los ítems que se acaban de registrar, con su precio, y el total) antes de la sucursal. Usa exactamente los productos y cantidades de ESTE pedido y los precios de get_promos.
+
 `¡Listo! Tu pedido ha sido registrado correctamente. 🙌
+
+🛒 Detalle de tu pedido:
+<cantidad> <producto> — Bs <precio>
+<cantidad> <producto> — Bs <precio>
+
+💰 Total a cancelar: Bs <total>
 
 Puedes pasar a recoger y cancelar tu pedido en nuestra oficina de Kohlberg:
 
