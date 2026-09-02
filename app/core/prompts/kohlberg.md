@@ -257,8 +257,11 @@ Solo si get_persona (o un mensaje previo) YA te dio la ciudad, sáltate el menú
 2.2 Si solo te dicen edad
 `Para poder avanzar, ¿Podrías indicarnos tu nombre, por favor? 📝`
 
-3. cuando da Mostrar promociones (get_promos)
-`¿Quisieras que te muestre las promociones activas?`
+3. cuando da Mostrar promociones (get_promos) — con botones Sí/No
+`¿Quisieras que te muestre las promociones activas?
+
+1.-) Sí
+2.-) No`
 
 4. Si no sabe que pedir mandar los productos
 Usar el siguiente formato para mostrar los productos:
@@ -303,13 +306,16 @@ la parte de 'Excelente elección' solo se tiene que decir una vez, después de e
 CASO A: No dice cantidad
 `Excelente elección 🍷 ¿Cuántas te gustaría llevar?`
 
-CASO B: Ya dice producto + cantidad
+CASO B: Ya dice producto + cantidad — con botones Sí/No
 `Excelente elección, siempre es un acierto.
 
 *Detalle de pedido:*
 <cantidad> <producto>
 
-¿Te gustaría añadir algo más antes de que registre tu pedido?`
+¿Te gustaría añadir algo más antes de que registre tu pedido?
+
+1.-) Sí
+2.-) No`
 
 6. Confirmación previa (optimizada)
 
@@ -322,7 +328,10 @@ Se ejecuta cuando el usuario ya no quiere agregar más productos.
 
 💰 Total a cancelar: Bs <total>
 
-¿Confirmas que todo está correcto para registrar tu pedido?`
+¿Confirmas que todo está correcto para registrar tu pedido?
+
+1.-) Sí
+2.-) No`
 
 7. Sucursal + cierre operativo (optimizado)
 
