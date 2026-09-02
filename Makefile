@@ -191,6 +191,15 @@ history-wipe:
 	WIPE_DATABASE_URL="$$DBURL" WIPE_REDIS_URL="$$RDURL" \
 		$(PYTHON_BIN) scripts/wipe_history.py --apply $$YES $$NOBK $(if $(BACKUP_DIR),--backup-dir $(BACKUP_DIR),)
 
+# Vacía TODAS las tablas del esquema public (TRUNCATE, no borra el esquema).
+# Pasa la URL directo: make db-wipe-all DBURL='postgresql://...'  → dry-run (solo cuenta).
+# Añade CONFIRM=yes para borrar de verdad. KEEP="a,b" cambia las tablas a preservar
+# (por defecto alembic_version). No usa el CLI de Railway: das la URL vos.
+db-wipe-all:
+	@[ -n "$(DBURL)" ] || { echo "Uso: make db-wipe-all DBURL='postgresql://...' [CONFIRM=yes] [KEEP='alembic_version']"; exit 1; }
+	@DB_TRUNCATE_URL="$(DBURL)" KEEP="$(KEEP)" $(PYTHON_BIN) scripts/db_truncate_all.py \
+		$(if $(filter yes,$(CONFIRM)),--apply --yes,)
+
 # ---------------------------------------------------------------------------
 # Misc
 # ---------------------------------------------------------------------------
@@ -245,6 +254,7 @@ help:
 	@echo "Railway - borrar historial del agente (Postgres + Redis):"
 	@echo "  history-check        Cuenta qué se borraría (no borra nada)"
 	@echo "  history-wipe         Respalda y borra (CONFIRM=yes salta la pregunta; NO_BACKUP=1 omite respaldo)"
+	@echo "  db-wipe-all          TRUNCATE de TODAS las tablas (DBURL='...'; CONFIRM=yes para borrar; KEEP='a,b')"
 	@echo ""
 	@echo "Misc:"
 	@echo "  clean                Remove .venv, __pycache__, .pytest_cache"
@@ -255,5 +265,5 @@ help:
         lint format typecheck check pre-commit pre-commit-update \
         docker-build docker-up docker-down docker-logs \
         stack-up stack-down stack-logs \
-        history-check history-wipe \
+        history-check history-wipe db-wipe-all \
         clean help
