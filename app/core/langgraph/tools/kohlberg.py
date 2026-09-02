@@ -1217,6 +1217,69 @@ async def get_pedidos(config: RunnableConfig) -> str:
         return json.dumps(resultado, ensure_ascii=False)
 
 @tool
+async def get_persona(config: RunnableConfig) -> str:
+    """Trae lo que el CRM ya sabe del cliente por su teléfono (nombre, ciudad si consta, etc.).
+
+    Llamala UNA sola vez al inicio de la conversación, antes de pedir datos. Si el CRM ya conoce al
+    cliente, saludalo por su nombre y NO le pidas de nuevo lo que ya venga (nombre y/o ciudad); pide
+    solo lo que falte. Solo lectura, una sola llamada. El teléfono sale del contexto (no lo pidas).
+    """
+    telefono = _ctx_wa_id(config)
+    digits = "".join(c for c in telefono if c.isdigit())
+    log = logger.bind(tool="get_persona", telefono_digits=digits)
+
+    if len(digits) < 7:
+        resultado = {"telefono": telefono or None, "persona": None, "note": "sin_telefono_valido"}
+        log.warning("kohlberg_get_persona_invalid_phone", resultado=resultado)
+        return json.dumps(resultado, ensure_ascii=False)
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            log.info(
+                "kohlberg_get_persona_request",
+                url=f"{_BASE}/api/personas/por-telefono",
+                telefono=digits,
+            )
+            resp = await _request(
+                client, "GET", "/api/personas/por-telefono", params={"telefono": digits}
+            )
+            log.info(
+                "kohlberg_get_persona_response",
+                status=resp.status_code,
+                response_text=resp.text[:2000],
+            )
+            payload = resp.json() if resp.content else {}
+
+        if not isinstance(payload, dict):
+            log.warning("kohlberg_get_persona_invalid_response", response_type=type(payload).__name__)
+            return json.dumps(
+                {"telefono": digits, "persona": None, "error": "respuesta_invalida"},
+                ensure_ascii=False,
+            )
+
+        # Pass the CRM object through as-is (schema-agnostic): whatever fields it carries
+        # (persona.nombre, ciudad, edad, ...) reach the LLM directly.
+        payload.setdefault("telefono", digits)
+        payload.setdefault("persona", None)
+        log.info("kohlberg_get_persona_output", resultado=payload)
+        return json.dumps(payload, ensure_ascii=False)
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        retry_after = e.response.headers.get("Retry-After")
+        log.warning("kohlberg_get_persona_http_error", status=status, retry_after=retry_after)
+        resultado: dict[str, Any] = {"telefono": digits, "persona": None, "error": f"api_{status}"}
+        if status == 429 and retry_after:
+            resultado["retry_after"] = retry_after
+        return json.dumps(resultado, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        log.exception("kohlberg_get_persona_failed", error=str(e))
+        return json.dumps(
+            {"telefono": digits, "persona": None, "error": str(e) or type(e).__name__},
+            ensure_ascii=False,
+        )
+
+@tool
 async def think(pensamiento: str) -> str:
     """Verifica la coherencia del flujo antes de responder (borrador interno, no lo ve el cliente).
 

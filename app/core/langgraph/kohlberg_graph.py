@@ -39,6 +39,7 @@ from app.core.config import settings
 from app.core.langgraph.tools.kohlberg import (
     derivar_a_asesor,
     get_pedidos,
+    get_persona,
     get_promos,
     get_sucursales,
     registrar_pedido,
@@ -52,7 +53,15 @@ from app.utils import dump_messages, process_llm_response
 
 PostgresConnPool = AsyncConnectionPool[AsyncConnection[DictRow]]
 
-_KOHLBERG_TOOLS = [get_promos, get_sucursales, registrar_pedido, get_pedidos, derivar_a_asesor, think]
+_KOHLBERG_TOOLS = [
+    get_persona,
+    get_promos,
+    get_sucursales,
+    registrar_pedido,
+    get_pedidos,
+    derivar_a_asesor,
+    think,
+]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "kohlberg.md")
 _TZ_BOLIVIA = ZoneInfo("America/La_Paz")
