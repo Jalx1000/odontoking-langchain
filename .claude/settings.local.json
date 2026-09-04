@@ -79,7 +79,8 @@
       "Bash(PYTHONPATH=/Users/javier/proyectos/02.agentes/01.odontoking uv run python /tmp/test_handoff.py)",
       "Bash(git commit -m ' *)",
       "Bash(chmod +x scripts/persona-por-telefono.sh)",
-      "Bash(bash -n scripts/persona-por-telefono.sh)"
+      "Bash(bash -n scripts/persona-por-telefono.sh)",
+      "Bash(chmod +x scripts/db_truncate_all.py)"
     ]
   }
 }

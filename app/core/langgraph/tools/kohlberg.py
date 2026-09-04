@@ -48,14 +48,14 @@ _OWNER_USER_ID = 1           # default lead owner
 # tagging with a wrong id mislabels the lead). "entregado" ("Pedidos entregados") is a concreted order
 # and is immutable. Key is the canonical city (see _CITY_ALIASES); unknown/absent city -> "sin ciudad".
 _CITY_STAGES: dict[str, dict[str, int]] = {
-    "tarija":     {"pipeline": 1,  "no_atendido": 1,  "confirmado": 2,  "sin_interes": 39, "entregado": 5,  "cancelado": 6,  "otros": 58},
-    "santa cruz": {"pipeline": 3,  "no_atendido": 11, "confirmado": 12, "sin_interes": 45, "entregado": 13, "cancelado": 14, "otros": 51},
-    "potosi":     {"pipeline": 4,  "no_atendido": 15, "confirmado": 16, "sin_interes": 50, "entregado": 17, "cancelado": 18, "otros": 57},
-    "oruro":      {"pipeline": 6,  "no_atendido": 23, "confirmado": 24, "sin_interes": 49, "entregado": 25, "cancelado": 26, "otros": 56},
-    "la paz":     {"pipeline": 7,  "no_atendido": 27, "confirmado": 28, "sin_interes": 48, "entregado": 29, "cancelado": 30, "otros": 55},
-    "cochabamba": {"pipeline": 8,  "no_atendido": 31, "confirmado": 32, "sin_interes": 47, "entregado": 33, "cancelado": 34, "otros": 54},
-    "sucre":      {"pipeline": 9,  "no_atendido": 35, "confirmado": 36, "sin_interes": 46, "entregado": 37, "cancelado": 38, "otros": 53},
-    "sin ciudad": {"pipeline": 10, "no_atendido": 40, "confirmado": 41, "sin_interes": 44, "entregado": 42, "cancelado": 43, "otros": 52},
+    "tarija":     {"pipeline": 1,  "no_atendido": 1,  "confirmado": 1,   "sin_interes": 1,  "entregado": 1,   "cancelado": 1,   "otros": 1},
+    "santa cruz": {"pipeline": 3,  "no_atendido": 11, "confirmado": 11, "sin_interes": 11, "entregado": 11, "cancelado": 11, "otros": 11},
+    "potosi":     {"pipeline": 4,  "no_atendido": 15, "confirmado": 15, "sin_interes": 15, "entregado": 15, "cancelado": 15, "otros": 15},
+    "oruro":      {"pipeline": 6,  "no_atendido": 23, "confirmado": 23, "sin_interes": 23, "entregado": 23, "cancelado": 23, "otros": 23},
+    "la paz":     {"pipeline": 7,  "no_atendido": 27, "confirmado": 27, "sin_interes": 27, "entregado": 27, "cancelado": 27, "otros": 27},
+    "cochabamba": {"pipeline": 8,  "no_atendido": 31, "confirmado": 31, "sin_interes": 31, "entregado": 31, "cancelado": 31, "otros": 31},
+    "sucre":      {"pipeline": 9,  "no_atendido": 35, "confirmado": 35, "sin_interes": 35, "entregado": 35, "cancelado": 35, "otros": 35},
+    "sin ciudad": {"pipeline": 10, "no_atendido": 40, "confirmado": 40, "sin_interes": 40, "entregado": 40, "cancelado": 40, "otros": 40},
 }
 # Stage-id sets (across every city) for classifying a lead by its lead_pipeline_stage_id.
 _STAGE_NO_ATENDIDO_IDS = {s["no_atendido"] for s in _CITY_STAGES.values()}
