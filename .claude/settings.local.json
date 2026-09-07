@@ -80,7 +80,17 @@
       "Bash(git commit -m ' *)",
       "Bash(chmod +x scripts/persona-por-telefono.sh)",
       "Bash(bash -n scripts/persona-por-telefono.sh)",
-      "Bash(chmod +x scripts/db_truncate_all.py)"
+      "Bash(chmod +x scripts/db_truncate_all.py)",
+      "Bash(export POSTGRES_HOST=altaria.proxy.rlwy.net)",
+      "Bash(export POSTGRES_PORT=37033)",
+      "Bash(export POSTGRES_DB=railway)",
+      "Bash(export POSTGRES_USER=postgres)",
+      "Bash(export POSTGRES_PASSWORD=eVXzOcSzzGHiJsJbtLFgwHOXKbNPujHN)",
+      "Bash(.venv/bin/python -)",
+      "Bash(grep -iA3 \"C21\")",
+      "Bash(POSTGRES_HOST=hayabusa.proxy.rlwy.net POSTGRES_PORT=35005 POSTGRES_DB=railway POSTGRES_USER=postgres POSTGRES_PASSWORD=VejSAjfiHlgvtgxeSmqwdAbHsrSROqOz APP_ENV=development uv run alembic upgrade head)",
+      "Bash(POSTGRES_HOST=altaria.proxy.rlwy.net POSTGRES_PORT=42586 POSTGRES_DB=railway POSTGRES_USER=postgres POSTGRES_PASSWORD=KWLiggCXZiTstCpHUljWDYoaOxZBorPr APP_ENV=development uv run alembic upgrade head)",
+      "Bash(set -e)"
     ]
   }
 }

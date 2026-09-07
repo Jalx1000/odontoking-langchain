@@ -285,6 +285,44 @@ async def _resolve_person(client: httpx.AsyncClient, wa_id: str, nombre: Optiona
     return data.get("id") if isinstance(data, dict) else None
 
 
+async def _set_person_edad(
+    client: httpx.AsyncClient, person_id: int, edad: Any, nombre: Optional[str], wa_id: str
+) -> None:
+    """Guarda la edad en el atributo custom `edad` (Persons/text) del contacto vía PUT.
+
+    Krayin PUT reemplaza la persona, así que re-enviamos su nombre/contact_numbers/emails/organización
+    (leídos con un GET) para no borrarlos, más el code `edad`. Best-effort: el caller envuelve en try.
+    """
+    edad_int = _to_int(edad)
+    if edad_int is None:
+        return
+    current: dict[str, Any] = {}
+    try:
+        resp = await _request(client, "GET", f"/api/v1/contacts/persons/{person_id}")
+        data = _data(resp)
+        if isinstance(data, dict):
+            current = data
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kohlberg_person_fetch_for_edad_failed", person_id=person_id, error=str(e))
+
+    numbers = current.get("contact_numbers")
+    if not (isinstance(numbers, list) and numbers):
+        numbers = [{"value": wa_id, "label": "work"}] if wa_id else []
+    body: dict[str, Any] = {
+        "name": current.get("name") or (nombre or "").strip() or _PLACEHOLDER_NAME,
+        "contact_numbers": numbers,
+        "entity_type": "persons",
+        "edad": str(edad_int),  # atributo custom (code `edad`, tipo text)
+    }
+    emails = current.get("emails")
+    if isinstance(emails, list) and emails:
+        body["emails"] = emails
+    org = current.get("organization_id")
+    if org:
+        body["organization_id"] = org
+    await _request(client, "PUT", f"/api/v1/contacts/persons/{person_id}", json=body)
+
+
 async def _get_lead(client: httpx.AsyncClient, lead_id: int) -> Optional[dict[str, Any]]:
     """Fetch a lead by id, or None on 404/failure (best-effort)."""
     try:
@@ -941,6 +979,14 @@ async def registrar_pedido(
             person_id = person_ctx
             if person_id is None:
                 person_id = await _resolve_person(client, _ctx_wa_id(config), nombre)
+
+            # Guarda la edad en el contacto (atributo custom `edad`). Best-effort: no debe romper el pedido.
+            if person_id and edad_del_cliente is not None:
+                try:
+                    await _set_person_edad(client, person_id, edad_del_cliente, nombre, _ctx_wa_id(config))
+                    log.info("kohlberg_person_edad_set", person_id=person_id, edad=_to_int(edad_del_cliente))
+                except Exception as e:  # noqa: BLE001
+                    log.warning("registrar_pedido_edad_update_failed", person_id=person_id, error=str(e))
 
             # ONE full-object write does everything: product lines (inline), lead_value, the city's
             # pipeline + stage (Confirmado on confirm, else No atendido) and the city's sales rep as
