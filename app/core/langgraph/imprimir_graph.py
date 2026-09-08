@@ -32,10 +32,14 @@ from pydantic import SecretStr
 from app.core.config import settings
 from app.core.langgraph.tools.crm import (
     _phone_ask_allowed,
+    buscar_productos,
     crear_quote,
     derivar_a_asesor,
+    enviar_material,
+    ficha_producto,
     get_person_leads,
     guardar_telefono_contacto,
+    mostrar_opciones,
     mover_lead_por_ciudad,
     register_cotizacion,
     registrar_consulta_postventa,
@@ -56,6 +60,11 @@ _IMPRIMIR_TOOLS = [
     get_person_leads,
     guardar_telefono_contacto,
     derivar_a_asesor,
+    # Material de productos por WhatsApp (fotos, fichas, enlaces) + menús tocables.
+    buscar_productos,
+    ficha_producto,
+    enviar_material,
+    mostrar_opciones,
 ]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "imprimir.md")

@@ -1022,3 +1022,271 @@ async def guardar_telefono_contacto(
         # 422 / empty: the number was not saved — the model should re-ask once if attempts remain.
         result["repreguntar"] = True
     return json.dumps(result, ensure_ascii=False)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Material de productos por WhatsApp (fotos, fichas técnicas, enlaces) + opciones
+# tocables. Endpoints ya desplegados; ver langchain-herramientas-material-producto.md.
+#
+# La idea que gobierna el diseño: el agente pide "3 imágenes del SKU X"; el CRM
+# decide QUÉ archivos, en qué orden y por qué vía. Las rutas/URLs de los archivos
+# NUNCA pasan por el modelo — sólo maneja el `sku` (público, ya aparece en las
+# cotizaciones) y ve CUÁNTOS adjuntos hay de cada tipo.
+#
+# Sin tenacity a propósito: reintentar el POST de /media o /interactive puede
+# DUPLICAR el envío al cliente, y ningún error de estos endpoints mejora
+# reintentando. Todos los errores se devuelven como TEXTO, nunca como excepción:
+# una excepción corta el turno y el cliente se queda sin respuesta.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_PRODUCTOS_TIMEOUT = 20.0
+_WHATSAPP_MAX_OPCIONES = 10  # techo de Meta para filas de lista (el CRM también lo valida)
+
+
+def _es_json(resp: httpx.Response) -> bool:
+    return resp.headers.get("content-type", "").startswith("application/json")
+
+
+def _mensaje_error(resp: httpx.Response, fallback: str) -> str:
+    """Return a client-facing message for a failed productos/whatsapp call.
+
+    401 y 5xx son fallas de infraestructura que el agente no puede resolver, pero sí puede avisar en vez
+    de quedarse mudo. Cuando el CRM manda un `message` (ya redactado en español), se prefiere ese.
+    """
+    logger.warning("crm_productos_http_error", status=resp.status_code, url=str(resp.url))
+    if resp.status_code == 401:
+        return "El CRM rechazó las credenciales. Avisá al equipo técnico."
+    mensaje = resp.json().get("message", "") if _es_json(resp) else ""
+    return mensaje or fallback
+
+
+@tool
+async def buscar_productos(busqueda: str) -> str:
+    """Busca productos del catálogo que tengan material para enviar (fotos, fichas, enlaces).
+
+    Devuelve el SKU, nombre, precio y cuántos adjuntos de cada tipo (imagen, documento, enlace) tiene
+    cada producto. Solo aparecen productos que SÍ tienen material: si un producto no está en la lista,
+    no hay nada que mandar. Úsala ANTES de ofrecerle o prometerle fotos o fichas al cliente.
+
+    Args:
+        busqueda: Texto a buscar en el nombre o el SKU del producto.
+    """
+    async with httpx.AsyncClient(timeout=_PRODUCTOS_TIMEOUT) as http:
+        resp = await http.get(
+            f"{_BASE}/api/v1/productos/catalogo",
+            params={"q": busqueda, "limit": 10},
+            headers=_HEADERS,
+        )
+
+    if resp.status_code != 200:
+        return _mensaje_error(resp, "No pude consultar el catálogo de material.")
+
+    productos = _data(resp)
+    if not isinstance(productos, list) or not productos:
+        return f"No hay productos con material que coincidan con «{busqueda}»."
+
+    return "\n".join(
+        "{sku} — {nombre} (Bs {precio}) · imágenes: {imagen}, documentos: {documento}, enlaces: {enlace}".format(
+            sku=p["sku"],
+            nombre=p["nombre"],
+            precio=p["precio"],
+            **p["adjuntos"],
+        )
+        for p in productos
+    )
+
+
+@tool
+async def ficha_producto(sku: str) -> str:
+    """Devuelve la descripción y las características técnicas de un producto del catálogo.
+
+    Úsala para describirle el producto al cliente con datos reales en vez de improvisar.
+
+    Args:
+        sku: SKU exacto del producto, tal como lo devolvió buscar_productos.
+    """
+    async with httpx.AsyncClient(timeout=_PRODUCTOS_TIMEOUT) as http:
+        resp = await http.get(f"{_BASE}/api/v1/productos/catalogo/{sku}", headers=_HEADERS)
+
+    if resp.status_code == 404:
+        mensaje = resp.json().get("message", "") if _es_json(resp) else ""
+        return mensaje or f"No existe un producto con el SKU {sku}."
+
+    if resp.status_code != 200:
+        return _mensaje_error(resp, "No pude consultar la ficha del producto.")
+
+    d = _data(resp)
+
+    lineas = [f"{d['sku']} — {d['nombre']}", f"Precio: Bs {d['precio']}"]
+
+    if d.get("descripcion"):
+        lineas.append(d["descripcion"])
+
+    # `caracteristicas` es SIEMPRE un objeto, nunca una lista. Vacío es {}.
+    for etiqueta, valor in (d.get("caracteristicas") or {}).items():
+        lineas.append(f"{etiqueta}: {valor}")
+
+    adj = d["adjuntos"]
+    lineas.append(
+        f"Material disponible — imágenes: {adj['imagen']}, "
+        f"documentos: {adj['documento']}, enlaces: {adj['enlace']}"
+    )
+
+    return "\n".join(lineas)
+
+
+@tool
+async def enviar_material(
+    sku: str,
+    tipo: str,
+    cantidad: int = 3,
+    *,
+    config: RunnableConfig,
+) -> str:
+    """Envía al cliente por WhatsApp el material de un producto.
+
+    El CRM elige qué archivos y en qué orden (la portada primero). Los envía SIN pie de foto a
+    propósito: tu descripción va como un mensaje de texto aparte, DESPUÉS de que salió el material.
+    No manejas ids: el conversation_id viene del contexto.
+
+    Args:
+        sku: SKU del producto cuyo material se envía.
+        tipo: "imagen", "documento" o "enlace".
+        cantidad: Cuántos enviar. 3 por defecto; el CRM no acepta más de 10.
+        config: Interno; lo inyecta el sistema. No lo pases.
+    """
+    conversation_id = _ctx_conversation_id(config)
+    if not conversation_id:
+        # Falla de wiring, no del modelo: sin conversación no hay a quién mandarle nada.
+        logger.error("crm_enviar_material_sin_conversation_id", sku=sku)
+        return "No hay una conversación activa para enviar material. Avisá al equipo técnico."
+
+    async with httpx.AsyncClient(timeout=_PRODUCTOS_TIMEOUT) as http:
+        resp = await http.post(
+            f"{_BASE}/api/v1/productos/conversations/{conversation_id}/media",
+            json={"sku": sku, "tipo": tipo, "cantidad": cantidad},
+            headers=_HEADERS,
+        )
+
+    if resp.status_code == 200:
+        d = resp.json()
+        logger.info("crm_enviar_material_ok", sku=d.get("sku", sku), enviados=d.get("enviados"))
+        return (
+            f"Enviados {d.get('enviados')} archivo(s) de {d.get('sku', sku)}. "
+            "Ahora mandá tu descripción como texto, en un mensaje aparte."
+        )
+
+    # Todos los errores de acá son definitivos para este turno; se devuelven como texto.
+    mensaje = resp.json().get("message", "") if _es_json(resp) else ""
+
+    if resp.status_code == 409:
+        logger.info("crm_enviar_material_derivada", conversation_id=conversation_id)
+        return "STOP: la conversación fue derivada a un asesor humano. No respondas nada más."
+
+    if resp.status_code == 404:
+        return mensaje or f"El producto {sku} no tiene material de tipo {tipo}."
+
+    if resp.status_code == 422:
+        return mensaje or "No se pudo enviar el material por una restricción de WhatsApp."
+
+    return _mensaje_error(resp, "No se pudo enviar el material.")
+
+
+@tool
+async def mostrar_opciones(
+    cuerpo: str,
+    opciones: list[dict],
+    encabezado: Optional[str] = None,
+    pie: Optional[str] = None,
+    texto_boton_lista: str = "Ver opciones",
+    *,
+    config: RunnableConfig,
+) -> str:
+    """Muestra opciones tocables al cliente en vez de pedirle que escriba.
+
+    Úsala cuando el cliente tiene que elegir entre alternativas concretas: qué material quiere ver,
+    cuál de varios productos, confirmar sí o no. Le evita tipear un SKU o un número, que es donde más
+    se equivocan. Cuando toca una opción, su respuesta llega como un mensaje normal con el título en el
+    texto y el id en `selection.id`. Rutea SIEMPRE por el id.
+
+    Args:
+        cuerpo: La pregunta o el texto que acompaña las opciones. Máximo 1024.
+        opciones: Lista de dicts con `id` (lo que vuelve al elegir, elígelo tú y que sea informativo,
+            ej. "fotos:CM_00015"), `titulo` (lo que el cliente ve, máximo 20 caracteres) y
+            `descripcion` opcional (máximo 72, solo se muestra si son más de 3 opciones).
+        encabezado: Título breve arriba del cuerpo. Máximo 60.
+        pie: Texto chico abajo. Máximo 60.
+        texto_boton_lista: Solo se usa si hay más de 3 opciones. Máximo 20.
+        config: Interno; lo inyecta el sistema. No lo pases.
+    """
+    conversation_id = _ctx_conversation_id(config)
+    if not conversation_id:
+        logger.error("crm_mostrar_opciones_sin_conversation_id")
+        return "No hay una conversación activa. Avisá al equipo técnico."
+
+    if not opciones:
+        return "No se puede mostrar un menú sin opciones."
+
+    # El formato lo elige el código, no el modelo: WhatsApp admite 3 botones, y de 4 a 10 exige lista.
+    if len(opciones) > _WHATSAPP_MAX_OPCIONES:
+        return (
+            f"Son {len(opciones)} opciones y WhatsApp admite {_WHATSAPP_MAX_OPCIONES} como máximo. "
+            "Mostrá las más relevantes o preguntá algo que acote la búsqueda."
+        )
+
+    es_lista = len(opciones) > 3
+    cuerpo_envio: dict[str, Any] = {
+        "format": "list" if es_lista else "button",
+        "body": cuerpo,
+        "header": encabezado,
+        "footer": pie,
+    }
+
+    if es_lista:
+        cuerpo_envio["list_button"] = texto_boton_lista
+        cuerpo_envio["sections"] = [
+            {
+                "rows": [
+                    {
+                        k: v
+                        for k, v in (
+                            ("id", str(o["id"])),
+                            ("title", o["titulo"]),
+                            ("description", o.get("descripcion")),
+                        )
+                        if v
+                    }
+                    for o in opciones
+                ]
+            }
+        ]
+    else:
+        # Los botones no admiten descripción: WhatsApp solo muestra el título.
+        cuerpo_envio["buttons"] = [{"id": str(o["id"]), "title": o["titulo"]} for o in opciones]
+
+    async with httpx.AsyncClient(timeout=_PRODUCTOS_TIMEOUT) as http:
+        resp = await http.post(
+            f"{_BASE}/api/v1/whatsapp/conversations/{conversation_id}/interactive",
+            json=cuerpo_envio,
+            headers=_HEADERS,
+        )
+
+    if resp.status_code == 200:
+        logger.info("crm_mostrar_opciones_ok", formato=cuerpo_envio["format"], n=len(opciones))
+        return f"Opciones enviadas ({len(opciones)}). Esperá que el cliente elija antes de seguir."
+
+    if resp.status_code == 409:
+        return "STOP: la conversación fue derivada a un asesor humano. No respondas nada más."
+
+    if resp.status_code == 501:
+        # El canal activo no tiene botones (Kommo, Messenger). No es reintentable.
+        return (
+            "Este canal no admite botones. Mandá las opciones como texto numerado "
+            "y pedile al cliente que responda con el número."
+        )
+
+    if resp.status_code == 422:
+        # El CRM valida los límites de Meta y nombra el campo que falló.
+        return _mensaje_error(resp, "Las opciones no cumplen los límites de WhatsApp.")
+
+    return _mensaje_error(resp, "No se pudieron enviar las opciones.")
