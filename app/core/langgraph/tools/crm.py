@@ -1060,6 +1060,19 @@ def _mensaje_error(resp: httpx.Response, fallback: str) -> str:
     return mensaje or fallback
 
 
+def _precio_desc(item: dict[str, Any]) -> str:
+    """Precio legible de un producto del catálogo, sin exponer 0 en los de precio variable.
+
+    Cuando el producto se cotiza por variante, la API devuelve `precio: null` (su columna de precio
+    fijo vale 0 a propósito): mostrarlo como monto haría que el agente ofrezca productos a 0 Bs. En ese
+    caso se indica que el precio sale de `precio_producto`, no un número inventado.
+    """
+    if item.get("precio_variable") or item.get("precio") is None:
+        ejes = ", ".join(item.get("ejes_precio") or [])
+        return f"precio por variante — ejes: {ejes} (usá precio_producto)" if ejes else "precio por variante (usá precio_producto)"
+    return f"Bs {item['precio']}"
+
+
 @tool
 async def buscar_productos(busqueda: str) -> str:
     """Busca productos del catálogo que tengan material para enviar (fotos, fichas, enlaces).
@@ -1086,10 +1099,10 @@ async def buscar_productos(busqueda: str) -> str:
         return f"No hay productos con material que coincidan con «{busqueda}»."
 
     return "\n".join(
-        "{sku} — {nombre} (Bs {precio}) · imágenes: {imagen}, documentos: {documento}, enlaces: {enlace}".format(
+        "{sku} — {nombre} ({precio}) · imágenes: {imagen}, documentos: {documento}, enlaces: {enlace}".format(
             sku=p["sku"],
             nombre=p["nombre"],
-            precio=p["precio"],
+            precio=_precio_desc(p),
             **p["adjuntos"],
         )
         for p in productos
@@ -1117,7 +1130,7 @@ async def ficha_producto(sku: str) -> str:
 
     d = _data(resp)
 
-    lineas = [f"{d['sku']} — {d['nombre']}", f"Precio: Bs {d['precio']}"]
+    lineas = [f"{d['sku']} — {d['nombre']}", f"Precio: {_precio_desc(d)}"]
 
     if d.get("descripcion"):
         lineas.append(d["descripcion"])
@@ -1133,6 +1146,51 @@ async def ficha_producto(sku: str) -> str:
     )
 
     return "\n".join(lineas)
+
+
+@tool
+async def precio_producto(sku: str, criterios: dict[str, str]) -> str:
+    """Devuelve el precio de un producto según los criterios (variante) que eligió el cliente.
+
+    El precio ya NO es fijo: depende de lo que el cliente elija y lo resuelve el CRM. Llamá SIEMPRE a
+    esta herramienta antes de decir un precio, para cualquier producto (si es de precio fijo, igual te lo
+    devuelve). Nunca calcules, estimes, redondeés ni repitas un precio de memoria.
+
+    Devuelve un JSON con `estado`:
+    - "resuelto": una sola combinación coincide → tenés el precio. Ojo: si la fila trae
+      `cotiza: false`, NO la cotices — hacé lo que diga su `nota` (p. ej. derivar).
+    - "ambiguo": faltan ejes → preguntá al cliente EXACTAMENTE los de `faltan`, ofreciéndole los
+      valores de `opciones`, y volvé a llamar. No elijas la variante por él.
+    - "sin_datos": la combinación no está cargada → derivá, no ofrezcas la más parecida.
+
+    Args:
+        sku: SKU del producto, tal como lo devolvió buscar_productos.
+        criterios: Los ejes que el cliente ya definió, ej. {"Tamaño": "50 L", "Canal": "HORECA"}. Mandá
+            todo lo que hayas entendido; un criterio que no sea un eje del producto se ignora. Ignora
+            acentos/mayúsculas/espacios pero NO acepta sinónimos ("50 litros" no coincide con "50 L").
+    """
+    async with httpx.AsyncClient(timeout=_PRODUCTOS_TIMEOUT) as http:
+        resp = await http.post(
+            f"{_BASE}/api/v1/productos/catalogo/{sku}/precio",
+            json={"criterios": criterios or {}},
+            headers=_HEADERS,
+        )
+
+    if resp.status_code == 404:
+        mensaje = resp.json().get("message", "") if _es_json(resp) else ""
+        return mensaje or f"No existe un producto con el SKU {sku}."
+
+    if resp.status_code != 200:
+        return _mensaje_error(resp, "No pude consultar el precio.")
+
+    payload = resp.json()
+    logger.info(
+        "crm_precio_producto_ok",
+        sku=sku,
+        estado=payload.get("estado") if isinstance(payload, dict) else None,
+    )
+    # Passthrough del JSON: el prompt (Regla 0) dice cómo reaccionar según `estado`/`cotiza`/`faltan`.
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @tool

@@ -20,7 +20,7 @@ from app.core.langgraph.tools.crm import find_person_by_wa_id, request_handoff, 
 from app.core.limiter import limiter
 from app.core.logging import logger
 from app.schemas import Message
-from app.schemas.crm import CrmWebhookEvent
+from app.schemas.crm import CrmMessage, CrmWebhookEvent
 from app.services.gateway import Destination, get_gateway
 from app.services.message_buffer import message_buffer_service
 
@@ -89,6 +89,23 @@ async def _resolve_contact_name(phone: str) -> str | None:
     except Exception as e:
         logger.warning("crm_contact_name_lookup_failed", wa_id=phone, error=str(e))
         return None
+
+
+def _extract_agent_text(message: CrmMessage) -> str | None:
+    """Text to feed the agent for this inbound message, or None to ignore it.
+
+    Interactive replies (button/list taps) route by `message.selection.id` — the stable contract the
+    agent set when it built the menu with mostrar_opciones — NEVER by the title (copy that changes with
+    every prompt edit and carries emojis). The title rides along only as human context. A message that
+    is neither text nor a usable interactive tap (audio, image, location) has no agent text yet → None
+    (ignored for now; giving those a spoken "no puedo escuchar audios…" reply is a separate follow-up).
+    """
+    if message.type == "interactive" and message.selection and message.selection.id:
+        title = (message.selection.title or "").strip()
+        return f"[opción elegida: {message.selection.id}] {title}".strip()
+    if message.type == "text":
+        return (message.text or "").strip() or None
+    return None
 
 
 def _make_process_fn(dest: Destination, patient_ctx: dict):
@@ -193,8 +210,8 @@ async def receive_crm_event(request: Request) -> dict:
         )
         return {"status": "ignored"}
 
-    text = (event.message.text or "").strip()
-    if event.message.type != "text" or not text:
+    text = _extract_agent_text(event.message)
+    if not text:
         logger.info("crm_unsupported_message", msg_type=event.message.type)
         return {"status": "ignored"}
 

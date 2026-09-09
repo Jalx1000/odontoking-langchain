@@ -4,9 +4,9 @@ from typing import cast
 
 from fastapi import Request
 
-from app.api.v1.crm import _verify_agent_token
+from app.api.v1.crm import _extract_agent_text, _verify_agent_token
 from app.core.config import settings
-from app.schemas.crm import CrmWebhookEvent
+from app.schemas.crm import CrmMessage, CrmSelection, CrmWebhookEvent
 
 # The example event from integracion-gateway-whatsapp.md §3.
 _DOC_EVENT = {
@@ -80,6 +80,53 @@ class TestCrmWebhookEvent:
         payload = {**_DOC_EVENT, "gateway": "instagram"}
         ev = CrmWebhookEvent.model_validate(payload)
         assert ev.gateway == "instagram"
+
+
+class TestInteractiveReply:
+    """A button/list tap must reach the agent, routed by selection.id (never the title)."""
+
+    _TAP = {
+        "id": 987,
+        "type": "interactive",
+        "text": "🟢 Bolsas Magia Verde",
+        "selection": {"id": "prod_bolsas", "title": "🟢 Bolsas Magia Verde"},
+        "timestamp": "2026-09-09T17:40:12-04:00",
+    }
+
+    def test_selection_parses(self):
+        """The interactive payload parses and exposes selection.id."""
+        ev = CrmWebhookEvent.model_validate({**_DOC_EVENT, "message": self._TAP})
+        assert ev.message.type == "interactive"
+        assert ev.message.selection is not None
+        assert ev.message.selection.id == "prod_bolsas"
+
+    def test_tap_is_not_dropped_and_routes_by_id(self):
+        """The tap yields agent text (not ignored) and that text carries the selection.id."""
+        text = _extract_agent_text(
+            CrmMessage(type="interactive", text="🟢 Bolsas Magia Verde",
+                       selection=CrmSelection(id="prod_bolsas", title="🟢 Bolsas Magia Verde"))
+        )
+        assert text is not None            # NOT dropped (this was the prod bug)
+        assert "prod_bolsas" in text       # routes by id
+
+    def test_editing_the_title_does_not_change_the_routing_key(self):
+        """Button copy is unstable; the id is the contract. Same id → same routing key."""
+        a = _extract_agent_text(CrmMessage(type="interactive", text="A", selection=CrmSelection(id="prod_bolsas", title="A")))
+        b = _extract_agent_text(CrmMessage(type="interactive", text="B", selection=CrmSelection(id="prod_bolsas", title="B")))
+        assert a is not None and b is not None
+        assert "prod_bolsas" in a and "prod_bolsas" in b
+
+    def test_plain_text_still_extracted(self):
+        """A normal text message is unaffected."""
+        assert _extract_agent_text(CrmMessage(type="text", text="hola")) == "hola"
+
+    def test_unsupported_type_ignored(self):
+        """audio/image/location have no agent text yet → ignored (separate follow-up)."""
+        assert _extract_agent_text(CrmMessage(type="audio", text=None)) is None
+
+    def test_interactive_without_usable_id_ignored(self):
+        """Defensive: interactive without a selection.id is ignored — never routed by the title."""
+        assert _extract_agent_text(CrmMessage(type="interactive", text="hola", selection=None)) is None
 
 
 class TestVerifyAgentToken:

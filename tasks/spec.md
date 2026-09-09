@@ -1,7 +1,12 @@
 # Spec: Menús tocables end-to-end (ingesta de respuestas interactivas del CRM)
 
-> **Fase 1 (Specify) — pendiente de aprobación.** No avanzar a Plan/Tasks/Implement hasta que el
-> humano revise y apruebe este documento.
+> **✅ IMPLEMENTADO (2026-09-09).** El CRM confirmó el payload y las decisiones; el fix está aplicado.
+> - Payload real del toque: `message.type == "interactive"`, `message.text` = título, `message.selection = {id, title}`.
+> - Ruteo por `selection.id` (nunca el título). El id llega al agente como `"[opción elegida: <id>] <título>"`.
+> - Cambios: `CrmSelection` + `selection` en `app/schemas/crm.py`; helper `_extract_agent_text` en
+>   `app/api/v1/crm.py`; tests en `tests/unit/test_crm_webhook.py`.
+> - **Follow-up pendiente (otro ticket):** audio/foto/ubicación siguen descartándose en silencio;
+>   responder "no puedo escuchar audios, ¿me lo escribís?" en vez de ignorar.
 
 ## Alcance (supuesto — corregir si hace falta)
 **Enabler only.** Este spec cubre SOLO hacer que el toque de un botón/lista haga el viaje de ida y

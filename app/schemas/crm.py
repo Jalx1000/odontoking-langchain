@@ -32,6 +32,21 @@ class CrmContact(BaseModel):
     phone_prompt_exhausted: bool = False          # true = asked 3x already → stop asking
 
 
+class CrmSelection(BaseModel):
+    """The option the client tapped (button or list reply).
+
+    Present only when message.type == "interactive". `id` is the stable contract the agent set when it
+    built the menu via mostrar_opciones — routing keys off THIS, never off the (editable) title.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    # id is optional-by-safety: a malformed selection must never reject the WHOLE event (same policy as
+    # the null-phone/null-text fields). The router falls back to "ignore" when there is no usable id.
+    id: Optional[str] = None
+    title: Optional[str] = None
+
+
 class CrmMessage(BaseModel):
     """The inbound message that triggered the event."""
 
@@ -39,6 +54,7 @@ class CrmMessage(BaseModel):
     type: str = "text"
     text: Optional[str] = None
     timestamp: Optional[str] = None
+    selection: Optional[CrmSelection] = None  # only on type == "interactive" (button/list tap)
 
 
 class CrmHistoryItem(BaseModel):
