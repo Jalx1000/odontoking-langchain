@@ -50,7 +50,13 @@ async def _post_text(dest: Destination, text: str) -> None:
             return
         if not resp.is_success:
             logger.error("crm_reply_error", wa_id=dest.wa_id, status=resp.status_code, body=resp.text[:300])
-        resp.raise_for_status()
+            # 4xx = the conversation is gone/unreachable (e.g. a Messenger id that doesn't exist in the
+            # WhatsApp model → 404) — log and drop, never retry. Raising here turns one undeliverable
+            # reply into an error-reply that ALSO 404s AND an alert-email storm. 5xx = transient → raise
+            # so the CRM's retries can rescue it.
+            if resp.status_code >= 500:
+                resp.raise_for_status()
+            return
         logger.info("crm_text_sent", wa_id=dest.wa_id, conversation_id=dest.conversation_id, length=len(text))
 
 

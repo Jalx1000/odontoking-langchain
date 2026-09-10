@@ -120,6 +120,22 @@ class TestCrmGateway:
         await CrmGateway().send_text(Destination(wa_id="+591700", reply_url="https://crm.test/x"), "hola")
 
     @pytest.mark.asyncio
+    async def test_404_does_not_raise(self, monkeypatch):
+        """A 404 (Messenger conversation absent from the WhatsApp model) is logged and dropped, not raised.
+
+        Raising would turn one undeliverable reply into a crm_agent_error + an error-reply that also 404s
+        + an alert-email timeout storm (seen in prod on conversation 2263).
+        """
+        monkeypatch.setattr(settings, "CRM_API_KEY", "k")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, json={"message": "No query results for model [Conversation] 2263"})
+
+        _mock_crm_client(monkeypatch, handler)
+        # Must not raise.
+        await CrmGateway().send_response(Destination(wa_id="conv:2263", reply_url="https://crm.test/x"), "hola")
+
+    @pytest.mark.asyncio
     async def test_empty_text_is_not_posted(self, monkeypatch):
         """An empty/blank reply (turn ended by sending a menu out-of-band) makes NO HTTP call."""
         monkeypatch.setattr(settings, "CRM_API_KEY", "k")
