@@ -241,7 +241,15 @@ class ImprimirAgent:
             outputs = [await _execute(tool_calls[0])]
         else:
             outputs = list(await asyncio.gather(*[_execute(tc) for tc in tool_calls]))
-        return Command(update={"messages": outputs}, goto="chat")
+        # Un mostrar_opciones EXITOSO ya mandó el menú al cliente (out-of-band): terminar el turno acá para
+        # que el modelo NO encadene otro menú/paso en la misma vuelta (el bug donde mandaba PASO 1 y PASO 2
+        # juntos). El turno se reanuda cuando el cliente toca una opción. Si el menú NO salió (501 sin
+        # botones, 409, error), seguir a chat para que el modelo mande el fallback en texto.
+        menu_enviado = any(
+            o.name == "mostrar_opciones" and str(o.content).startswith("Opciones enviadas")
+            for o in outputs
+        )
+        return Command(update={"messages": outputs}, goto=END if menu_enviado else "chat")
 
     async def create_graph(self) -> Optional[CompiledStateGraph]:
         """Build and compile the LangGraph state machine, creating the Postgres checkpointer."""
@@ -252,7 +260,7 @@ class ImprimirAgent:
                 builder.add_node(
                     "tool_call",
                     self._tool_call,
-                    destinations=("chat",),
+                    destinations=("chat", END),
                     retry_policy=RetryPolicy(max_attempts=3),
                 )
                 builder.set_entry_point("chat")
@@ -360,6 +368,17 @@ class ImprimirAgent:
                                 await handoff_callback({"reason": reason})
                             except Exception as e:  # noqa: BLE001
                                 logger.warning("imprimir_handoff_callback_failed", wa_id=wa_id, error=str(e))
+
+            # Si el turno terminó enviando un menú interactivo (mostrar_opciones), el cliente ya lo recibió
+            # out-of-band: no hay texto que mandar. Devolver "" (el gateway se saltea el envío vacío) para
+            # no encimar un mensaje al menú.
+            msgs = response.get("messages", [])
+            last_tool = next((m for m in reversed(msgs) if isinstance(m, ToolMessage)), None)
+            if last_tool is not None and last_tool.name == "mostrar_opciones" and str(
+                last_tool.content
+            ).startswith("Opciones enviadas"):
+                logger.info("imprimir_turn_ended_on_menu", wa_id=wa_id)
+                return ""
 
             ai_messages = [
                 m for m in response.get("messages", []) if isinstance(m, AIMessage) and m.content

@@ -108,6 +108,33 @@ class TestCrmGateway:
             await CrmGateway().send_text(Destination(wa_id="+591700", reply_url="https://crm.test/x"), "hola")
 
     @pytest.mark.asyncio
+    async def test_409_duplicate_does_not_raise(self, monkeypatch):
+        """A 409 (agent duplicated a just-sent interactive menu as text) is swallowed, not raised."""
+        monkeypatch.setattr(settings, "CRM_API_KEY", "k")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(409, json={"message": "Ya enviaste ese mensaje con botones."})
+
+        _mock_crm_client(monkeypatch, handler)
+        # Must not raise: the menu is already delivered.
+        await CrmGateway().send_text(Destination(wa_id="+591700", reply_url="https://crm.test/x"), "hola")
+
+    @pytest.mark.asyncio
+    async def test_empty_text_is_not_posted(self, monkeypatch):
+        """An empty/blank reply (turn ended by sending a menu out-of-band) makes NO HTTP call."""
+        monkeypatch.setattr(settings, "CRM_API_KEY", "k")
+        called = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            called["n"] += 1
+            return httpx.Response(200, json={})
+
+        _mock_crm_client(monkeypatch, handler)
+        await CrmGateway().send_response(Destination(wa_id="+591700", reply_url="https://crm.test/x"), "")
+        await CrmGateway().send_response(Destination(wa_id="+591700", reply_url="https://crm.test/x"), "   ")
+        assert called["n"] == 0
+
+    @pytest.mark.asyncio
     async def test_typing_and_mark_read_are_noops(self, monkeypatch):
         """The CRM has no typing / read-receipt API, so those are no-ops (no HTTP call)."""
         called = {"n": 0}

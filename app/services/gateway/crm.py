@@ -24,6 +24,11 @@ def _reply_url(dest: Destination) -> str:
 
 async def _post_text(dest: Destination, text: str) -> None:
     """POST the reply text to the CRM. Handle the WhatsApp 24h-window 422 gracefully."""
+    if not text or not text.strip():
+        # Nothing to send — e.g. the turn ended by sending an interactive menu out-of-band. Sending an
+        # empty body would 422 or surface a blank message on top of the menu.
+        logger.debug("crm_reply_empty_skipped", wa_id=dest.wa_id)
+        return
     url = _reply_url(dest)
     payload = {"text": text}
     headers = {
