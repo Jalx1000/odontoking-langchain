@@ -38,6 +38,11 @@ async def _post_text(dest: Destination, text: str) -> None:
         if resp.status_code == 422:
             logger.warning("crm_reply_rejected", wa_id=dest.wa_id, status=422, body=resp.text[:300])
             return
+        # 409 = the agent duplicated as text a menu the CRM already sent with buttons moments ago. It is
+        # already delivered — treat as done, never retry (the prompt is the real fix; this is the guard).
+        if resp.status_code == 409:
+            logger.info("crm_reply_duplicate_skipped", wa_id=dest.wa_id, body=resp.text[:200])
+            return
         if not resp.is_success:
             logger.error("crm_reply_error", wa_id=dest.wa_id, status=resp.status_code, body=resp.text[:300])
         resp.raise_for_status()

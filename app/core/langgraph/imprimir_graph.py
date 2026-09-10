@@ -33,6 +33,7 @@ from app.core.config import settings
 from app.core.langgraph.tools.crm import (
     _phone_ask_allowed,
     buscar_productos,
+    crear_cotizacion,
     derivar_a_asesor,
     enviar_material,
     ficha_producto,
@@ -48,17 +49,18 @@ from app.utils import dump_messages, process_llm_response
 
 PostgresConnPool = AsyncConnectionPool[AsyncConnection[DictRow]]
 
-# Solo las 7 tools del protocolo de venta Imprimir. Una tool bindeada que el prompt no menciona es una
-# tool que el modelo va a encontrar una excusa para llamar; mover_lead_por_ciudad / crear_quote /
+# Solo las 8 tools del protocolo de venta Imprimir. Una tool bindeada que el prompt no menciona es una
+# tool que el modelo va a encontrar una excusa para llamar; mover_lead_por_ciudad /
 # registrar_consulta_postventa / get_person_leads / guardar_telefono_contacto quedaron fuera a propósito.
 _IMPRIMIR_TOOLS = [
     buscar_productos,      # qué hay y con qué ejes se cotiza
     ficha_producto,        # describir con datos reales
-    precio_producto,       # el ÚNICO origen de un precio
+    precio_producto,       # el ÚNICO origen de un precio (pasale cantidad para el total)
     enviar_material,       # fotos y documentos
     mostrar_opciones,      # menús de los PASOS 1, 2 y 3
-    register_cotizacion,   # PASO 5, acción 1: persistir la oportunidad
-    derivar_a_asesor,      # PASO 5, acción 3: handoff a un asesor humano
+    register_cotizacion,   # PASO 5, acción 1: datos de empresa en el contacto/lead
+    crear_cotizacion,      # PASO 5, acción 2: la cotización con producto, variante y cantidad
+    derivar_a_asesor,      # PASO 5, acción 4: handoff a un asesor humano
 ]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "imprimir.md")

@@ -120,9 +120,14 @@ class TestInteractiveReply:
         """A normal text message is unaffected."""
         assert _extract_agent_text(CrmMessage(type="text", text="hola")) == "hola"
 
-    def test_unsupported_type_ignored(self):
-        """audio/image/location have no agent text yet → ignored (separate follow-up)."""
-        assert _extract_agent_text(CrmMessage(type="audio", text=None)) is None
+    def test_unreadable_media_forwarded_not_dropped(self):
+        """audio/image/etc. reach the agent with a placeholder so it can ask for text (not silence)."""
+        out = _extract_agent_text(CrmMessage(type="audio", text=None))
+        assert out is not None and "audio" in out
+
+    def test_reaction_ignored(self):
+        """An emoji reaction asks nothing → None (the prompt says don't reply)."""
+        assert _extract_agent_text(CrmMessage(type="reaction", text="👍")) is None
 
     def test_interactive_without_usable_id_ignored(self):
         """Defensive: interactive without a selection.id is ignored — never routed by the title."""

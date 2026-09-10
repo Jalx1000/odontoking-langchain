@@ -1,24 +1,19 @@
-"""Unit tests for IMPRIMIR city routing + quote helpers (agent-quotes.md §1–§2).
+"""Unit tests for IMPRIMIR city routing, lead guards, and the cotizacion tool.
 
-Pure logic only — no live CRM calls. The HTTP-touching helper (_initial_stage_id) is exercised
-against a stubbed _request.
+Pure logic + the cotizacion tool with a stubbed httpx client — no live CRM calls.
 """
 
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from app.core.langgraph.tools import crm
 from app.core.langgraph.tools.crm import (
-    _build_quote_items,
-    _build_quote_line_items,
-    _ctx_contact_name,
     _ctx_ids,
     _initial_stage_id,
     _is_unattended,
     _lead_stage_name,
     _resolve_pipeline_id,
-    crear_quote,
+    crear_cotizacion,
 )
 
 
@@ -70,103 +65,82 @@ class TestUnattendedGuard:
         assert _lead_stage_name({}) == ""
 
 
-class TestQuoteItems:
-    """_build_quote_items normalises items and forces prices to 0 (agent never quotes money)."""
+def _patch_httpx(monkeypatch, *, status=201, payload=None):
+    """Patch crm.httpx.AsyncClient with a fake that records the POST; returns the capture dict."""
+    box = {"payload": payload if payload is not None else {"quote_id": 1}, "url": None, "json": None}
 
-    def test_prices_forced_to_zero_and_sku_generated(self):
-        """Prices/totals are 0 and a sku is derived from the name when absent."""
-        out = _build_quote_items([{"name": "Bolsa Pouch", "quantity": 5000}])
-        assert out == [{"sku": "BOLSA-POUCH", "name": "Bolsa Pouch", "quantity": 5000, "price": 0, "total": 0}]
+    class _Resp:
+        status_code = status
+        headers = {"content-type": "application/json"}
 
-    def test_provided_sku_kept_and_bad_quantity_defaults(self):
-        """An explicit sku is kept; an unparseable quantity defaults to 1."""
-        out = _build_quote_items([{"name": "Tarjetas", "quantity": "x", "sku": "TARJ-500"}])
-        assert out[0]["sku"] == "TARJ-500"
-        assert out[0]["quantity"] == 1
+        def json(self):
+            return box["payload"]
 
-    def test_empty_and_nameless_entries_skipped(self):
-        """Entries without a name (and non-dicts) are dropped; empty input yields []."""
-        assert _build_quote_items([{"name": "", "quantity": 1}, "junk", 3]) == []
-        assert _build_quote_items([]) == []
-        assert _build_quote_items(None) == []
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            box["url"] = url
+            box["json"] = json
+            return _Resp()
+
+    monkeypatch.setattr(crm.httpx, "AsyncClient", _Client)
+    return box
 
 
-class TestQuoteLineItemsValidation:
-    """_build_quote_line_items validates items against the catalog and attaches product_id."""
+class TestCrearCotizacion:
+    """crear_cotizacion POSTs to the productos cotizacion endpoint; conversation_id comes from config."""
 
     @pytest.mark.asyncio
-    async def test_attaches_product_id_when_resolved(self, monkeypatch):
-        """A recognised product gets its product_id; prices stay 0."""
-        async def fake_resolve(_client, name):
-            return 12 if name == "Bolsa Pouch" else None
-        monkeypatch.setattr(crm, "_resolve_product_id", fake_resolve)
-        lines, unresolved = await _build_quote_line_items(
-            None, [{"name": "Bolsa Pouch", "quantity": 5000}]
+    async def test_no_conversation_id_returns_text_error(self):
+        """No conversation_id → graceful text error, never a crash (the LLM never passes ids)."""
+        out = await crear_cotizacion.ainvoke({"sku": "CM_00002", "cantidad": 25}, {"metadata": {}})
+        assert "No hay una conversación activa" in out
+
+    @pytest.mark.asyncio
+    async def test_posts_expected_body_and_returns_payload(self, monkeypatch):
+        """POSTs sku/cantidad/criterios/nit to /conversations/{id}/cotizacion and returns the JSON."""
+        box = _patch_httpx(monkeypatch, status=201, payload={"quote_id": 114, "total": 325})
+        out = await crear_cotizacion.ainvoke(
+            {
+                "sku": "CM_00002", "cantidad": 25,
+                "criterios": {"Tamaño": "50 L", "Canal": "HORECA", "Zona": "Santa Cruz"},
+                "nit": "1234567019", "empresa": "El Fogón",
+            },
+            {"metadata": {"conversation_id": 123}},
         )
-        assert lines[0]["product_id"] == 12
-        assert lines[0]["price"] == 0 and lines[0]["total"] == 0
-        assert unresolved == []
+        assert box["url"].endswith("/api/v1/productos/conversations/123/cotizacion")
+        assert box["json"] == {
+            "sku": "CM_00002", "cantidad": 25,
+            "criterios": {"Tamaño": "50 L", "Canal": "HORECA", "Zona": "Santa Cruz"},
+            "nit": "1234567019", "empresa": "El Fogón",
+        }
+        assert '"quote_id": 114' in out
 
     @pytest.mark.asyncio
-    async def test_reports_unresolved_products(self, monkeypatch):
-        """A name that matches no catalog product is kept but reported as unresolved."""
-        async def fake_resolve(_client, name):
-            return 12 if name == "Bolsa Pouch" else None
-        monkeypatch.setattr(crm, "_resolve_product_id", fake_resolve)
-        lines, unresolved = await _build_quote_line_items(
-            None, [{"name": "Bolsa Pouch", "quantity": 10}, {"name": "Producto Inventado", "quantity": 1}]
+    async def test_price_and_total_are_never_sent(self, monkeypatch):
+        """The agent must never send a price/total — the CRM resolves them (a model error stays cheap)."""
+        box = _patch_httpx(monkeypatch)
+        await crear_cotizacion.ainvoke(
+            {"sku": "CM_00002", "cantidad": 25}, {"metadata": {"conversation_id": 9}}
         )
-        assert len(lines) == 2
-        assert "product_id" not in lines[1]
-        assert unresolved == ["Producto Inventado"]
+        assert "precio" not in box["json"] and "total" not in box["json"]
 
-
-class TestQuoteSubject:
-    """The quote subject is the company name, with a graceful fallback.
-
-    With no company it falls back to the contact name from context, never to a generic
-    'Cotización WhatsApp' (the bug seen on Messenger with individual clients).
-    """
-
-    def test_ctx_contact_name_prefers_registered(self):
-        """Registered name wins over the WhatsApp/Messenger profile name."""
-        assert _ctx_contact_name({"metadata": {"nombre_registrado": "Acme", "nombre_whatsapp": "Ana"}}) == "Acme"
-        assert _ctx_contact_name({"metadata": {"nombre_whatsapp": "Ana"}}) == "Ana"
-        assert _ctx_contact_name({"metadata": {}}) is None
-
-    def _post_capture(self, monkeypatch):
-        """Stub product validation + the POST, capturing the request body."""
-        monkeypatch.setattr(
-            crm, "_build_quote_line_items",
-            AsyncMock(return_value=([{"sku": "BANNER", "name": "Banner", "quantity": 1, "price": 0, "total": 0}], [])),
+    @pytest.mark.asyncio
+    async def test_422_surfaces_crm_message(self, monkeypatch):
+        """A 422 (missing axis / unassociated contact) surfaces the CRM message verbatim to the model."""
+        _patch_httpx(monkeypatch, status=422, payload={"message": "Faltan datos para cotizar: Canal."})
+        out = await crear_cotizacion.ainvoke(
+            {"sku": "CM_00002", "cantidad": 25}, {"metadata": {"conversation_id": 123}}
         )
-        captured: dict = {}
-
-        async def fake_request(_client, _method, path, **kw):
-            captured["path"] = path
-            captured["json"] = kw.get("json")
-            return MagicMock(json=MagicMock(return_value={"data": {"id": 55}}))
-
-        monkeypatch.setattr(crm, "_request", fake_request)
-        return captured
-
-    @pytest.mark.asyncio
-    async def test_empty_company_uses_contact_name(self, monkeypatch):
-        """No company passed → subject becomes the contact name from context (not 'Cotización WhatsApp')."""
-        captured = self._post_capture(monkeypatch)
-        cfg = {"metadata": {"conversation_id": 1, "lead_id": 890, "person_id": 412, "nombre_whatsapp": "Ana Pérez"}}
-        out = await crear_quote.ainvoke({"nombre_empresa": "", "items": [{"name": "Banner", "quantity": 1}]}, cfg)
-        assert captured["json"]["subject"] == "Ana Pérez"
-        assert captured["path"] == "/api/v1/quotes"
-        assert '"quote_id": 55' in out
-
-    @pytest.mark.asyncio
-    async def test_company_used_as_subject_when_present(self, monkeypatch):
-        """A company name is used verbatim as the subject."""
-        captured = self._post_capture(monkeypatch)
-        cfg = {"metadata": {"conversation_id": 1, "person_id": 412, "nombre_whatsapp": "Ana Pérez"}}
-        await crear_quote.ainvoke({"nombre_empresa": "Imprenta Sur SRL", "items": [{"name": "Banner", "quantity": 1}]}, cfg)
-        assert captured["json"]["subject"] == "Imprenta Sur SRL"
+        assert "Faltan datos para cotizar: Canal." in out
 
 
 class TestCtxIds:

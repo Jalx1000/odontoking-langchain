@@ -94,18 +94,27 @@ async def _resolve_contact_name(phone: str) -> str | None:
 def _extract_agent_text(message: CrmMessage) -> str | None:
     """Text to feed the agent for this inbound message, or None to ignore it.
 
-    Interactive replies (button/list taps) route by `message.selection.id` — the stable contract the
-    agent set when it built the menu with mostrar_opciones — NEVER by the title (copy that changes with
-    every prompt edit and carries emojis). The title rides along only as human context. A message that
-    is neither text nor a usable interactive tap (audio, image, location) has no agent text yet → None
-    (ignored for now; giving those a spoken "no puedo escuchar audios…" reply is a separate follow-up).
+    - Interactive replies (button/list taps) route by `message.selection.id` — the stable contract the
+      agent set with mostrar_opciones — NEVER by the title (copy that changes and carries emojis). The
+      title rides along only as human context. A malformed interactive with no usable id is dropped
+      (we will not route by the title).
+    - Plain text goes through as-is.
+    - Reactions (emoji on a message) → None: the client asks nothing and the prompt says not to reply,
+      so the agent is never invoked.
+    - Anything else the client sends that we can't read (audio, image, document, location, sticker…) is
+      forwarded with a placeholder naming its type, so the agent asks them to write it — never ignored
+      in silence (the prompt's "AUDIOS E IMÁGENES" rule).
     """
-    if message.type == "interactive" and message.selection and message.selection.id:
-        title = (message.selection.title or "").strip()
-        return f"[opción elegida: {message.selection.id}] {title}".strip()
+    if message.type == "interactive":
+        if message.selection and message.selection.id:
+            title = (message.selection.title or "").strip()
+            return f"[opción elegida: {message.selection.id}] {title}".strip()
+        return None
     if message.type == "text":
         return (message.text or "").strip() or None
-    return None
+    if message.type == "reaction":
+        return None
+    return f"[el cliente envió un mensaje de tipo '{message.type}' que no puedo procesar]"
 
 
 def _make_process_fn(dest: Destination, patient_ctx: dict):

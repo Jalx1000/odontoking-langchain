@@ -22,7 +22,6 @@ Bearer token.
 """
 
 import json
-from datetime import date, timedelta
 from typing import Any, Optional
 
 import httpx
@@ -187,18 +186,6 @@ def _ctx_conversation_id(config: Optional[RunnableConfig]) -> Optional[int]:
     return metadata.get("conversation_id")
 
 
-def _ctx_contact_name(config: Optional[RunnableConfig]) -> Optional[str]:
-    """Best contact name from metadata (registered name, else WhatsApp/Messenger profile), or None.
-
-    Used as the quote subject when there's no company — an individual client (common on Messenger)
-    must not end up with a generic "Cotización WhatsApp" subject.
-    """
-    metadata = (config or {}).get("metadata") or {}
-    name = metadata.get("nombre_registrado") or metadata.get("nombre_whatsapp")
-    clean = name.strip() if isinstance(name, str) else ""
-    return clean or None
-
-
 def _phone_ask_allowed(
     phone_required: bool, phone_prompt_state: Optional[str], phone_prompt_exhausted: bool
 ) -> bool:
@@ -273,30 +260,6 @@ def _is_unattended(lead: dict[str, Any]) -> bool:
     return name in ("", _UNATTENDED_STAGE_NAME)
 
 
-def _build_quote_items(items: Any) -> list[dict[str, Any]]:
-    """Normalise LLM-provided items into Krayin quote line items with prices at 0.
-
-    Each line needs name, quantity, price, total. Prices are 0 by policy — the agent does not quote
-    money; the advisor prices the document later. Entries without a name are skipped. `items` must
-    end up non-empty: QuoteRepository::create() does foreach($data['items']) with no guard, so an
-    empty/absent items 500s instead of 422 (agent-quotes.md §2).
-    """
-    out: list[dict[str, Any]] = []
-    for it in items if isinstance(items, list) else []:
-        if not isinstance(it, dict):
-            continue
-        name = str(it.get("name") or "").strip()
-        if not name:
-            continue
-        try:
-            qty = int(it.get("quantity") or 1)
-        except (TypeError, ValueError):
-            qty = 1
-        sku = str(it.get("sku") or "").strip() or name.upper().replace(" ", "-")[:40]
-        out.append({"sku": sku, "name": name, "quantity": max(qty, 1), "price": 0, "total": 0})
-    return out
-
-
 async def _resolve_product_id(client: httpx.AsyncClient, name: str) -> Optional[int]:
     """Resolve a product_id by exact catalog name: live search first, static map as fallback."""
     clean = (name or "").strip()
@@ -316,27 +279,6 @@ async def _resolve_product_id(client: httpx.AsyncClient, name: str) -> Optional[
     except Exception as e:  # noqa: BLE001 — search is best-effort; fall back to the static map
         logger.warning("imprimir_product_search_failed", producto=clean[:60], error=str(e))
     return _PRODUCT_IDS.get(clean.lower())
-
-
-async def _build_quote_line_items(
-    client: httpx.AsyncClient, items: Any
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Build quote line items and VALIDATE each against the catalog (the items ARE the products).
-
-    Every line is resolved to a real catalog product_id (live search + static map). Resolved products
-    carry their product_id so the quote line links to the catalog; names that don't match any product
-    are still kept (nothing is silently dropped) but returned separately so the caller can surface
-    them. Prices/totals stay 0 — the advisor prices the document later.
-    """
-    line_items = _build_quote_items(items)
-    unresolved: list[str] = []
-    for line in line_items:
-        product_id = await _resolve_product_id(client, line["name"])
-        if product_id is None:
-            unresolved.append(line["name"])
-        else:
-            line["product_id"] = product_id
-    return line_items, unresolved
 
 
 # ── Internal step functions (share one httpx client; NOT exposed as tools) ─────
@@ -811,80 +753,78 @@ async def mover_lead_por_ciudad(ciudad: str, config: RunnableConfig) -> str:
 
 
 @tool
-async def crear_quote(
-    nombre_empresa: str,
-    items: list[dict],
+async def crear_cotizacion(
+    sku: str,
+    cantidad: int,
+    criterios: Optional[dict[str, str]] = None,
+    nit: Optional[str] = None,
+    empresa: Optional[str] = None,
+    notas: Optional[str] = None,
+    *,
     config: RunnableConfig,
-    descripcion: Optional[str] = None,
 ) -> str:
-    """Crea una cotización formal (quote) en el CRM, ligada a la oportunidad del cliente.
+    """Deja la cotización pre-elaborada en el CRM al cerrar la toma de interés.
 
-    Una sola llamada, y SOLO después de que el cliente confirme el resumen con un "sí". El ASUNTO de
-    la cotización es el nombre de la empresa. Los ítems SON los productos: usá el nombre EXACTO del
-    catálogo en cada uno (se validan contra el catálogo). Los PRECIOS van en 0 — el asesor pone los
-    precios reales; nunca inventes montos. No manejas ids: person_id y lead_id vienen del contexto.
+    Llamala en el PASO 5, ANTES del mensaje de despedida y ANTES de derivar. No calcules el precio ni el
+    total: los pone el CRM desde la misma lista que contestó precio_producto. No manejas ids: el
+    conversation_id viene del contexto.
 
     Args:
-        nombre_empresa: Nombre de la empresa del cliente — va como asunto de la cotización.
-        items: Lista de ítems (productos), al menos uno. Cada ítem: {"name": str, "quantity": int}.
-            `name` debe ser el nombre EXACTO del producto del catálogo.
+        sku: SKU del producto, tal como lo devolvió buscar_productos.
+        cantidad: Cuántas unidades lleva el cliente.
+        criterios: La variante elegida, igual que en precio_producto (ej. {"Tamaño": "50 L", "Canal": …}).
+        nit: NIT del cliente, tal como lo dictó, sin corregirlo. Viaja también a la ficha del contacto.
+        empresa: Razón social.
+        notas: Lo que dijo el cliente y no entra en ningún campo.
         config: Interno; lo inyecta el sistema. No lo pases.
-        descripcion: Detalle opcional en texto libre.
     """
-    lead_id, person_id = _ctx_ids(config)
-    log = logger.bind(lead_id=lead_id, person_id=person_id)
-    if not person_id:
-        # §4.3: person_id must exist and must never be invented — without it we cannot create.
-        log.warning("crear_quote_no_person_id")
-        return json.dumps({"quote_id": None, "error": "no_person_id"}, ensure_ascii=False)
-    # Subject is the company name; for an individual (no company — common on Messenger) fall back to
-    # the contact's name from context, never to a generic "Cotización WhatsApp".
-    subject = (nombre_empresa or "").strip() or _ctx_contact_name(config) or "Cotización"
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            # Items ARE the products — validate each against the catalog and attach its product_id.
-            line_items, unresolved = await _build_quote_line_items(client, items)
-            if not line_items:
-                log.warning("crear_quote_no_items")
-                return json.dumps({"quote_id": None, "error": "no_items"}, ensure_ascii=False)
-            if unresolved:
-                log.warning("crear_quote_unresolved_products", productos=unresolved[:10])
-            body: dict[str, Any] = {
-                "subject": subject,
-                "person_id": person_id,
-                "user_id": _OWNER_USER_ID,
-                # §2: the 7-day expiry lives in the web form, not the API — compute it or the POST 422s.
-                "expired_at": (date.today() + timedelta(days=7)).isoformat(),
-                "sub_total": 0,
-                "grand_total": 0,
-                "items": line_items,
-            }
-            if lead_id:
-                # Always link the quote to the lead — it ties the quote to the city pipeline, and the
-                # PUT path detaches the lead when lead_id is omitted (§3), so keep it present.
-                body["lead_id"] = lead_id
-            if descripcion and descripcion.strip():
-                body["description"] = descripcion.strip()
-            resp = await _request(client, "POST", "/api/v1/quotes", json=body)
-            data = _data(resp)
-            quote_id = data.get("id") if isinstance(data, dict) else None
-            log.info(
-                "imprimir_quote_created",
-                quote_id=quote_id,
-                items=len(line_items),
-                productos_no_reconocidos=len(unresolved),
-            )
-            result: dict[str, Any] = {"quote_id": quote_id, "solicitud": f"#{quote_id}"}
-            if unresolved:
-                result["productos_no_reconocidos"] = unresolved
-            return json.dumps(result, ensure_ascii=False)
-    except httpx.HTTPStatusError as e:
-        body_text = e.response.text[:400] if e.response is not None else ""
-        log.exception("crear_quote_http_error", status=e.response.status_code, body=body_text)
-        return json.dumps({"quote_id": None, "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
-    except Exception as e:
-        log.exception("crear_quote_failed", error=str(e))
-        return json.dumps({"quote_id": None, "error": str(e) or type(e).__name__}, ensure_ascii=False)
+    conversation_id = _ctx_conversation_id(config)
+    if not conversation_id:
+        logger.error("crm_crear_cotizacion_sin_conversation_id", sku=sku)
+        return "No hay una conversación activa para crear la cotización. Avisá al equipo técnico."
+
+    # El precio y el total NO se mandan a propósito: los resuelve el CRM desde la lista del catálogo.
+    body: dict[str, Any] = {"sku": sku, "cantidad": cantidad}
+    if criterios:
+        body["criterios"] = criterios
+    if nit:
+        body["nit"] = nit
+    if empresa:
+        body["empresa"] = empresa
+    if notas:
+        body["notas"] = notas
+
+    async with httpx.AsyncClient(timeout=_PRODUCTOS_TIMEOUT) as http:
+        resp = await http.post(
+            f"{_BASE}/api/v1/productos/conversations/{conversation_id}/cotizacion",
+            json=body,
+            headers=_HEADERS,
+        )
+
+    if resp.status_code in (200, 201):
+        payload = resp.json()
+        logger.info(
+            "crm_crear_cotizacion_ok",
+            sku=sku,
+            quote_id=payload.get("quote_id") if isinstance(payload, dict) else None,
+        )
+        return json.dumps(payload, ensure_ascii=False)
+
+    mensaje = resp.json().get("message", "") if _es_json(resp) else ""
+
+    if resp.status_code == 409:
+        logger.info("crm_crear_cotizacion_derivada", conversation_id=conversation_id)
+        return "STOP: la conversación fue derivada a un asesor humano. No respondas nada más."
+
+    if resp.status_code == 422:
+        # El CRM nombra qué falta (un eje, o "contacto sin asociar") o por qué no se cotiza (la nota de
+        # la fila: distribuidor/hogar → derivar). Se lo pasamos tal cual al modelo.
+        return mensaje or "No se pudo crear la cotización con los datos recibidos."
+
+    if resp.status_code == 404:
+        return mensaje or f"No existe un producto con el SKU {sku}."
+
+    return _mensaje_error(resp, "No se pudo crear la cotización.")
 
 
 @tool
@@ -1149,12 +1089,18 @@ async def ficha_producto(sku: str) -> str:
 
 
 @tool
-async def precio_producto(sku: str, criterios: dict[str, str]) -> str:
+async def precio_producto(
+    sku: str, criterios: dict[str, str], cantidad: Optional[int] = None
+) -> str:
     """Devuelve el precio de un producto según los criterios (variante) que eligió el cliente.
 
     El precio ya NO es fijo: depende de lo que el cliente elija y lo resuelve el CRM. Llamá SIEMPRE a
     esta herramienta antes de decir un precio, para cualquier producto (si es de precio fijo, igual te lo
     devuelve). Nunca calcules, estimes, redondeés ni repitas un precio de memoria.
+
+    Para dar un TOTAL, pasá `cantidad`: la respuesta trae un bloque `cantidad` con `total`,
+    `cumple_minimo`, `minimo` y `minimo_texto`. Decí el precio unitario con su `unidad` (p. ej.
+    "Bs 14,00 por pack de 10 u") y el `total`; si `cumple_minimo` es false, avisá el mínimo y no cierres.
 
     Devuelve un JSON con `estado`:
     - "resuelto": una sola combinación coincide → tenés el precio. Ojo: si la fila trae
@@ -1168,11 +1114,15 @@ async def precio_producto(sku: str, criterios: dict[str, str]) -> str:
         criterios: Los ejes que el cliente ya definió, ej. {"Tamaño": "50 L", "Canal": "HORECA"}. Mandá
             todo lo que hayas entendido; un criterio que no sea un eje del producto se ignora. Ignora
             acentos/mayúsculas/espacios pero NO acepta sinónimos ("50 litros" no coincide con "50 L").
+        cantidad: Unidades pedidas, para obtener el total y validar el mínimo. Omitila si aún no la sabés.
     """
+    body: dict[str, Any] = {"criterios": criterios or {}}
+    if cantidad is not None:
+        body["cantidad"] = cantidad
     async with httpx.AsyncClient(timeout=_PRODUCTOS_TIMEOUT) as http:
         resp = await http.post(
             f"{_BASE}/api/v1/productos/catalogo/{sku}/precio",
-            json={"criterios": criterios or {}},
+            json=body,
             headers=_HEADERS,
         )
 
