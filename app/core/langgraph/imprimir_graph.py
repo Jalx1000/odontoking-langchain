@@ -132,6 +132,23 @@ def _persist_messages(wa_id: str, messages: list[BaseMessage]) -> None:
             logger.warning("chat_history_save_failed", wa_id=wa_id, error=str(e))
 
 
+def _ended_on_menu(messages: list) -> bool:
+    """True if THIS turn ended by sending an interactive menu — then there's nothing to send on top.
+
+    Look at the LAST message only, never "the last ToolMessage in history": a text turn that FOLLOWS a
+    menu turn still carries the old menu ToolMessage earlier in the checkpointed history, and scanning
+    back to it would wrongly suppress the current text reply — the bug that left the bot silent after a
+    selection. The graph routes tool_call→END right after a successful mostrar_opciones, so on a menu
+    turn the very last message IS that ToolMessage; on a text turn it is the AIMessage.
+    """
+    last = messages[-1] if messages else None
+    return (
+        isinstance(last, ToolMessage)
+        and last.name == "mostrar_opciones"
+        and str(last.content).startswith("Opciones enviadas")
+    )
+
+
 async def _persist_messages_async(wa_id: str, messages: list[BaseMessage]) -> None:
     await asyncio.to_thread(_persist_messages, wa_id, messages)
 
@@ -369,14 +386,10 @@ class ImprimirAgent:
                             except Exception as e:  # noqa: BLE001
                                 logger.warning("imprimir_handoff_callback_failed", wa_id=wa_id, error=str(e))
 
-            # Si el turno terminó enviando un menú interactivo (mostrar_opciones), el cliente ya lo recibió
-            # out-of-band: no hay texto que mandar. Devolver "" (el gateway se saltea el envío vacío) para
-            # no encimar un mensaje al menú.
-            msgs = response.get("messages", [])
-            last_tool = next((m for m in reversed(msgs) if isinstance(m, ToolMessage)), None)
-            if last_tool is not None and last_tool.name == "mostrar_opciones" and str(
-                last_tool.content
-            ).startswith("Opciones enviadas"):
+            # Si ESTE turno terminó enviando un menú interactivo (mostrar_opciones), el cliente ya lo
+            # recibió out-of-band: no hay texto que mandar. Devolver "" (el gateway se saltea el envío
+            # vacío) para no encimar un mensaje al menú. Mira SOLO el último mensaje del turno.
+            if _ended_on_menu(response.get("messages", [])):
                 logger.info("imprimir_turn_ended_on_menu", wa_id=wa_id)
                 return ""
 
