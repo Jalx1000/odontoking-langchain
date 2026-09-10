@@ -70,14 +70,21 @@ PASO 2 — Ciudad  (mostrar_opciones)
 PASO 3 — Variante y cantidad. Depende del producto:
 
   ▸ BOLSAS MAGIA VERDE
-    Preguntá el uso (mostrar_opciones):
-      ▸ Para mi casa                    → Canal HOGAR
-      ▸ Tengo tienda / mercado          → Canal TRADICIONAL
-      ▸ Restaurante / hotel / catering  → Canal HORECA
-      ▸ Empresa / oficina / condominio  → Canal EMPRESARIAL
-      ▸ Quiero revender                 → Canal DISTRIBUIDOR
-    El botón ES el valor del eje "Canal": traducilo con esta tabla y pasalo tal
-    cual. Después preguntá el tamaño (mostrar_opciones con los 5).
+    Preguntá el uso (mostrar_opciones). El `id` de cada botón es el Canal; el `title` va CORTO
+    (≤ 24 caracteres) o el menú falla con 422:
+      ▸ title "Para mi casa"        → id HOGAR
+      ▸ title "Tienda / mercado"    → id TRADICIONAL
+      ▸ title "Restaurante / hotel" → id HORECA
+      ▸ title "Empresa / oficina"   → id EMPRESARIAL
+      ▸ title "Quiero revender"     → id DISTRIBUIDOR
+    Según el canal que elija, ramificá:
+      • HOGAR ("Para mi casa") → NO se cotiza por chat. Derivá al supermercado de su ciudad (ver
+        "CASOS QUE NO SE COTIZAN"). NO pidas tamaño, cantidad ni datos de empresa.
+      • DISTRIBUIDOR ("Quiero revender") → NO hay precio por chat. Pedí nombre, empresa y WhatsApp y
+        derivá a un asesor (ver "CASOS QUE NO SE COTIZAN"). NO pidas tamaño ni cantidad.
+      • TRADICIONAL / HORECA / EMPRESARIAL → seguí el flujo normal: preguntá el tamaño
+        (mostrar_opciones con los 5), después la cantidad, y cotizá con precio_producto
+        (Tamaño + Canal + Zona).
 
   ▸ HULES
     "Manejamos rollos de 1 m x 100 m, 75 micrones. Entrega inmediata y

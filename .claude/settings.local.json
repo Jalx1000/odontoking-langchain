@@ -79,7 +79,8 @@
       "Bash(PYTHONPATH=/Users/javier/proyectos/02.agentes/01.odontoking uv run python /tmp/test_handoff.py)",
       "Bash(railway whoami *)",
       "Bash(git fetch *)",
-      "Bash(awk '{print \"detrás de origin:\", $1, \"| adelante de origin \\(sin pushear\\):\", $2}')"
+      "Bash(awk '{print \"detrás de origin:\", $1, \"| adelante de origin \\(sin pushear\\):\", $2}')",
+      "Bash(grep -n \"^async def crear_cotizacion\\\\|^@tool\\\\|_MAGIA_VERDE\\\\|def _marca\\\\|body: dict\\\\[str, Any\\\\] = {\\\\\"sku\\\\\"\" app/core/langgraph/tools/crm.py)"
     ]
   }
 }

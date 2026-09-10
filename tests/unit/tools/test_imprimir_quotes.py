@@ -12,6 +12,7 @@ from app.core.langgraph.tools.crm import (
     _initial_stage_id,
     _is_unattended,
     _lead_stage_name,
+    _marca_de_sku,
     _resolve_pipeline_id,
     crear_cotizacion,
 )
@@ -118,11 +119,20 @@ class TestCrearCotizacion:
         )
         assert box["url"].endswith("/api/v1/productos/conversations/123/cotizacion")
         assert box["json"] == {
-            "sku": "CM_00002", "cantidad": 25,
+            "sku": "CM_00002", "cantidad": 25, "marca": "Magia Verde",
             "criterios": {"Tamaño": "50 L", "Canal": "HORECA", "Zona": "Santa Cruz"},
             "nit": "1234567019", "empresa": "El Fogón",
         }
         assert '"quote_id": 114' in out
+
+    @pytest.mark.asyncio
+    async def test_non_bag_sku_gets_imprimir_marca(self, monkeypatch):
+        """A non-bag product (e.g. Tapas) carries marca 'Imprimir' in the quote body."""
+        box = _patch_httpx(monkeypatch)
+        await crear_cotizacion.ainvoke(
+            {"sku": "CM_00004", "cantidad": 30}, {"metadata": {"conversation_id": 9}}
+        )
+        assert box["json"]["marca"] == "Imprimir"
 
     @pytest.mark.asyncio
     async def test_price_and_total_are_never_sent(self, monkeypatch):
@@ -141,6 +151,22 @@ class TestCrearCotizacion:
             {"sku": "CM_00002", "cantidad": 25}, {"metadata": {"conversation_id": 123}}
         )
         assert "Faltan datos para cotizar: Canal." in out
+
+
+class TestMarcaDeSku:
+    """_marca_de_sku: bags are 'Magia Verde', the rest of the catalog is 'Imprimir'."""
+
+    def test_bags_are_magia_verde(self):
+        """CM_00002 (Bolsas Magia Verde) → 'Magia Verde' (case/space-insensitive)."""
+        assert _marca_de_sku("CM_00002") == "Magia Verde"
+        assert _marca_de_sku("  cm_00002 ") == "Magia Verde"
+
+    def test_everything_else_is_imprimir(self):
+        """Hules/Stretch/Tapas and any unknown SKU → 'Imprimir'."""
+        assert _marca_de_sku("CM_00003") == "Imprimir"
+        assert _marca_de_sku("CM_00001") == "Imprimir"
+        assert _marca_de_sku("CM_00004") == "Imprimir"
+        assert _marca_de_sku("") == "Imprimir"
 
 
 class TestCtxIds:

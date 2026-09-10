@@ -752,6 +752,16 @@ async def mover_lead_por_ciudad(ciudad: str, config: RunnableConfig) -> str:
         return json.dumps({"moved": False, "error": str(e) or type(e).__name__}, ensure_ascii=False)
 
 
+# Marca (custom attribute del quote): las bolsas Magia Verde llevan marca "Magia Verde"; el resto del
+# catálogo (hules, stretch film, tapas) es "Imprimir". Se deriva del SKU en código — no lo decide el LLM.
+_MAGIA_VERDE_SKUS = {"CM_00002"}
+
+
+def _marca_de_sku(sku: str) -> str:
+    """Return the quote brand for a SKU: 'Magia Verde' for the bags, 'Imprimir' for everything else."""
+    return "Magia Verde" if (sku or "").strip().upper() in _MAGIA_VERDE_SKUS else "Imprimir"
+
+
 @tool
 async def crear_cotizacion(
     sku: str,
@@ -784,7 +794,8 @@ async def crear_cotizacion(
         return "No hay una conversación activa para crear la cotización. Avisá al equipo técnico."
 
     # El precio y el total NO se mandan a propósito: los resuelve el CRM desde la lista del catálogo.
-    body: dict[str, Any] = {"sku": sku, "cantidad": cantidad}
+    # `marca` es el custom attribute de la cotización: "Magia Verde" para bolsas, "Imprimir" para el resto.
+    body: dict[str, Any] = {"sku": sku, "cantidad": cantidad, "marca": _marca_de_sku(sku)}
     if criterios:
         body["criterios"] = criterios
     if nit:
