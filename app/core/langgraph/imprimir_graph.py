@@ -149,6 +149,22 @@ def _ended_on_menu(messages: list) -> bool:
     )
 
 
+def _already_derived(messages: list) -> bool:
+    """True if this thread already handed off to a human (a prior derivar_a_asesor tool call).
+
+    Once derived, a human owns the conversation and the agent must stay silent — even if more messages
+    arrive as new turns. The CRM's 'pooled/requested' handoff does NOT turn ai_enabled off, so the
+    events keep coming; this guard (checked against the checkpointed history BEFORE the new message is
+    added) stops the agent from re-answering and starting a second parallel flow (the prod bug where it
+    kept quoting after deriving).
+    """
+    for m in messages:
+        for tc in getattr(m, "tool_calls", None) or []:
+            if tc.get("name") == "derivar_a_asesor":
+                return True
+    return False
+
+
 async def _persist_messages_async(wa_id: str, messages: list[BaseMessage]) -> None:
     await asyncio.to_thread(_persist_messages, wa_id, messages)
 
@@ -352,7 +368,15 @@ class ImprimirAgent:
 
         try:
             state = await graph.aget_state(config)
-            existing_count = len(state.values.get("messages", [])) if state and state.values else 0
+            prior_messages = state.values.get("messages", []) if state and state.values else []
+            existing_count = len(prior_messages)
+
+            # Already handed off to a human on a previous turn → stay silent. A pooled/requested handoff
+            # does not turn ai_enabled off on the CRM side, so more messages keep arriving; without this
+            # the agent starts a second parallel flow after deriving (seen in prod).
+            if _already_derived(prior_messages):
+                logger.info("imprimir_skip_after_handoff", wa_id=wa_id)
+                return ""
 
             if state and state.next:
                 logger.info("imprimir_resuming_graph", wa_id=wa_id)
