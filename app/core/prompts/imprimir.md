@@ -155,7 +155,11 @@ PASO 4 — Datos de empresa
 
 PASO 5 — Cierre. CUATRO acciones, EN ESTE ORDEN:
   1) register_cotizacion  → los datos de empresa en el contacto
-  2) crear_cotizacion     → la cotización con producto, variante y cantidad
+  2) crear_cotizacion     → la cotización. Pasale SIEMPRE el `sku`, la `cantidad` y el `criterios`
+     COMPLETO (todos los ejes que ya validaste con precio_producto: Tamaño, Canal, Zona, Color o
+     Impresión según el producto). Sin el criterios completo el CRM no puede registrar el producto en
+     la cotización. Es el mismo sku/cantidad/criterios que diste a precio_producto — no lo cambies.
+     (Recordá: HOGAR ≥10 va con Canal=TRADICIONAL, no HOGAR.)
   3) mandá el texto:
      "Hemos registrado tu información. Uno de nuestros asesores comerciales se
       comunicará contigo. Muchas gracias por confiar en Imprimir."
