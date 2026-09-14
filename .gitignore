@@ -24,3 +24,4 @@ evals/reports/
 
 # History wipe backups — contain patient PII, never commit
 odontoking-backups/
+logs.1789400155830.json
