@@ -39,6 +39,7 @@ from app.core.langgraph.tools.crm import (
     ficha_producto,
     mostrar_opciones,
     precio_producto,
+    quien_atiende,
     register_cotizacion,
 )
 from app.core.logging import logger
@@ -49,18 +50,19 @@ from app.utils import dump_messages, process_llm_response
 
 PostgresConnPool = AsyncConnectionPool[AsyncConnection[DictRow]]
 
-# Solo las 8 tools del protocolo de venta Imprimir. Una tool bindeada que el prompt no menciona es una
+# Solo las 9 tools del protocolo de venta Imprimir. Una tool bindeada que el prompt no menciona es una
 # tool que el modelo va a encontrar una excusa para llamar; mover_lead_por_ciudad /
 # registrar_consulta_postventa / get_person_leads / guardar_telefono_contacto quedaron fuera a propósito.
 _IMPRIMIR_TOOLS = [
     buscar_productos,      # qué hay y con qué ejes se cotiza
     ficha_producto,        # describir con datos reales
     precio_producto,       # el ÚNICO origen de un precio (pasale cantidad para el total)
+    quien_atiende,         # consultar el asesor por producto+ciudad, sin asignar
     enviar_material,       # fotos y documentos
     mostrar_opciones,      # menús de los PASOS 1, 2 y 3
     register_cotizacion,   # PASO 5, acción 1: datos de empresa en el contacto/lead
-    crear_cotizacion,      # PASO 5, acción 2: la cotización con producto, variante y cantidad
-    derivar_a_asesor,      # PASO 5, acción 4: handoff a un asesor humano
+    crear_cotizacion,      # PASO 5, acción 2: la cotización con producto, variante, cantidad y ciudad
+    derivar_a_asesor,      # PASO 5, acción 4: handoff a un asesor humano (con sku+ciudad)
 ]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "imprimir.md")
@@ -403,10 +405,14 @@ class ImprimirAgent:
                     tool_calls = getattr(m, "tool_calls", None) or []
                     for tc in tool_calls:
                         if tc.get("name") == "derivar_a_asesor":
-                            reason = str((tc.get("args") or {}).get("reason") or "").strip()
-                            logger.info("imprimir_handoff_signaled", wa_id=wa_id, reason=reason[:80])
+                            args = tc.get("args") or {}
+                            reason = str(args.get("reason") or "").strip()
+                            sku = (args.get("sku") or None) or None
+                            ciudad = (args.get("ciudad") or None) or None
+                            logger.info("imprimir_handoff_signaled", wa_id=wa_id, reason=reason[:80],
+                                        sku=sku, ciudad=ciudad)
                             try:
-                                await handoff_callback({"reason": reason})
+                                await handoff_callback({"reason": reason, "sku": sku, "ciudad": ciudad})
                             except Exception as e:  # noqa: BLE001
                                 logger.warning("imprimir_handoff_callback_failed", wa_id=wa_id, error=str(e))
 

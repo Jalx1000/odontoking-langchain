@@ -767,6 +767,7 @@ async def crear_cotizacion(
     sku: str,
     cantidad: int,
     criterios: Optional[dict[str, str]] = None,
+    ciudad: Optional[str] = None,
     nit: Optional[str] = None,
     empresa: Optional[str] = None,
     notas: Optional[str] = None,
@@ -779,10 +780,15 @@ async def crear_cotizacion(
     total: los pone el CRM desde la misma lista que contestó precio_producto. No manejas ids: el
     conversation_id viene del contexto.
 
+    La respuesta trae `asesor` (nombre, teléfono, horario) o null: el CRM lo asigna por producto y
+    ciudad. Usá ese nombre/horario en el texto de cierre (ver PASO 5); no inventes ni nombres ni teléfonos.
+
     Args:
         sku: SKU del producto, tal como lo devolvió buscar_productos.
         cantidad: Cuántas unidades lleva el cliente.
         criterios: La variante elegida, igual que en precio_producto (ej. {"Tamaño": "50 L", "Canal": …}).
+        ciudad: Ciudad REAL del cliente ("La Paz", "Cochabamba", "Tarija"…), no la Zona. Define qué asesor
+            atiende. Mandala SIEMPRE que la sepas.
         nit: NIT del cliente, tal como lo dictó, sin corregirlo. Viaja también a la ficha del contacto.
         empresa: Razón social.
         notas: Lo que dijo el cliente y no entra en ningún campo.
@@ -798,6 +804,8 @@ async def crear_cotizacion(
     body: dict[str, Any] = {"sku": sku, "cantidad": cantidad, "marca": _marca_de_sku(sku)}
     if criterios:
         body["criterios"] = criterios
+    if ciudad:
+        body["ciudad"] = ciudad
     if nit:
         body["nit"] = nit
     if empresa:
@@ -839,7 +847,9 @@ async def crear_cotizacion(
 
 
 @tool
-async def derivar_a_asesor(conversation_id: int, reason: str) -> str:
+async def derivar_a_asesor(
+    conversation_id: int, reason: str, sku: Optional[str] = None, ciudad: Optional[str] = None
+) -> str:
     """Deriva la conversación a un asesor humano del equipo de ventas.
 
     Úsala cuando el cliente pida explícitamente hablar con una persona/asesor/humano, cuando
@@ -857,28 +867,44 @@ async def derivar_a_asesor(conversation_id: int, reason: str) -> str:
         conversation_id: El conversation_id de esta conversación (está en el contexto).
         reason: Motivo en una frase, en español, para que el asesor entienda el contexto sin leer
             todo el chat. Ej: "Pide cotización de 5000 bolsas pouch con descuento por volumen".
+        sku: SKU del producto en cuestión, si lo hay. Con sku+ciudad el CRM deriva al asesor de turno
+            de ese producto y ciudad. Omitilo si el cliente no dijo qué producto quiere.
+        ciudad: Ciudad REAL del cliente ("La Paz", "Cochabamba"…), no la Zona. Mandala si la sabés.
     """
     # Pure signal: the actual POST /handoff is done by the caller AFTER the client notice is sent,
     # because once a conversation is derived the CRM 409s any further /messages.
-    return json.dumps({"status": "handoff_signaled", "reason": reason}, ensure_ascii=False)
+    return json.dumps(
+        {"status": "handoff_signaled", "reason": reason, "sku": sku, "ciudad": ciudad},
+        ensure_ascii=False,
+    )
 
 
-async def request_handoff(conversation_id: int, reason: str) -> dict:
+async def request_handoff(
+    conversation_id: int, reason: str, sku: Optional[str] = None, ciudad: Optional[str] = None
+) -> dict:
     """Derive a conversation to a human advisor: POST /whatsapp/conversations/{id}/handoff.
 
     Not a tool — the gateway calls this AFTER sending the client notice (once derived, the CRM 409s
     any further /messages, so order matters). Idempotent: a second call returns handoff.changed=false.
     Best-effort: logs and returns {} on failure, never raises. Uses the same Bearer token as the
     other CRM calls (verified: the route authenticates and 404s only on an unknown conversation).
+
+    With `sku`+`ciudad` the CRM routes to the round-robin advisor for that product+city (or the one who
+    already owns the contact); without them it routes as before (lead owner → contact owner → shared pool).
     """
     log = logger.bind(conversation_id=conversation_id)
+    req_body: dict[str, Any] = {"reason": reason}
+    if sku:
+        req_body["sku"] = sku
+    if ciudad:
+        req_body["ciudad"] = ciudad
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await _request(
                 client,
                 "POST",
                 f"/api/v1/whatsapp/conversations/{conversation_id}/handoff",
-                json={"reason": reason},
+                json=req_body,
             )
             payload = resp.json()
             handoff = payload.get("handoff", {}) if isinstance(payload, dict) else {}
@@ -1151,6 +1177,48 @@ async def precio_producto(
         estado=payload.get("estado") if isinstance(payload, dict) else None,
     )
     # Passthrough del JSON: el prompt (Regla 0) dice cómo reaccionar según `estado`/`cotiza`/`faltan`.
+    return json.dumps(payload, ensure_ascii=False)
+
+
+@tool
+async def quien_atiende(sku: str, ciudad: Optional[str] = None) -> str:
+    """Consulta qué asesor atiende un producto en una ciudad, SIN asignar nada (solo lectura).
+
+    Úsala cuando el cliente pregunta "¿con quién hablo?", "¿quién me atiende en La Paz?", o quiere
+    conocer al asesor antes de terminar el flujo. NO mueve el turno ni asigna: la asignación ocurre en
+    crear_cotizacion o derivar_a_asesor.
+
+    Devuelve JSON con `cobertura` ("local" | "nacional" | null), `horario`, `siguiente` (el asesor de
+    turno: nombre, teléfono, horario — o null si nadie atiende) y `responsables`. Nunca inventes un
+    asesor: si `siguiente` es null, decile al cliente que registrás su consulta igual y seguí el flujo.
+
+    Args:
+        sku: SKU del producto, tal como lo devolvió buscar_productos.
+        ciudad: Ciudad REAL del cliente ("La Paz", "Cochabamba"…), no la Zona. Opcional: sin ella
+            devuelve la cobertura nacional.
+    """
+    params: dict[str, str] = {"sku": sku}
+    if ciudad:
+        params["ciudad"] = ciudad
+    async with httpx.AsyncClient(timeout=_PRODUCTOS_TIMEOUT) as http:
+        resp = await http.get(
+            f"{_BASE}/api/v1/productos/responsables", params=params, headers=_HEADERS
+        )
+
+    if resp.status_code == 404:
+        mensaje = resp.json().get("message", "") if _es_json(resp) else ""
+        return mensaje or f"No existe un producto con el SKU {sku}."
+
+    if resp.status_code != 200:
+        return _mensaje_error(resp, "No pude consultar quién atiende.")
+
+    payload = resp.json()
+    logger.info(
+        "crm_quien_atiende_ok",
+        sku=sku,
+        ciudad=ciudad,
+        cobertura=payload.get("cobertura") if isinstance(payload, dict) else None,
+    )
     return json.dumps(payload, ensure_ascii=False)
 
 

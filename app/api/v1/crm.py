@@ -162,7 +162,12 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
             # Derive AFTER the reply (the reply is the client's notice): once derived the CRM 409s
             # any further /messages, so the order matters.
             if "reason" in handoff and dest.conversation_id is not None:
-                await request_handoff(dest.conversation_id, handoff["reason"])
+                await request_handoff(
+                    dest.conversation_id,
+                    handoff["reason"],
+                    sku=handoff.get("sku"),
+                    ciudad=handoff.get("ciudad"),
+                )
         except asyncio.TimeoutError:
             logger.warning("crm_agent_hard_timeout", wa_id=wa_id, turn_id=turn_id)
             if agent_task is not None:

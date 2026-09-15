@@ -3,6 +3,7 @@
 Pure logic + the cotizacion tool with a stubbed httpx client — no live CRM calls.
 """
 
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,6 +16,8 @@ from app.core.langgraph.tools.crm import (
     _marca_de_sku,
     _resolve_pipeline_id,
     crear_cotizacion,
+    derivar_a_asesor,
+    quien_atiende,
 )
 
 
@@ -92,6 +95,11 @@ def _patch_httpx(monkeypatch, *, status=201, payload=None):
             box["json"] = json
             return _Resp()
 
+        async def get(self, url, params=None, headers=None):
+            box["url"] = url
+            box["params"] = params
+            return _Resp()
+
     monkeypatch.setattr(crm.httpx, "AsyncClient", _Client)
     return box
 
@@ -133,6 +141,53 @@ class TestCrearCotizacion:
             {"sku": "CM_00004", "cantidad": 30}, {"metadata": {"conversation_id": 9}}
         )
         assert box["json"]["marca"] == "Imprimir"
+
+    @pytest.mark.asyncio
+    async def test_ciudad_travels_in_body_for_advisor_routing(self, monkeypatch):
+        """`ciudad` (real city, not Zona) is sent so the CRM can pick the round-robin advisor."""
+        box = _patch_httpx(monkeypatch)
+        await crear_cotizacion.ainvoke(
+            {"sku": "CM_00003", "cantidad": 5, "criterios": {"Color": "Negro"}, "ciudad": "La Paz"},
+            {"metadata": {"conversation_id": 9}},
+        )
+        assert box["json"]["ciudad"] == "La Paz"
+
+
+class TestQuienAtiende:
+    """quien_atiende GETs /productos/responsables read-only and passes the JSON through."""
+
+    @pytest.mark.asyncio
+    async def test_gets_responsables_with_sku_and_city(self, monkeypatch):
+        """Sends sku+ciudad as query params and returns the CRM payload verbatim."""
+        box = _patch_httpx(
+            monkeypatch, status=200,
+            payload={"cobertura": "local", "siguiente": {"nombre": "Gabriela Marconi"}},
+        )
+        out = await quien_atiende.ainvoke({"sku": "CM_00003", "ciudad": "La Paz"})
+        assert box["url"].endswith("/api/v1/productos/responsables")
+        assert box["params"] == {"sku": "CM_00003", "ciudad": "La Paz"}
+        assert "Gabriela Marconi" in out
+
+    @pytest.mark.asyncio
+    async def test_unknown_sku_returns_404_message(self, monkeypatch):
+        """A 404 (unknown SKU) surfaces the CRM message, never crashes."""
+        _patch_httpx(monkeypatch, status=404, payload={"message": "No existe un producto con el SKU X."})
+        out = await quien_atiende.ainvoke({"sku": "NADA"})
+        assert "No existe un producto" in out
+
+
+class TestDerivarSignal:
+    """derivar_a_asesor is a pure signal that now carries sku+ciudad for advisor routing."""
+
+    @pytest.mark.asyncio
+    async def test_signal_includes_sku_and_ciudad(self):
+        """The returned signal echoes reason/sku/ciudad so the router forwards them to the handoff."""
+        out = await derivar_a_asesor.ainvoke(
+            {"conversation_id": 2, "reason": "quiere hablar", "sku": "CM_00003", "ciudad": "Santa Cruz"}
+        )
+        d = json.loads(out)
+        assert d["status"] == "handoff_signaled"
+        assert d["sku"] == "CM_00003" and d["ciudad"] == "Santa Cruz"
 
     @pytest.mark.asyncio
     async def test_price_and_total_are_never_sent(self, monkeypatch):
