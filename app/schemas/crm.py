@@ -58,13 +58,21 @@ class CrmMessage(BaseModel):
 
 
 class CrmHistoryItem(BaseModel):
-    """One message of conversation history (role: user | assistant)."""
+    """One message of conversation history (role: user | assistant).
+
+    `sender` (CRM note 16/09/2026) disambiguates who wrote an `assistant`-role line: `ia` (us) vs
+    `human` (an advisor typing from the CRM inbox) vs `contact` (the customer). We don't rebuild the
+    LLM context from this history (the checkpointer holds it), so a `human` line is never mistaken for
+    our own action — but the field is kept so any future use of history treats advisor text as context,
+    not as a reply we already made. The authoritative silence signal is `handoff.open`, not history.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     role: str = "user"
     content: str = ""
     type: str = "text"
+    sender: Optional[str] = None  # contact | ia | human (null on older CRM builds)
 
     @field_validator("role", "content", "type", mode="before")
     @classmethod

@@ -1,34 +1,18 @@
 """Unit tests for imprimir_graph helpers."""
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
-from app.core.langgraph.imprimir_graph import _already_derived, _ended_on_menu
+from app.core.langgraph.imprimir_graph import _ended_on_menu
 
 
 def _tool(name: str, content: str) -> ToolMessage:
     return ToolMessage(content=content, name=name, tool_call_id="x")
 
 
-def _ai_with_tool(name: str) -> AIMessage:
-    return AIMessage(content="", tool_calls=[{"name": name, "args": {}, "id": "t1"}])
-
-
-class TestAlreadyDerived:
-    """_already_derived detects a prior handoff so the agent stays silent afterwards."""
-
-    def test_true_when_history_has_a_derivar_call(self):
-        """A prior derivar_a_asesor tool call → the thread was handed off."""
-        msgs = [HumanMessage(content="hola"), _ai_with_tool("derivar_a_asesor")]
-        assert _already_derived(msgs) is True
-
-    def test_false_without_a_derivar_call(self):
-        """Normal history (other tools, plain messages) → not derived."""
-        msgs = [HumanMessage(content="hola"), _ai_with_tool("precio_producto"), AIMessage(content="ok")]
-        assert _already_derived(msgs) is False
-
-    def test_false_on_empty(self):
-        """No history → not derived."""
-        assert _already_derived([]) is False
+# NOTE: there is deliberately no post-handoff history guard. Silence while a human handles the
+# conversation is decided by handoff.open on the webhook (app/api/v1/crm.py), which is NOT permanent:
+# once the CRM resolves the handoff the agent re-engages, even if an advisor wrote in between
+# (CRM note 16/09/2026). A checkpoint-history guard silenced threads forever and is gone.
 
 
 class TestEndedOnMenu:

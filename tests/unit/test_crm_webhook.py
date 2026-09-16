@@ -75,6 +75,22 @@ class TestCrmWebhookEvent:
         ev = CrmWebhookEvent.model_validate(payload)
         assert ev.history[0].content == ""
 
+    def test_history_sender_is_parsed_and_optional(self):
+        """`sender` (contact|ia|human) is parsed when present and defaults to None on older builds."""
+        payload = {**_DOC_EVENT, "history": [
+            {"role": "assistant", "sender": "human", "content": "Ok gracias", "type": "text"},
+            {"role": "user", "content": "hola", "type": "text"},
+        ]}
+        ev = CrmWebhookEvent.model_validate(payload)
+        assert ev.history[0].sender == "human"
+        assert ev.history[1].sender is None
+
+    def test_resolved_handoff_is_not_open(self):
+        """handoff.open is the silence signal; a resolved handoff (open:false) lets the agent respond."""
+        payload = {**_DOC_EVENT, "handoff": {"state": "resolved", "open": False, "assigned_user": 256}}
+        ev = CrmWebhookEvent.model_validate(payload)
+        assert ev.handoff is not None and ev.handoff.open is False
+
     def test_unknown_gateway_does_not_reject_event(self):
         """The gateway is an open str, not a closed enum: a future channel must never break parsing."""
         payload = {**_DOC_EVENT, "gateway": "instagram"}
