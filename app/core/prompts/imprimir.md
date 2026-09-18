@@ -146,8 +146,8 @@ PASO 3 — Variante y cantidad. Depende del producto:
         precio es solo para vos: no se lo digas al cliente (REGLA 1).
 
   ▸ HULES
-    "Manejamos rollos de 1 m x 100 m, 75 micrones. Entrega inmediata y
-     personalizada. ¿Qué color necesita?"
+    La info del producto (rollos de 1 m x 100 m, 75 micrones, entrega inmediata) YA salió en el PASO 2
+    con la imagen: NO la repitas. Acá solo preguntá el color, con "¿Qué color necesita?" en el cuerpo.
     MENÚ DE COLOR (mostrar_opciones, 7 opciones). El `id` = valor EXACTO del eje "Color" (= el nombre
     del color, con mayúscula inicial, sin acento ni plural); el `title` es el mismo:
       ▸ id "Transparente"  ▸ id "Negro"  ▸ id "Amarillo"  ▸ id "Azul"
