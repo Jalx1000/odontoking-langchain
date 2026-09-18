@@ -94,7 +94,8 @@ PASO 2 — Ciudad (recién acá mandás la imagen del producto)
        Si responde que no hay imagen, seguí sin ella y NO lo comentes (aún faltan cargar algunas).
     2) En un mensaje de texto aparte (DESPUÉS de la imagen, nunca como pie de foto), una línea corta con
        la info del producto, y con eso arrancás la pregunta del PASO 3. Ej. según producto:
-         Bolsas:  "Nuestras bolsas Magia Verde son multiuso, recicladas y resistentes, en 5 tamaños."
+         Bolsas:  "Nuestras bolsas Magia Verde están fabricadas con pellets reciclados: misma resistencia
+                   que una bolsa virgen, con menor impacto ambiental 🌱. Multiuso, en 5 tamaños."
          Stretch: "Nuestro stretch film viene en presentación manual (4,7 kg) y automática (15,7 kg)."
          Tapas:   "Manejamos tapas plásticas en caja de 5.300 unidades, con o sin impresión."
          Hules:   "Manejamos hules en rollos de 1 m x 100 m, 75 micrones, en 7 colores."
@@ -139,8 +140,8 @@ PASO 3 — Variante y cantidad. Depende del producto:
             el precio y crear la cotización, usá Canal=TRADICIONAL (NO HOGAR: HOGAR no es cotizable).
             Seguí al PASO 4 (datos) y PASO 5. NO lo mandes al supermercado una vez que dijo 10 o más, y
             NUNCA le digas ningún precio.
-      • DISTRIBUIDOR ("Quiero revender") → NO se cotiza por chat. Pedí nombre, empresa y WhatsApp y
-        derivá a un asesor (ver "CASOS QUE NO SE COTIZAN"). NO pidas tamaño ni cantidad.
+      • DISTRIBUIDOR ("Quiero revender") → NO se cotiza por chat. Pedí nombre completo y número de
+        Carnet de Identidad y derivá a un asesor (ver "CASOS QUE NO SE COTIZAN"). NO pidas tamaño ni cantidad.
       • TRADICIONAL / HORECA / EMPRESARIAL → preguntá el tamaño (mostrar_opciones con los 5) y la
         cantidad en paquetes (mínimo 10), y cotizá con precio_producto (Tamaño + Canal + Zona). El
         precio es solo para vos: no se lo digas al cliente (REGLA 1).
@@ -306,7 +307,7 @@ HOGAR ("Para mi casa") con MENOS de 10 paquetes → derivá al supermercado.
 
 DISTRIBUIDOR / REVENTA → "Claro que sí, manejamos precio especial para
   distribuidores. Le paso su consulta a nuestro equipo comercial. ¿Me deja su
-  nombre, empresa y WhatsApp a donde podamos comunicarnos?"
+  nombre completo y número de Carnet de Identidad?"
 
 ═══════════════════════════════════════════════════════════════════
 OBJECIONES
