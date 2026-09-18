@@ -110,6 +110,27 @@ class TestStripBodyMarkdown:
         text = "Martes 16/06: 15:00 - 16:00"
         assert _strip_body_markdown(text) == text
 
+    def test_unescapes_literal_newlines(self):
+        r"""The LLM's literal '\n' (two chars) becomes a real newline, not visible text (prod bug)."""
+        from app.services.whatsapp_client import _strip_body_markdown
+
+        out = _strip_body_markdown("Necesito:\\n- Nombre\\n- NIT")
+        assert out == "Necesito:\n- Nombre\n- NIT"
+        assert "\\n" not in out
+
+    def test_unescapes_crlf_and_tab(self):
+        r"""Literal '\r\n' collapses to one newline; literal '\t' becomes a space."""
+        from app.services.whatsapp_client import _strip_body_markdown
+
+        assert _strip_body_markdown("a\\r\\nb") == "a\nb"
+        assert _strip_body_markdown("a\\tb") == "a b"
+
+    def test_real_newlines_are_preserved(self):
+        """A genuine newline in the text must survive unchanged (only literals are converted)."""
+        from app.services.whatsapp_client import _strip_body_markdown
+
+        assert _strip_body_markdown("a\nb") == "a\nb"
+
 
 class TestSendTextMessage:
     @pytest.mark.asyncio

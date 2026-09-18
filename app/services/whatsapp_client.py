@@ -89,10 +89,20 @@ _INVISIBLE = re.compile(r"[\u200b-\u200f\u2060\u2066-\u2069\ufeff]")
 
 
 _BODY_MARKDOWN = re.compile(r"\*\*|__|`")
+# The LLM sometimes emits escape sequences as LITERAL two-char text (backslash + n) instead of a real
+# newline, so the client sees "necesito:\n- Nombre" with a visible "\n". Turn those back into the real
+# characters before sending. Ordered so "\r\n" is handled before the lone "\n"/"\r".
+_LITERAL_ESCAPES = ((r"\r\n", "\n"), (r"\n", "\n"), (r"\r", "\n"), (r"\t", " "))
 
 
 def _strip_body_markdown(text: str) -> str:
-    """Remove Markdown emphasis/code markers (**, __, `) that WhatsApp renders literally."""
+    r"""Clean agent text for WhatsApp: drop Markdown markers (**, __, `) and un-escape literal \n/\t.
+
+    WhatsApp renders both the Markdown markers and a literal backslash-n verbatim, so both would show
+    up as noise in the message; this normalises them to what the client should actually see.
+    """
+    for literal, real in _LITERAL_ESCAPES:
+        text = text.replace(literal, real)
     return _BODY_MARKDOWN.sub("", text)
 
 
