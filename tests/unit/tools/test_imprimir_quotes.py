@@ -15,6 +15,7 @@ from app.core.langgraph.tools.crm import (
     _lead_stage_name,
     _marca_de_sku,
     _resolve_pipeline_id,
+    _route_lead_pipeline,
     _set_lead_ciudad,
     crear_cotizacion,
     derivar_a_asesor,
@@ -332,4 +333,38 @@ class TestSetLeadCiudad:
         req = AsyncMock()
         monkeypatch.setattr(crm, "_request", req)
         await _set_lead_ciudad(MagicMock(), 479, "   ")
+        req.assert_not_called()
+
+
+class TestRouteLeadPipeline:
+    """_route_lead_pipeline moves the lead to its city's pipeline (id + initial stage)."""
+
+    @pytest.mark.asyncio
+    async def test_puts_pipeline_and_stage_for_the_city(self, monkeypatch):
+        """La Paz (pipeline 7) → PUT lead_pipeline_id 7 with the resolved initial stage."""
+        req = AsyncMock(return_value=MagicMock())
+        monkeypatch.setattr(crm, "_request", req)
+        monkeypatch.setattr(crm, "_initial_stage_id", AsyncMock(return_value=55))
+        pid = await _route_lead_pipeline(MagicMock(), 479, "La Paz")
+        assert pid == 7
+        _, method, path = req.call_args.args
+        assert method == "PUT" and path == "/api/v1/leads/479"
+        assert req.call_args.kwargs["json"] == {"lead_pipeline_id": 7, "lead_pipeline_stage_id": 55}
+
+    @pytest.mark.asyncio
+    async def test_unknown_city_falls_to_sin_ciudad_pipeline(self, monkeypatch):
+        """An unrecognised city routes to pipeline 10 (Sin ciudad), never the default Santa Cruz."""
+        req = AsyncMock(return_value=MagicMock())
+        monkeypatch.setattr(crm, "_request", req)
+        monkeypatch.setattr(crm, "_initial_stage_id", AsyncMock(return_value=None))
+        pid = await _route_lead_pipeline(MagicMock(), 479, "Tarija")
+        assert pid == 10
+        assert req.call_args.kwargs["json"] == {"lead_pipeline_id": 10}  # no stage when unresolved
+
+    @pytest.mark.asyncio
+    async def test_blank_city_is_a_noop(self, monkeypatch):
+        """No city → no move (the lead stays where the CRM created it)."""
+        req = AsyncMock()
+        monkeypatch.setattr(crm, "_request", req)
+        assert await _route_lead_pipeline(MagicMock(), 479, "") is None
         req.assert_not_called()

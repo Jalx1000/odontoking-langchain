@@ -473,6 +473,26 @@ async def _set_lead_ciudad(client: httpx.AsyncClient, lead_id: int, ciudad: str)
     await _request(client, "PUT", f"/api/v1/leads/{lead_id}", json={"ciudad": ciudad})
 
 
+async def _route_lead_pipeline(client: httpx.AsyncClient, lead_id: int, ciudad: str) -> Optional[int]:
+    """Move the lead to its CITY's sales pipeline (id + initial stage); return the pipeline_id.
+
+    The CRM auto-creates every lead in the default (Santa Cruz) pipeline. This routes it to the city's
+    pipeline, same PUT as mover_lead_por_ciudad. Kept separate from the ciudad-attribute PUT so a bad
+    attribute never blocks the pipeline move (the routing matters more). Only call on an unattended
+    lead — register_cotizacion already guards that.
+    """
+    ciudad = (ciudad or "").strip()
+    if not ciudad:
+        return None
+    pipeline_id, _ = _resolve_pipeline_id(ciudad)
+    body: dict[str, Any] = {"lead_pipeline_id": pipeline_id}
+    stage_id = await _initial_stage_id(client, pipeline_id)
+    if stage_id is not None:
+        body["lead_pipeline_stage_id"] = stage_id
+    await _request(client, "PUT", f"/api/v1/leads/{lead_id}", json=body)
+    return pipeline_id
+
+
 # ── LLM-facing tools (one call per action; only wa_id + plain fields) ──────────
 
 @tool
@@ -582,6 +602,11 @@ async def register_cotizacion(
             except Exception as e:  # noqa: BLE001
                 log.warning("register_cotizacion_tag_failed", lead_id=lead_id, error=str(e))
             if ciudad:
+                try:
+                    routed_pipeline = await _route_lead_pipeline(client, lead_id, ciudad)
+                    log.info("register_cotizacion_lead_routed", lead_id=lead_id, pipeline_id=routed_pipeline)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("register_cotizacion_pipeline_failed", lead_id=lead_id, error=str(e))
                 try:
                     await _set_lead_ciudad(client, lead_id, ciudad)
                 except Exception as e:  # noqa: BLE001
