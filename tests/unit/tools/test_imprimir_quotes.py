@@ -15,6 +15,7 @@ from app.core.langgraph.tools.crm import (
     _lead_stage_name,
     _marca_de_sku,
     _resolve_pipeline_id,
+    _set_lead_ciudad,
     crear_cotizacion,
     derivar_a_asesor,
     enviar_material,
@@ -310,3 +311,25 @@ class TestInitialStage:
         resp.json.return_value = {"data": {"stages": []}}
         monkeypatch.setattr(crm, "_request", AsyncMock(return_value=resp))
         assert await _initial_stage_id(MagicMock(), 10) is None
+
+
+class TestSetLeadCiudad:
+    """_set_lead_ciudad fills the lead's `ciudad` attribute (same key the quote uses)."""
+
+    @pytest.mark.asyncio
+    async def test_puts_ciudad_attribute_on_the_lead(self, monkeypatch):
+        """A partial PUT to /api/v1/leads/{id} carries just the ciudad."""
+        req = AsyncMock(return_value=MagicMock())
+        monkeypatch.setattr(crm, "_request", req)
+        await _set_lead_ciudad(MagicMock(), 479, "La Paz")
+        _, method, path = req.call_args.args
+        assert method == "PUT" and path == "/api/v1/leads/479"
+        assert req.call_args.kwargs["json"] == {"ciudad": "La Paz"}
+
+    @pytest.mark.asyncio
+    async def test_blank_ciudad_is_a_noop(self, monkeypatch):
+        """An empty city makes no request (nothing to store)."""
+        req = AsyncMock()
+        monkeypatch.setattr(crm, "_request", req)
+        await _set_lead_ciudad(MagicMock(), 479, "   ")
+        req.assert_not_called()

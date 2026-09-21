@@ -258,7 +258,8 @@ PASO 4 — Datos para la cotización
   de la planta, escrita.
 
 PASO 5 — Cierre. CINCO acciones, EN ESTE ORDEN:
-  1) register_cotizacion  → los datos de empresa en el contacto
+  1) register_cotizacion  → los datos de empresa en el contacto. Pasale también la `ciudad` real del
+     cliente (la misma que a crear_cotizacion): se guarda como atributo del lead.
   2) crear_cotizacion     → la cotización. Pasale SIEMPRE el `sku`, la `cantidad`, el `criterios`
      COMPLETO (todos los ejes que ya validaste con precio_producto: Tamaño, Canal, Zona, Color o
      Impresión según el producto) Y la `ciudad` real del PASO 2. Sin el criterios completo el CRM no

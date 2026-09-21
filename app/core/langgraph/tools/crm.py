@@ -461,6 +461,18 @@ async def _tag_lead(client: httpx.AsyncClient, lead_id: int, temperatura: str) -
     return tag_id
 
 
+async def _set_lead_ciudad(client: httpx.AsyncClient, lead_id: int, ciudad: str) -> None:
+    """Set the lead's `ciudad` custom attribute via a partial PUT (same key the quote uses).
+
+    Krayin's lead PUT accepts a partial body (proven by mover_lead_por_ciudad sending only the
+    pipeline), so we send just `ciudad` to fill the attribute without rebuilding the whole lead.
+    """
+    ciudad = (ciudad or "").strip()
+    if not ciudad:
+        return
+    await _request(client, "PUT", f"/api/v1/leads/{lead_id}", json={"ciudad": ciudad})
+
+
 # ── LLM-facing tools (one call per action; only wa_id + plain fields) ──────────
 
 @tool
@@ -478,6 +490,7 @@ async def register_cotizacion(
     temperatura: str = "tibio",
     adjunto: Optional[str] = None,
     detalle: Optional[str] = None,
+    ciudad: Optional[str] = None,
     es_postventa: bool = False,
 ) -> str:
     """Enriquece la oportunidad ya abierta por el CRM con los datos de la cotización.
@@ -501,6 +514,8 @@ async def register_cotizacion(
         temperatura: Temperatura INTERNA del lead: "caliente" | "tibio" | "frio".
         adjunto: "sí" si el cliente ya envió un archivo, si aplica.
         detalle: Cualquier detalle adicional en texto libre.
+        ciudad: Ciudad REAL del cliente ("La Paz", "Cochabamba"…), no la Zona. Se guarda como atributo
+            del lead (la misma ciudad que pasás a crear_cotizacion).
         es_postventa: True solo si es un cliente existente con una consulta de postventa.
     """
     wa = _normalize_wa_id(wa_id)
@@ -566,6 +581,11 @@ async def register_cotizacion(
                 tag_id = await _tag_lead(client, lead_id, temperatura)
             except Exception as e:  # noqa: BLE001
                 log.warning("register_cotizacion_tag_failed", lead_id=lead_id, error=str(e))
+            if ciudad:
+                try:
+                    await _set_lead_ciudad(client, lead_id, ciudad)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("register_cotizacion_ciudad_failed", lead_id=lead_id, error=str(e))
 
             log.info(
                 "imprimir_cotizacion_registered",
