@@ -1227,6 +1227,7 @@ async def enviar_material(
     sku: str,
     tipo: str,
     cantidad: int = 3,
+    criterios: Optional[dict[str, str]] = None,
     *,
     config: RunnableConfig,
 ) -> str:
@@ -1240,6 +1241,10 @@ async def enviar_material(
         sku: SKU del producto cuyo material se envía.
         tipo: "imagen", "documento" o "enlace".
         cantidad: Cuántos enviar. 3 por defecto; el CRM no acepta más de 10.
+        criterios: La variante, igual que en precio_producto (ej. {"Tamaño": "50 L"}). Con criterios el
+            CRM manda SOLO la ficha/adjunto de ESA variante (no las 5). Para la ficha técnica en el
+            cierre, pasá el tamaño elegido. La respuesta trae `variante` (cómo lo resolvió el CRM) y
+            `alcance` ("variante" = el propio de esa variante · "producto" = no tenía y salió el general).
         config: Interno; lo inyecta el sistema. No lo pases.
     """
     conversation_id = _ctx_conversation_id(config)
@@ -1248,18 +1253,38 @@ async def enviar_material(
         logger.error("crm_enviar_material_sin_conversation_id", sku=sku)
         return "No hay una conversación activa para enviar material. Avisá al equipo técnico."
 
+    body: dict[str, Any] = {"sku": sku, "tipo": tipo, "cantidad": cantidad}
+    if criterios:
+        body["criterios"] = criterios
+
     async with httpx.AsyncClient(timeout=_PRODUCTOS_TIMEOUT) as http:
         resp = await http.post(
             f"{_BASE}/api/v1/productos/conversations/{conversation_id}/media",
-            json={"sku": sku, "tipo": tipo, "cantidad": cantidad},
+            json=body,
             headers=_HEADERS,
         )
 
     if resp.status_code == 200:
         d = resp.json()
-        logger.info("crm_enviar_material_ok", sku=d.get("sku", sku), enviados=d.get("enviados"))
+        variante = d.get("variante")
+        alcance = d.get("alcance")
+        logger.info(
+            "crm_enviar_material_ok",
+            sku=d.get("sku", sku),
+            enviados=d.get("enviados"),
+            variante=variante,
+            alcance=alcance,
+        )
+        detalle = ""
+        if variante and alcance == "variante":
+            detalle = f" Es la ficha propia de la variante «{variante}»: nombrala así al describirla."
+        elif alcance == "producto":
+            detalle = (
+                " Salió el material GENERAL del producto (esa variante no tiene ficha propia): no digas "
+                "que mandaste la ficha específica; ofrecé que el asesor la pase."
+            )
         return (
-            f"Enviados {d.get('enviados')} archivo(s) de {d.get('sku', sku)}. "
+            f"Enviados {d.get('enviados')} archivo(s) de {d.get('sku', sku)}.{detalle} "
             "Ahora mandá tu descripción como texto, en un mensaje aparte."
         )
 

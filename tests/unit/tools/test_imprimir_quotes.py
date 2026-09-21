@@ -17,6 +17,7 @@ from app.core.langgraph.tools.crm import (
     _resolve_pipeline_id,
     crear_cotizacion,
     derivar_a_asesor,
+    enviar_material,
     quien_atiende,
 )
 
@@ -174,6 +175,47 @@ class TestQuienAtiende:
         _patch_httpx(monkeypatch, status=404, payload={"message": "No existe un producto con el SKU X."})
         out = await quien_atiende.ainvoke({"sku": "NADA"})
         assert "No existe un producto" in out
+
+
+class TestEnviarMaterial:
+    """enviar_material POSTs to /media; criterios select a single variant's ficha."""
+
+    @pytest.mark.asyncio
+    async def test_criterios_travel_in_body(self, monkeypatch):
+        """`criterios` are forwarded so the CRM sends only that variant's attachment."""
+        box = _patch_httpx(
+            monkeypatch, status=200,
+            payload={"enviados": 1, "sku": "CM_00002", "variante": "50 L", "alcance": "variante"},
+        )
+        out = await enviar_material.ainvoke(
+            {"sku": "CM_00002", "tipo": "documento", "criterios": {"Tamaño": "50 L"}},
+            {"metadata": {"conversation_id": 123}},
+        )
+        assert box["url"].endswith("/api/v1/productos/conversations/123/media")
+        assert box["json"]["criterios"] == {"Tamaño": "50 L"}
+        assert "50 L" in out  # names the variant it actually sent
+
+    @pytest.mark.asyncio
+    async def test_no_criterios_omits_the_key(self, monkeypatch):
+        """Without criterios the body carries no `criterios` key (back-compat: send everything)."""
+        box = _patch_httpx(monkeypatch, status=200, payload={"enviados": 1, "sku": "CM_00002"})
+        await enviar_material.ainvoke(
+            {"sku": "CM_00002", "tipo": "imagen", "cantidad": 1}, {"metadata": {"conversation_id": 9}}
+        )
+        assert "criterios" not in box["json"]
+
+    @pytest.mark.asyncio
+    async def test_alcance_producto_warns_not_the_specific_ficha(self, monkeypatch):
+        """`alcance: producto` (variant had no own ficha) tells the agent not to claim the specific one."""
+        _patch_httpx(
+            monkeypatch, status=200,
+            payload={"enviados": 1, "sku": "CM_00003", "variante": None, "alcance": "producto"},
+        )
+        out = await enviar_material.ainvoke(
+            {"sku": "CM_00003", "tipo": "documento", "criterios": {"Color": "Negro"}},
+            {"metadata": {"conversation_id": 9}},
+        )
+        assert "general" in out.lower()
 
 
 class TestDerivarSignal:
