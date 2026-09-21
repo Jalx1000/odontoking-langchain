@@ -45,9 +45,11 @@ class TestCityRouting:
         """Each listed city (and its aliases) resolves to its exact pipeline id."""
         assert _resolve_pipeline_id(ciudad) == expected
 
-    @pytest.mark.parametrize("ciudad", ["Tarija", "cualquier cosa", "", None])
+    @pytest.mark.parametrize(
+        "ciudad", ["Otra ciudad", "otra ciudad", "Otra", "Tarija", "cualquier cosa", "", None]
+    )
     def test_unknown_city_falls_back_to_sin_ciudad(self, ciudad):
-        """Unknown/empty city → pipeline 10 (Sin ciudad), NEVER Santa Cruz (keeps metrics clean)."""
+        """Unknown/empty city — and the "Otra ciudad" menu pick — → pipeline 10, NEVER Santa Cruz."""
         pipeline_id, recognised = _resolve_pipeline_id(ciudad)
         assert pipeline_id == 10
         assert recognised is False
