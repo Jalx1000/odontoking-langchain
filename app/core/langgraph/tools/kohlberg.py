@@ -567,6 +567,7 @@ def _build_lead_body(
     stage_key: str,
     total: float,
     products: dict[str, dict[str, Any]],
+    edad: Any = None,
 ) -> dict[str, Any]:
     """Build the FULL lead object for create/update."""
     stages = _city_stages(ciudad)
@@ -607,6 +608,11 @@ def _build_lead_body(
         "person": person,
         "entity_type": "leads",
     }
+
+    # Edad del cliente en el atributo custom del lead (`edad_lead`, tipo text, id 68).
+    edad_int = _to_int(edad)
+    if edad_int is not None:
+        body["edad_lead"] = str(edad_int)
 
     if products:
         body["products"] = products
@@ -1003,7 +1009,7 @@ async def registrar_pedido(
             stage_key = "confirmado" if es_pedido_confirmado else "no_atendido"
             body = _build_lead_body(
                 person_id, _ctx_wa_id(config), nombre, titulo_de_pedido, descripcion,
-                ciudad_del_cliente, stage_key, total, products_map,
+                ciudad_del_cliente, stage_key, total, products_map, edad=edad_del_cliente,
             )
             lead_id = await _upsert_lead(client, target_lead, body)
             nuevo = target_lead is None
