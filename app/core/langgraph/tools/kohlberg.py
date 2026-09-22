@@ -993,11 +993,13 @@ async def registrar_pedido(
             # owner. Krayin only fills the product lines/value from the WHOLE object (a partial PUT or
             # the /leads/product endpoint did not) - so reuse the fresh lead with a full PUT, or POST a
             # new one for a separate order.
-            # A CONFIRMED order is ALWAYS its own pedido: never reuse/overwrite an existing lead, so the
-            # client can place N separate pedidos in one conversation (the CRM re-sends the same
-            # contact.lead_id every turn — reusing it collapsed every order into one modified lead).
-            # Only a non-confirmed draft may enrich the fresh auto-created lead.
-            target_lead = None if es_pedido_confirmado else fresh_lead
+            # HYBRID lead reuse (kills the phantom empty lead WITHOUT collapsing separate orders):
+            # reuse the CRM's fresh auto-created lead (No atendido + NO products) for the FIRST order
+            # so it becomes the real order instead of leaving an empty ghost + a second sale lead. Once
+            # that lead carries products / was advanced, _is_fresh_for_order is False, so a SECOND order
+            # in the same conversation POSTs a new lead (pedidos separados). Reusing only EMPTY leads
+            # also sidesteps the "PUT replaces products" trap — there's nothing previous to lose.
+            target_lead = fresh_lead
             stage_key = "confirmado" if es_pedido_confirmado else "no_atendido"
             body = _build_lead_body(
                 person_id, _ctx_wa_id(config), nombre, titulo_de_pedido, descripcion,
