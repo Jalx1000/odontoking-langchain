@@ -73,6 +73,12 @@ _CITY_SALES_REP: dict[str, int] = {
 }
 _DEFAULT_SALES_REP = _OWNER_USER_ID  # no/unrecognised city -> default owner
 
+# Last lead this agent registered per WhatsApp id, so a CORRECTION right after ("que sean 3", "me
+# equivoqué") PUTs onto that same lead instead of POSTing a duplicate (the CRM only echoes its own
+# auto-lead in contact.lead_id, not the leads we POST for separate orders). Per-process cache; the
+# fallback to contact.lead_id covers the first-order case across replicas.
+_LAST_LEAD_BY_WA: dict[str, int] = {}
+
 # Canonical city -> product-city id (the `ciudad_producto_sucursal` values on each product). These are
 # a DIFFERENT id space from the pipeline ids above - do not conflate them. A product is available in a
 # city if its list includes that id OR the "todas" id.
@@ -878,8 +884,16 @@ async def registrar_pedido(
     descripcion_corta: Optional[str] = None,
     es_pedido_confirmado: bool = False,
     es_pedido_cancelado: bool = False,
+    es_correccion: bool = False,
 ) -> str:
-    """Registra el pedido del cliente como oportunidad (lead) en el CRM Kohlberg."""
+    """Registra el pedido del cliente como oportunidad (lead) en el CRM Kohlberg.
+
+    es_correccion=True SOLO cuando el cliente corrige el pedido que ACABA de hacer (cambió la
+    cantidad, se equivocó, "que sean 3", "cambiá X por Y"): en ese caso NO se crea un pedido nuevo,
+    se REEMPLAZA el último pedido de esta conversación con la lista corregida COMPLETA (mandá todos
+    los productos que el pedido debe tener al final, no solo lo que cambió). Si el cliente quiere OTRO
+    pedido aparte, es_correccion=False (se crea uno nuevo).
+    """
     lead_ctx, person_ctx = _ctx_ids(config)
 
     log = logger.bind(
@@ -1005,10 +1019,19 @@ async def registrar_pedido(
             # that lead carries products / was advanced, _is_fresh_for_order is False, so a SECOND order
             # in the same conversation POSTs a new lead (pedidos separados). Reusing only EMPTY leads
             # also sidesteps the "PUT replaces products" trap — there's nothing previous to lose.
-            target_lead = fresh_lead
+            # A CORRECTION overrides the hybrid: PUT onto the last lead of this conversation with the
+            # full corrected list (the client restated the whole order), never POST — that's what made
+            # #1772/#1773 duplicates. Prefer the lead we remembered; fall back to contact.lead_id.
+            wa = _ctx_wa_id(config)
+            if es_correccion:
+                target_lead = _LAST_LEAD_BY_WA.get(wa) or lead_ctx
+                log.info("registrar_pedido_correccion", target_lead=target_lead,
+                         remembered=_LAST_LEAD_BY_WA.get(wa), lead_ctx=lead_ctx)
+            else:
+                target_lead = fresh_lead
             stage_key = "confirmado" if es_pedido_confirmado else "no_atendido"
             body = _build_lead_body(
-                person_id, _ctx_wa_id(config), nombre, titulo_de_pedido, descripcion,
+                person_id, wa, nombre, titulo_de_pedido, descripcion,
                 ciudad_del_cliente, stage_key, total, products_map, edad=edad_del_cliente,
             )
             lead_id = await _upsert_lead(client, target_lead, body)
@@ -1016,6 +1039,10 @@ async def registrar_pedido(
             if not lead_id:
                 log.error("registrar_pedido_no_lead_id")
                 return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
+
+            # Remember it so an immediate correction PUTs onto this same lead (see _LAST_LEAD_BY_WA).
+            if wa:
+                _LAST_LEAD_BY_WA[wa] = lead_id
 
             log.info(
                 "kohlberg_pedido_registered",
