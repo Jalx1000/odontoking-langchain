@@ -37,6 +37,7 @@ from pydantic import SecretStr
 
 from app.core.config import settings
 from app.core.langgraph.tools.kohlberg import (
+    actualizar_pedido,
     derivar_a_asesor,
     get_pedidos,
     get_persona,
@@ -57,6 +58,7 @@ _KOHLBERG_TOOLS = [
     get_persona,
     get_promos,
     get_sucursales,
+    actualizar_pedido,
     registrar_pedido,
     get_pedidos,
     derivar_a_asesor,

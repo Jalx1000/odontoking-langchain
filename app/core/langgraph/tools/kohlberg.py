@@ -79,6 +79,11 @@ _DEFAULT_SALES_REP = _OWNER_USER_ID  # no/unrecognised city -> default owner
 # fallback to contact.lead_id covers the first-order case across replicas.
 _LAST_LEAD_BY_WA: dict[str, int] = {}
 
+# Live "draft" of the in-progress order per WhatsApp id, so incremental updates accumulate: the client
+# gives data piecemeal (city, then name, then age, then each wine) and each actualizar_pedido call
+# merges into this draft and re-PUTs the FULL lead. Per-process; cold drafts seed from the lead GET.
+_DRAFT_BY_WA: dict[str, dict[str, Any]] = {}
+
 # Canonical city -> product-city id (the `ciudad_producto_sucursal` values on each product). These are
 # a DIFFERENT id space from the pipeline ids above - do not conflate them. A product is available in a
 # city if its list includes that id OR the "todas" id.
@@ -291,16 +296,25 @@ async def _resolve_person(client: httpx.AsyncClient, wa_id: str, nombre: Optiona
     return data.get("id") if isinstance(data, dict) else None
 
 
-async def _set_person_edad(
-    client: httpx.AsyncClient, person_id: int, edad: Any, nombre: Optional[str], wa_id: str
+async def _set_person_attrs(
+    client: httpx.AsyncClient,
+    person_id: int,
+    *,
+    edad: Any = None,
+    ciudad: Optional[str] = None,
+    nombre: Optional[str] = None,
+    wa_id: str = "",
 ) -> None:
-    """Guarda la edad en el atributo custom `edad` (Persons/text) del contacto vía PUT.
+    """Guarda datos del cliente en el contacto: `edad` (custom text) y `cliente_ciudad` (custom select).
 
     Krayin PUT reemplaza la persona, así que re-enviamos su nombre/contact_numbers/emails/organización
-    (leídos con un GET) para no borrarlos, más el code `edad`. Best-effort: el caller envuelve en try.
+    (leídos con un GET) para no borrarlos, más los custom que lleguen. Best-effort: el caller envuelve
+    en try. No hace nada si no hay ningún atributo nuevo que escribir.
     """
     edad_int = _to_int(edad)
-    if edad_int is None:
+    ciudad_val = (ciudad or "").strip()
+    nombre_val = (nombre or "").strip()
+    if edad_int is None and not ciudad_val and not nombre_val:
         return
     current: dict[str, Any] = {}
     try:
@@ -309,17 +323,20 @@ async def _set_person_edad(
         if isinstance(data, dict):
             current = data
     except Exception as e:  # noqa: BLE001
-        logger.warning("kohlberg_person_fetch_for_edad_failed", person_id=person_id, error=str(e))
+        logger.warning("kohlberg_person_fetch_failed", person_id=person_id, error=str(e))
 
     numbers = current.get("contact_numbers")
     if not (isinstance(numbers, list) and numbers):
         numbers = [{"value": wa_id, "label": "work"}] if wa_id else []
     body: dict[str, Any] = {
-        "name": current.get("name") or (nombre or "").strip() or _PLACEHOLDER_NAME,
+        "name": current.get("name") or nombre_val or _PLACEHOLDER_NAME,
         "contact_numbers": numbers,
         "entity_type": "persons",
-        "edad": str(edad_int),  # atributo custom (code `edad`, tipo text)
     }
+    if edad_int is not None:
+        body["edad"] = str(edad_int)          # custom text `edad`
+    if ciudad_val:
+        body["cliente_ciudad"] = ciudad_val   # custom select `cliente_ciudad` (el CRM resuelve el texto)
     emails = current.get("emails")
     if isinstance(emails, list) and emails:
         body["emails"] = emails
@@ -1000,13 +1017,17 @@ async def registrar_pedido(
             if person_id is None:
                 person_id = await _resolve_person(client, _ctx_wa_id(config), nombre)
 
-            # Guarda la edad en el contacto (atributo custom `edad`). Best-effort: no debe romper el pedido.
-            if person_id and edad_del_cliente is not None:
+            # Guarda edad + ciudad en el contacto (custom `edad`/`cliente_ciudad`). Best-effort.
+            if person_id and (edad_del_cliente is not None or (ciudad_del_cliente or "").strip()):
                 try:
-                    await _set_person_edad(client, person_id, edad_del_cliente, nombre, _ctx_wa_id(config))
-                    log.info("kohlberg_person_edad_set", person_id=person_id, edad=_to_int(edad_del_cliente))
+                    await _set_person_attrs(
+                        client, person_id, edad=edad_del_cliente, ciudad=ciudad_del_cliente,
+                        nombre=nombre, wa_id=_ctx_wa_id(config),
+                    )
+                    log.info("kohlberg_person_attrs_set", person_id=person_id,
+                             edad=_to_int(edad_del_cliente), ciudad=ciudad_del_cliente)
                 except Exception as e:  # noqa: BLE001
-                    log.warning("registrar_pedido_edad_update_failed", person_id=person_id, error=str(e))
+                    log.warning("registrar_pedido_person_update_failed", person_id=person_id, error=str(e))
 
             # ONE full-object write does everything: product lines (inline), lead_value, the city's
             # pipeline + stage (Confirmado on confirm, else No atendido) and the city's sales rep as
@@ -1374,6 +1395,130 @@ async def get_persona(config: RunnableConfig) -> str:
             {"telefono": digits, "persona": None, "error": str(e) or type(e).__name__},
             ensure_ascii=False,
         )
+
+async def _catalog_price_by_id() -> dict[int, float]:
+    """Unit price by product id from the cached catalog (promo price if set, else base)."""
+    out: dict[int, float] = {}
+    try:
+        for p in await _get_products_cached():
+            pid = _to_int(p.get("id"))
+            if pid is not None:
+                out[pid] = _product_price(p)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kohlberg_price_lookup_failed", error=str(e))
+    return out
+
+
+@tool
+async def actualizar_pedido(
+    config: RunnableConfig,
+    ciudad: Optional[str] = None,
+    nombre: Optional[str] = None,
+    edad: Optional[int] = None,
+    product_id: Optional[list[int]] = None,
+    product_name: Optional[list[str]] = None,
+    cantidad_product: Optional[list[int]] = None,
+    es_cancelado: bool = False,
+) -> str:
+    """Registra EN VIVO el pedido del cliente: llamala apenas capta CADA dato, sin esperar al final.
+
+    Un lead = el pedido de hoy de ese cliente. Llamala en cuanto el cliente diga su CIUDAD (mueve el
+    lead a la ciudad/asesor correctos), su NOMBRE, su EDAD, o elija/cambie VINOS — así todo queda
+    registrado aunque el cliente abandone. Pasá SIEMPRE la lista COMPLETA de productos conocida hasta
+    ahora (todos los vinos del pedido, no solo el último), porque reemplaza la lista del lead. Los
+    precios salen del catálogo (get_promos), no los pases vos. es_cancelado=True marca el pedido como
+    cancelado. Esto NO confirma el pedido final: para el cierre + sucursal usá registrar_pedido.
+
+    Args:
+        config: contexto inyectado por el grafo (lead/persona/teléfono). No lo pasa el modelo.
+        ciudad: ciudad del cliente cuando la diga (Santa Cruz, Cochabamba, La Paz, Tarija, Sucre,
+            Potosí, Oruro).
+        nombre: nombre del cliente cuando lo diga.
+        edad: edad del cliente cuando la diga.
+        product_id: ids (de get_promos) de TODOS los vinos elegidos hasta ahora, lista completa.
+        product_name: nombres exactos (de get_promos), en el mismo orden que product_id.
+        cantidad_product: cantidad de cada vino, en el mismo orden.
+        es_cancelado: True si el cliente cancela el pedido.
+    """
+    lead_ctx, person_ctx = _ctx_ids(config)
+    wa = _ctx_wa_id(config)
+    log = logger.bind(tool="actualizar_pedido", lead_id=lead_ctx, wa_id=wa)
+
+    draft = _DRAFT_BY_WA.setdefault(wa, {})
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            # Cold draft on this replica: seed products from the existing lead so we don't clobber them.
+            if not draft.get("_seeded") and lead_ctx:
+                lead = await _get_lead(client, lead_ctx)
+                if lead is not None:
+                    prods = lead.get("products")
+                    if isinstance(prods, dict) and prods and "ids" not in draft:
+                        draft["ids"] = [_to_int(p.get("product_id")) for p in prods.values()]
+                        draft["names"] = [p.get("name") for p in prods.values()]
+                        draft["qtys"] = [_to_int(p.get("quantity")) or 1 for p in prods.values()]
+                draft["_seeded"] = True
+
+            # Merge the newly-provided data into the draft.
+            ciudad_val = (ciudad or "").strip()
+            nombre_val = (nombre or "").strip()
+            if ciudad_val:
+                draft["ciudad"] = ciudad_val
+            if nombre_val:
+                draft["nombre"] = nombre_val
+            if edad is not None:
+                draft["edad"] = edad
+            if product_id:  # full list each time (replaces)
+                draft["ids"] = list(product_id)
+                draft["names"] = list(product_name or [])
+                draft["qtys"] = list(cantidad_product or [])
+
+            ids = draft.get("ids") or []
+            names = draft.get("names") or []
+            qtys = draft.get("qtys") or []
+            price_by_id = await _catalog_price_by_id() if ids else {}
+            products_map, total = _build_products_map(ids, names, qtys, price_by_id)
+
+            person_id = person_ctx
+            if person_id is None:
+                person_id = await _resolve_person(client, wa, draft.get("nombre"))
+
+            stage_key = "cancelado" if es_cancelado else "no_atendido"
+            body = _build_lead_body(
+                person_id, wa, draft.get("nombre"), None, "Pedido en curso (WhatsApp)",
+                draft.get("ciudad"), stage_key, total, products_map, edad=draft.get("edad"),
+            )
+            lead_id = await _upsert_lead(client, lead_ctx, body)
+            if lead_id and wa:
+                _LAST_LEAD_BY_WA[wa] = lead_id
+
+            # Persist person attrs (edad/ciudad) best-effort so a returning client isn't re-asked.
+            if person_id and (draft.get("edad") is not None or draft.get("ciudad")):
+                try:
+                    await _set_person_attrs(
+                        client, person_id, edad=draft.get("edad"), ciudad=draft.get("ciudad"),
+                        nombre=draft.get("nombre"), wa_id=wa,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    log.warning("actualizar_pedido_person_update_failed", person_id=person_id, error=str(e))
+
+        log.info(
+            "kohlberg_pedido_actualizado",
+            lead_id=lead_id, ciudad=draft.get("ciudad"), nombre=draft.get("nombre"),
+            edad=_to_int(draft.get("edad")), lineas=len(products_map), total=total, cancelado=es_cancelado,
+        )
+        return json.dumps(
+            {"lead_id": lead_id, "ciudad": draft.get("ciudad"), "lineas": len(products_map),
+             "total": total, "cancelado": es_cancelado},
+            ensure_ascii=False,
+        )
+    except httpx.HTTPStatusError as e:
+        log.warning("actualizar_pedido_http_error", status=e.response.status_code)
+        return json.dumps({"lead_id": lead_ctx, "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        log.exception("actualizar_pedido_failed", error=str(e))
+        return json.dumps({"lead_id": lead_ctx, "error": str(e) or type(e).__name__}, ensure_ascii=False)
+
 
 @tool
 async def think(pensamiento: str) -> str:
