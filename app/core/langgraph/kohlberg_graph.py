@@ -3,7 +3,7 @@
 Flow: WhatsApp -> Krayin CRM (kohlberg.sofopolis.com) -> agent -> CRM. Same Postgres checkpointer /
 Langfuse infrastructure as the other agents; the difference is the prompt (kohlberg.md) and the tool
 set (kohlberg.py): get_promos (wine catalog / única fuente de verdad), get_sucursales (pickup branch /
-advisor phone), registrar_pedido (the confirmed order as a Krayin lead) and think.
+advisor phone) and registrar_pedido (the confirmed order as a Krayin lead).
 
 The only ids the tools use (conversation_id / lead_id / person_id) are injected via config.metadata and
 never reach the model; the ONLY ids the LLM handles are the public product_id values it reads back from
@@ -22,7 +22,14 @@ from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
 
 from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    SystemMessage,
+    ToolMessage,
+    trim_messages,
+)
+from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.runnables.config import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -44,7 +51,6 @@ from app.core.langgraph.tools.kohlberg import (
     get_promos,
     get_sucursales,
     registrar_pedido,
-    think,
 )
 from app.core.logging import logger
 from app.core.observability import langfuse_callback_handler
@@ -62,10 +68,13 @@ _KOHLBERG_TOOLS = [
     registrar_pedido,
     get_pedidos,
     derivar_a_asesor,
-    think,
 ]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "kohlberg.md")
+# C4: presupuesto de tokens del HISTORIAL por turno. Generoso a propósito — una charla de
+# venta típica (decenas de mensajes cortos) no se recorta; solo acota charlas muy largas para
+# que no re-envíen todo. Se preservan el system (aparte) y los pares tool_call/ToolMessage.
+_HISTORY_MAX_TOKENS = 4000
 _TZ_BOLIVIA = ZoneInfo("America/La_Paz")
 _DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 _MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
@@ -83,10 +92,12 @@ def _load_kohlberg_prompt(
     nombre_registrado: Optional[str] = None,
     nombre_whatsapp: Optional[str] = None,
 ) -> str:
-    """Render the Kohlberg system prompt with Bolivia local datetime and contact context.
+    """Arma el system prompt: cuerpo ESTÁTICO + bloque VOLÁTIL (fecha/hora + contacto) al final.
 
-    Uses str.replace (NOT str.format): the prompt contains literal braces in block templates that
-    .format would treat as fields. We substitute only the known {current_datetime} marker.
+    C1 (optimización de tokens): todo lo que cambia por llamada —fecha/hora, ids, nombres—
+    vive al FINAL, así el cuerpo estático (`_PROMPT_TEMPLATE`) queda byte-idéntico entre
+    llamadas y OpenAI puede cachear ese prefijo (~6k tok). Si algo volátil se colara arriba,
+    el cache se rompe; el test test_prefix_is_stable lo caza.
     """
     now = datetime.now(_TZ_BOLIVIA)
     current_datetime = (
@@ -94,23 +105,29 @@ def _load_kohlberg_prompt(
         f"{now.strftime('%H:%M')}"
     )
 
-    context_lines = ["# Contexto del contacto", f"wa_id: {wa_id}"]
+    volatile_lines = [
+        "# Ahora (varía por mensaje)",
+        f"Fecha y hora actual: {current_datetime} (America/La_Paz)",
+        "",
+        "# Contexto del contacto",
+        f"wa_id: {wa_id}",
+    ]
     if conversation_id:
-        context_lines.append(f"conversation_id: {conversation_id}")
+        volatile_lines.append(f"conversation_id: {conversation_id}")
     if channel:
-        context_lines.append(f"canal: {channel}")
+        volatile_lines.append(f"canal: {channel}")
     if nombre_registrado:
-        context_lines.append(f"nombre_registrado: {nombre_registrado}")
+        volatile_lines.append(f"nombre_registrado: {nombre_registrado}")
     elif nombre_whatsapp:
-        context_lines.append(
+        volatile_lines.append(
             f"nombre_whatsapp: {nombre_whatsapp}  # nombre del perfil; úsalo sin volver a preguntarlo"
         )
     else:
-        context_lines.append("nombre_registrado: null  # pide el nombre del contacto si no lo dio")
+        volatile_lines.append("nombre_registrado: null  # pide el nombre del contacto si no lo dio")
 
-    context = "\n".join(context_lines)
-    rendered = _PROMPT_TEMPLATE.replace("{current_datetime}", current_datetime)
-    return rendered + f"\n\n{context}"
+    volatile = "\n".join(volatile_lines)
+    # El prefijo estable es exactamente _PROMPT_TEMPLATE.rstrip(); todo lo de abajo es volátil.
+    return _PROMPT_TEMPLATE.rstrip() + "\n\n" + volatile
 
 
 def _serialize_message(m: BaseMessage) -> str:
@@ -129,6 +146,27 @@ async def _persist_messages_async(wa_id: str, messages: list[BaseMessage]) -> No
     await asyncio.to_thread(_persist_messages, wa_id, messages)
 
 
+def _log_llm_token_usage(message: BaseMessage, *, wa_id: str, thread_id: Optional[str]) -> None:
+    """Log per-call token usage so el costo es visible en los logs (sin depender de Langfuse).
+
+    Lee `usage_metadata` de la AIMessage de LangChain. `cached_tokens > 0` confirma que el
+    prompt-cache de OpenAI está pegando en el prefijo estático (system prompt + tools).
+    Best-effort: si el modelo no reporta usage, no hace nada.
+    """
+    usage = getattr(message, "usage_metadata", None)
+    if not usage:
+        return
+    details = usage.get("input_token_details") or {}
+    logger.info(
+        "kohlberg_llm_tokens",
+        wa_id=wa_id,
+        thread_id=thread_id,
+        input_tokens=usage.get("input_tokens"),
+        output_tokens=usage.get("output_tokens"),
+        cached_tokens=details.get("cache_read"),
+    )
+
+
 class KohlbergAgent:
     """LangGraph agent for the Kohlberg "Club del Vino" (Sofía) WhatsApp sales assistant."""
 
@@ -137,7 +175,10 @@ class KohlbergAgent:
         self._llm = ChatOpenAI(
             model=settings.KOHLBERG_LLM_MODEL,
             api_key=SecretStr(settings.OPENAI_API_KEY),
-            max_tokens=4096,  # pyright: ignore[reportCallIssue]
+            # Techo de salida (C6): 1536 tok ≈ 1150 palabras, de sobra para un mensaje de
+            # WhatsApp (aun listando promos); frena una generación runaway. No cambia las
+            # respuestas normales — solo cobra los tokens realmente generados.
+            max_tokens=1536,  # pyright: ignore[reportCallIssue]
             temperature=0.2,
             timeout=settings.LLM_REQUEST_TIMEOUT,
             max_retries=2,
@@ -191,13 +232,26 @@ class KohlbergAgent:
             nombre_registrado=metadata.get("nombre_registrado"),
             nombre_whatsapp=metadata.get("nombre_whatsapp"),
         )
-        langchain_messages = [SystemMessage(content=system_prompt)] + list(state.messages)
+        # C4: acota el historial a un presupuesto de tokens (solo recorta charlas largas).
+        # strategy="last" conserva lo más reciente; start_on="human" evita arrancar en un
+        # ToolMessage/AIMessage huérfano (rompería la API de OpenAI). El system va aparte.
+        history = trim_messages(
+            list(state.messages),
+            max_tokens=_HISTORY_MAX_TOKENS,
+            strategy="last",
+            token_counter=count_tokens_approximately,
+            start_on="human",
+            include_system=False,
+            allow_partial=False,
+        )
+        langchain_messages = [SystemMessage(content=system_prompt)] + history
 
         try:
             response_message = await self._llm.ainvoke(
                 langchain_messages,
                 config={"callbacks": config.get("callbacks", [])},
             )
+            _log_llm_token_usage(response_message, wa_id=wa_id, thread_id=thread_id)
             response_message = process_llm_response(response_message)
             logger.info("kohlberg_llm_response", thread_id=thread_id)
 
@@ -303,7 +357,11 @@ class KohlbergAgent:
                 "nombre_registrado": nombre_registrado,
                 "nombre_whatsapp": nombre_whatsapp,
             },
-            "recursion_limit": 50,
+            # Cap del loop ReAct por turno: 15 super-steps ≈ 7 ciclos chat/tool, de sobra
+            # para un turno de venta guiado; frena un runaway de tools antes de quemar tokens
+            # (50 permitía ~25 saltos ≈ ~400k tokens en una sola respuesta). GraphRecursionError
+            # ya se captura más abajo.
+            "recursion_limit": 15,
         }
 
         try:

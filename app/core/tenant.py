@@ -78,6 +78,19 @@ def _build_env_registry() -> dict[str, TenantConfig]:
             crm_token=settings.ODONTOKING_API_TOKEN,
             llm_model="gpt-4o-mini",
         )
+    # Kohlberg (gateway sofo-crm): sin phone_number_id de Meta — el worker (WORKER_TENANT=kohlberg)
+    # necesita que get_tenant("kohlberg") NO sea None. No afecta el routing por teléfono (no tiene id).
+    registry["kohlberg"] = TenantConfig(
+        slug="kohlberg",
+        display_name="Kohlberg",
+        verify_token=settings.WHATSAPP_VERIFY_TOKEN,
+        phone_number_id="",
+        wa_access_token="",
+        agent_type="kohlberg",
+        crm_url=settings.KOHLBERG_API_URL,
+        crm_token=settings.KOHLBERG_API_TOKEN,
+        llm_model=settings.KOHLBERG_LLM_MODEL,
+    )
     logger.info("tenant_env_registry_loaded", tenants=list(registry.keys()))
     return registry
 

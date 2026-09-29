@@ -269,6 +269,13 @@ class Settings:
         # TTL (seconds) for the in-process product-catalog cache in get_promos. Collapses the heaviest
         # CRM call to once per window across all conversations, easing the CRM's 429 throttle.
         self.KOHLBERG_PROMOS_CACHE_TTL = int(os.getenv("KOHLBERG_PROMOS_CACHE_TTL", "60"))
+        # Cola durable (Redis Streams). OFF por default: el webhook sigue usando el message_buffer
+        # en-proceso. ON → crm.py publica al broker y el worker (python -m app.worker,
+        # WORKER_TENANT=kohlberg) consume con ACK-tras-éxito + reintento + DLQ. Flip sin redeploy.
+        self.KOHLBERG_USE_BROKER = os.getenv("KOHLBERG_USE_BROKER", "false").lower() in ("true", "1", "yes")
+        # Slug del tenant al que se publica/consume (debe existir en app/core/tenant.py y coincidir
+        # con WORKER_TENANT del worker de Kohlberg).
+        self.KOHLBERG_BROKER_TENANT = os.getenv("KOHLBERG_BROKER_TENANT", "kohlberg")
         # Deterministic intake (steps 1-6 forced by code). Disable to fall back to LLM-only flow.
         self.INTAKE_ENABLED = os.getenv("INTAKE_ENABLED", "true").lower() in ("true", "1", "yes")
         # Booking mode flag: when true, the LLM agent (LangGraph) drives the whole conversation

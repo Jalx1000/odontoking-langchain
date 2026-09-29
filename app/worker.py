@@ -25,6 +25,8 @@ _APP_ENV = os.getenv("APP_ENV", "development")
 
 from app.core.broker import RedisStreamBroker, create_broker
 from app.core.config import settings
+from app.core.langgraph.kohlberg_graph import kohlberg_agent
+from app.core.langgraph.tools.kohlberg import request_handoff
 from app.core.logging import logger
 from app.core.tenant import get_tenant
 from app.schemas import Message
@@ -38,6 +40,7 @@ def _build_agent_registry():
     return {
         "odontoking": agent,
         "imprimir": agent,
+        "kohlberg": kohlberg_agent,
     }
 
 
@@ -122,6 +125,55 @@ async def _handle_message(payload: dict, agent, tenant_slug: str) -> None:
             pass
 
 
+async def _handle_kohlberg_message(payload: dict) -> None:
+    """Procesa un mensaje de Kohlberg (gateway sofo-crm) y responde por reply_url.
+
+    Semántica de error CLAVE para la cola durable: si get_response o el envío LANZAN
+    (cuota de OpenAI, timeout, red), la excepción PROPAGA → el broker NO hace ACK →
+    reintenta (y tras MAX_RETRIES va al DLQ). Solo un payload inválido se descarta (return
+    = ACK). At-least-once: en un reclaim tras crash puede reprocesarse (posible respuesta
+    duplicada); es el trade-off aceptado para no perder mensajes.
+    """
+    wa_id = payload.get("wa_id", "")
+    text = payload.get("text", "")
+    message_id = payload.get("message_id", "")
+    conversation_id = payload.get("conversation_id")
+    reply_url = payload.get("reply_url", "") or ""
+    ctx = payload.get("patient_ctx") or {}
+
+    if not wa_id or not text:
+        logger.warning("worker_kohlberg_invalid_payload", payload=str(payload)[:200])
+        return  # terminal → ACK (no reintentar un payload inservible)
+
+    gateway = get_gateway()
+    dest = Destination(wa_id=wa_id, conversation_id=conversation_id, reply_url=reply_url)
+    handoff: dict = {}
+
+    async def _on_handoff(signal: dict) -> None:
+        handoff.update(signal)
+
+    logger.info("worker_kohlberg_turn_started", wa_id=wa_id, message_id=message_id, text_preview=text[:120])
+    # NO envolvemos en try/except que trague: un fallo del LLM debe propagar para reintentar.
+    response_text = await kohlberg_agent.get_response(
+        [Message(role="user", content=text)],
+        wa_id,
+        conversation_id=conversation_id,
+        lead_id=ctx.get("lead_id"),
+        person_id=ctx.get("person_id"),
+        channel=ctx.get("channel"),
+        nombre_registrado=ctx.get("nombre_registrado"),
+        nombre_whatsapp=ctx.get("nombre_whatsapp"),
+        handoff_callback=_on_handoff,
+    )
+    await gateway.send_response(dest, response_text)
+    logger.info("worker_kohlberg_response_sent", wa_id=wa_id, message_id=message_id, preview=response_text[:120])
+
+    # Derivar DESPUÉS de responder (la respuesta es el aviso al cliente; una vez derivado el CRM 409ea
+    # cualquier /messages posterior, por eso el orden importa).
+    if "reason" in handoff and conversation_id is not None:
+        await request_handoff(conversation_id, handoff.get("reason", ""), handoff.get("ciudad"))
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 async def run_worker(tenant_slug: str) -> None:
@@ -155,9 +207,14 @@ async def run_worker(tenant_slug: str) -> None:
         logger.error("worker_requires_redis", tenant=tenant_slug)
         sys.exit(1)
 
-    # Handler closure captures agent and tenant_slug
-    async def handler(payload: dict) -> None:
-        await _handle_message(payload, agent, tenant_slug)
+    # Handler closure captures agent and tenant_slug. Kohlberg (gateway sofo-crm) usa su propio
+    # handler: responde por reply_url y propaga errores para que la cola reintente.
+    if tenant_slug == "kohlberg":
+        async def handler(payload: dict) -> None:
+            await _handle_kohlberg_message(payload)
+    else:
+        async def handler(payload: dict) -> None:
+            await _handle_message(payload, agent, tenant_slug)
 
     # Graceful shutdown on SIGTERM / SIGINT
     loop = asyncio.get_running_loop()

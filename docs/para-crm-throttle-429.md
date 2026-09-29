@@ -1,9 +1,10 @@
 # Para el equipo del CRM — subir el throttle del token del agente (429)
 
 > De: equipo del agente IA (Sofía / Kohlberg). CRM: Krayin/Laravel, `kohlberg.sofopolis.com`.
-> **Urgente-ish:** el agente va a pasar a escribir el lead **en vivo** (cada dato del
-> cliente = un PUT), así que las llamadas por conversación suben de ~1 a **~5-6**. Con
-> el throttle actual eso va a disparar `429 Too Many Attempts` seguido.
+> **Urgente-ish:** el agente escribe el lead **en vivo** en los momentos clave (ciudad y
+> cada vino), así que las llamadas por conversación suben de ~1 a **~3** (cadencia
+> híbrida; nombre/edad viajan de paso, no gastan PUT propio). Con el throttle actual eso
+> puede disparar `429 Too Many Attempts`.
 
 ## El síntoma que ya vemos
 
@@ -20,11 +21,12 @@ límite para el token del agente.
 
 ## Por qué empeora ahora
 
-Hoy el agente escribe el pedido **una vez**, al confirmar. Vamos a cambiarlo a
-**registro incremental**: apenas el cliente dice ciudad → PUT; nombre → PUT; edad →
-PUT; cada vino → PUT; confirmar → PUT. Es a pedido del negocio (que el lead quede
-registrado aunque el cliente abandone). Resultado: **~5-6 requests por conversación**
-en vez de 1, a veces en pocos segundos.
+Hoy el agente escribe el pedido **una vez**, al confirmar. Lo cambiamos a **registro
+híbrido**: PUT cuando el cliente dice su ciudad (mueve el lead a la ciudad/asesor) y PUT
+cada vez que elige/cambia vinos; nombre y edad viajan de paso en esos mismos PUT (no
+gastan uno propio); + el PUT de confirmación. Es a pedido del negocio (que el lead quede
+registrado aunque el cliente abandone). Resultado: **~3 requests por conversación** en
+vez de 1, a veces en pocos segundos.
 
 ## Lo que pedimos (una de estas, en orden de preferencia)
 
@@ -71,8 +73,9 @@ agente: `POST/PUT /api/v1/leads`, `PUT /api/v1/contacts/persons/{id}`,
 - **No reintentamos 429** (fail-fast, no ahondamos el bucket).
 - **Cacheamos el catálogo** (`GET /api/v1/products`) en memoria con TTL corto, así la
   llamada más pesada corre una vez por ventana entre todas las conversaciones.
-- Solo hacemos PUT **cuando llega un dato nuevo**, no en cada turno.
-- Aun así, el incremental nos deja en ~5-6 escrituras/charla — de ahí el pedido.
+- Solo hacemos PUT en **momentos clave** (ciudad y cada vino), no en cada turno; nombre/edad
+  viajan de paso.
+- Aun así, el híbrido nos deja en ~3 escrituras/charla — de ahí el pedido.
 
 ## Un detalle que ayuda: `Retry-After`
 
@@ -82,6 +85,6 @@ perder el mensaje. Sin el header, no hay forma de saber cuánto esperar.
 
 ## Resumen de una línea
 
-> El agente va a escribir el lead en vivo (~5-6 requests/conversación). Denle al
+> El agente escribe el lead en vivo (~3 requests/conversación). Denle al
 > **token del agente un limiter propio y alto** (`RateLimiter::for('api')` keyed por
 > ese usuario, p. ej. 600/min o `Limit::none()`), y devuelvan `Retry-After` en el 429.

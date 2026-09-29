@@ -777,20 +777,14 @@ async def _get_products_cached() -> list[dict[str, Any]]:
 
 @tool
 async def get_promos(ciudad: Optional[str] = None) -> str:
-    """Obtiene las promociones y vinos ACTIVOS del Club del Vino Kohlberg (única fuente de verdad).
+    """Vinos y promos ACTIVOS del Club del Vino (ÚNICA fuente de verdad de vinos/precios; nunca los inventes).
 
-    Es la ÚNICA fuente válida de vinos, precios y promociones: nunca inventes ninguno de esos datos.
-    Filtra por la CIUDAD del cliente (pásala apenas la conozcas): solo devuelve productos habilitados y
-    disponibles en esa ciudad (o disponibles para todas). Separa `vinos` y `packs`. Cada ítem trae su
-    `product_id` (úsalo tal cual al registrar el pedido), `name` (nombre exacto, respétalo), su
-    descripción y su precio. Si un vino no trae precio de descuento, NO muestres "Precio Club del Vino"
-    con un precio inventado. Muestra máximo 3 por respuesta.
+    Filtra por la CIUDAD del cliente (pásala apenas la conozcas). Devuelve `vinos` y `packs`; cada ítem
+    trae `product_id` (úsalo tal cual al registrar), `name` (respétalo), descripción y precio. Sin precio
+    de descuento, no muestres un "Precio Club del Vino" inventado. Máximo 3 por respuesta.
 
     Args:
-        ciudad: Ciudad del cliente (texto libre; se normaliza por dentro). Sin ciudad → solo productos
-            marcados para todas las ciudades.
-
-    Devuelve {"ciudad_id", "total_vinos", "total_packs", "vinos": [...], "packs": [...]}.
+        ciudad: Ciudad del cliente (texto libre; se normaliza). Sin ciudad → solo productos para todas.
     """
     log = logger.bind(tool="get_promos", ciudad=(ciudad or "")[:40])
     ciudad_id = _city_product_id(ciudad)
@@ -840,19 +834,13 @@ async def get_promos(ciudad: Optional[str] = None) -> str:
 
 @tool
 async def get_sucursales(ciudad: Optional[str] = None) -> str:
-    """Devuelve las sucursales de Kohlberg (warehouses del CRM) filtradas por ciudad.
+    """Sucursales de Kohlberg (warehouses) por ciudad. No hay delivery: el cliente SIEMPRE recoge en sucursal.
 
-    Consulta GET /api/v1/settings/warehouses y filtra por nombre == ciudad. Úsala en dos casos:
-    1) Tras confirmar el pedido, para indicar la sucursal donde el cliente recoge y cancela.
-    2) Cuando el cliente pide hablar con un asesor: pregunta primero la ciudad y comparte SOLO el
-       teléfono de esa ciudad (nunca el de otra, nunca inventes un número).
-
-    No se hace delivery ni entregas a domicilio: el cliente siempre recoge en sucursal.
+    Úsala: (1) tras confirmar, para indicar la sucursal de recojo; (2) al pedir asesor, comparte SOLO el
+    teléfono de esa ciudad (nunca otro, nunca inventado).
 
     Args:
-        ciudad: Ciudad del cliente (texto libre; se normaliza por dentro). Si se omite, devuelve todas.
-
-    Devuelve {"total_encontrados": <n>, "sucursales": [<warehouse>...]}.
+        ciudad: Ciudad del cliente (texto libre; se normaliza). Si se omite, devuelve todas.
     """
     log = logger.bind(tool="get_sucursales", ciudad=(ciudad or "")[:40])
     # Match on the canonical city name when we recognise it, else on the raw text (mirrors the n8n
@@ -1420,21 +1408,20 @@ async def actualizar_pedido(
     cantidad_product: Optional[list[int]] = None,
     es_cancelado: bool = False,
 ) -> str:
-    """Registra EN VIVO el pedido del cliente: llamala apenas capta CADA dato, sin esperar al final.
+    """Registra EN VIVO el pedido del cliente en los momentos clave (no esperes al final).
 
-    Un lead = el pedido de hoy de ese cliente. Llamala en cuanto el cliente diga su CIUDAD (mueve el
-    lead a la ciudad/asesor correctos), su NOMBRE, su EDAD, o elija/cambie VINOS — así todo queda
-    registrado aunque el cliente abandone. Pasá SIEMPRE la lista COMPLETA de productos conocida hasta
-    ahora (todos los vinos del pedido, no solo el último), porque reemplaza la lista del lead. Los
-    precios salen del catálogo (get_promos), no los pases vos. es_cancelado=True marca el pedido como
-    cancelado. Esto NO confirma el pedido final: para el cierre + sucursal usá registrar_pedido.
+    Un lead = el pedido de hoy de ese cliente. Llamala: (1) apenas diga su CIUDAD (mueve el lead a la
+    ciudad/asesor correctos) y (2) cada vez que elija/cambie VINOS. Si ya sabés nombre/edad, incluílos
+    de paso en esa misma llamada, pero NO llames solo por el nombre o la edad. Pasá SIEMPRE la lista
+    COMPLETA de vinos conocida (no solo el último): reemplaza la del lead. Los precios salen del catálogo
+    (get_promos), no los pases vos. es_cancelado=True marca el pedido como cancelado. NO confirma el
+    pedido final: para el cierre + sucursal usá registrar_pedido.
 
     Args:
         config: contexto inyectado por el grafo (lead/persona/teléfono). No lo pasa el modelo.
-        ciudad: ciudad del cliente cuando la diga (Santa Cruz, Cochabamba, La Paz, Tarija, Sucre,
-            Potosí, Oruro).
-        nombre: nombre del cliente cuando lo diga.
-        edad: edad del cliente cuando la diga.
+        ciudad: ciudad del cliente cuando la diga.
+        nombre: nombre del cliente (mandalo de paso con ciudad o vinos; no llames solo por esto).
+        edad: edad del cliente (mandala de paso con ciudad o vinos; no llames solo por esto).
         product_id: ids (de get_promos) de TODOS los vinos elegidos hasta ahora, lista completa.
         product_name: nombres exactos (de get_promos), en el mismo orden que product_id.
         cantidad_product: cantidad de cada vino, en el mismo orden.
@@ -1541,18 +1528,16 @@ async def think(pensamiento: str) -> str:
 async def derivar_a_asesor(reason: str, ciudad: Optional[str] = None) -> str:
     """Deriva la conversación a un asesor humano de la ciudad del cliente.
 
-    Úsala cuando el cliente pida hablar con una persona/asesor, esté molesto o repita un reclamo, o
-    cuando la consulta exceda lo que podés resolver (reclamos por un pedido entregado, temas de pago,
-    precios especiales, cambios sobre un pedido ya confirmado). El mensaje que escribís en ESTA misma
-    respuesta es el aviso al cliente (breve, natural, sin prometer tiempos). Después de derivar NO
-    vuelvas a escribirle: lo atiende una persona. No derives dos veces.
+    Úsala cuando el cliente pida hablar con una persona, esté molesto/repita un reclamo, o la consulta
+    exceda lo que resolvés (reclamos de un pedido entregado, pago, precios especiales, cambios sobre un
+    pedido ya confirmado). El mensaje de ESTA respuesta es el aviso al cliente (breve, sin prometer
+    tiempos). Después de derivar NO le vuelvas a escribir; no derives dos veces.
 
     Args:
-        reason: Motivo en una frase (español) para que el asesor entienda el contexto sin leer el chat.
-        ciudad: Ciudad del cliente SOLO si la sabés con certeza por la conversación (Tarija, Santa Cruz,
-            La Paz, Cochabamba, Sucre, Potosí, Oruro). Omitila si no estás seguro; NO la deduzcas del
-            código de área ni del nombre - una ciudad equivocada manda al cliente con el asesor
-            equivocado. Sin ciudad, la conversación cae al pool del equipo (igual es válido).
+        reason: Motivo en una frase (español) para que el asesor entienda el contexto.
+        ciudad: Ciudad del cliente SOLO si la sabés con certeza por la conversación. NO la deduzcas del
+            código de área ni del nombre (una ciudad errada lo manda con el asesor equivocado). Sin
+            ciudad, cae al pool del equipo (válido).
     """
     # Pure signal: the actual POST /handoff is done by the caller AFTER the client notice is sent
     # (once derived the CRM 409s any further /messages, so order matters).

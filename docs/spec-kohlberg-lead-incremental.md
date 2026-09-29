@@ -1,6 +1,11 @@
 # Spec: el lead-pedido se llena en vivo con cada dato (Kohlberg)
 
-> Estado: **aprobado para implementar** (decisiones del usuario 2026-09-23).
+> Estado: **implementado, cadencia ajustada a HÍBRIDA** (2026-09-28, ver
+> `spec-kohlberg-optimizacion-tokens.md`). El "incremental total" (PUT por CADA dato →
+> ~5-6 PUT) pasó a **híbrido**: PUT solo en **ciudad** y en **cada vino** (~3 PUT);
+> nombre/edad viajan de paso, sin PUT propio. Motivo: bajar tokens (round-trips) y el 429,
+> conservando lo importante (ciudad y productos quedan registrados aunque el cliente
+> abandone). El resto describe el diseño incremental original.
 > Reemplaza el modelo "escribir todo al confirmar".
 
 ## Objetivo

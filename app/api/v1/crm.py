@@ -13,6 +13,7 @@ from hashlib import sha256
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.core.broker import broker
 from app.core.config import settings
 from app.core.langgraph.kohlberg_graph import kohlberg_agent
 from app.core.langgraph.tools.kohlberg import request_handoff
@@ -235,6 +236,31 @@ async def receive_crm_event(request: Request) -> dict:
     # A failure to enqueue/schedule here is transient (buffer/loop hiccup), not a bad payload: answer
     # 503 so the CRM's retries (1 + 3 spaced a minute) actually rescue the message.
     try:
+        # Cola durable (flag ON): publicá al broker y el worker responde (ACK-tras-éxito + reintento
+        # + DLQ). Lleva reply_url/conversation_id para que el worker pueda contestar por el CRM. Si el
+        # publish falla (Redis caído), caemos al path en-proceso para no perder el mensaje.
+        if settings.KOHLBERG_USE_BROKER:
+            try:
+                await broker.publish(
+                    settings.KOHLBERG_BROKER_TENANT,
+                    convo_key,
+                    {
+                        "text": text,
+                        "message_id": msg_key,
+                        "conversation_id": event.conversation_id,
+                        "reply_url": reply_url,
+                        "patient_ctx": patient_ctx,
+                    },
+                )
+                logger.info(
+                    "crm_message_published_to_broker",
+                    conversation_id=event.conversation_id,
+                    wa_id=convo_key,
+                    msg_id=msg_key,
+                )
+                return {"status": "ok"}
+            except Exception as e:
+                logger.warning("crm_broker_publish_failed_fallback", conversation_id=event.conversation_id, error=str(e))
         if settings.BUFFER_ENABLED:
             await message_buffer_service.enqueue(convo_key, text, process_fn)
         else:
