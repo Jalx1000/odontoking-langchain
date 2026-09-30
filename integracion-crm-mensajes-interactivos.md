@@ -6,7 +6,10 @@ pueda **enviar botones/listas** por WhatsApp y **recibir la opción que el clien
 Complementa a `integracion-gateway-whatsapp.md` (contrato base de mensajería). Aquí solo se
 describe lo **nuevo**; todo lo demás (auth, webhook, ventana de 24h) sigue igual.
 
-Base URL: `https://imprimir.sofopolis.com`
+Base URL (despliegue Ponce): `https://poncedeleon.sofopolis.com`
+
+> El agente responde siempre a la `reply.url` que viene en el evento entrante (no arma la URL desde
+> una plantilla), así que un cambio de host del lado del CRM no lo rompe.
 
 ---
 

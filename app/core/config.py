@@ -251,6 +251,11 @@ class Settings:
         self.WHATSAPP_AGENT_TOKEN = os.getenv("WHATSAPP_AGENT_TOKEN", "")
         # Outbound auth: Sanctum API key of a dedicated CRM user (obtained once via POST /api/v1/login).
         self.CRM_API_KEY = os.getenv("CRM_API_KEY", "")
+        # Whether this CRM deployment supports WhatsApp interactive messages (buttons/lists). When true,
+        # CrmGateway sends numbered options as an `interactive` payload; the CRM degrades to numbered
+        # text on gateways without native buttons. Keep false on deployments where the CRM lacks the
+        # interactive endpoint (replies fall back to plain text).
+        self.CRM_SUPPORTS_INTERACTIVE = os.getenv("CRM_SUPPORTS_INTERACTIVE", "false").strip().lower() in ("true", "1", "yes")
         # Auto-create the patient in the Odontoking CRM on first contact for the CRM inbound path.
         self.WHATSAPP_AUTO_CREATE_PERSON = os.getenv("WHATSAPP_AUTO_CREATE_PERSON", "true").lower() in ("true", "1", "yes")
 

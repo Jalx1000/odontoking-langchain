@@ -7,12 +7,14 @@ key (settings.CRM_API_KEY) and POST to the conversation's reply endpoint.
 The CRM has no typing-indicator or read-receipt API, so those methods are no-ops.
 """
 
+from urllib.parse import urlsplit
+
 import httpx
 
 from app.core.config import settings
 from app.core.logging import logger
 from app.services.gateway.base import Destination
-from app.services.whatsapp_client import _strip_body_markdown
+from app.services.whatsapp_client import _strip_body_markdown, build_interactive_payload
 
 
 def _reply_url(dest: Destination) -> str:
@@ -41,7 +43,43 @@ async def _post_text(dest: Destination, text: str) -> None:
         if not resp.is_success:
             logger.error("crm_reply_error", wa_id=dest.wa_id, status=resp.status_code, body=resp.text[:300])
         resp.raise_for_status()
-        logger.info("crm_text_sent", wa_id=dest.wa_id, conversation_id=dest.conversation_id, length=len(text))
+        logger.info(
+            "crm_text_sent",
+            wa_id=dest.wa_id,
+            conversation_id=dest.conversation_id,
+            reply_host=urlsplit(url).netloc,  # confirms which CRM deployment received the reply
+            length=len(text),
+        )
+
+
+async def _post_interactive(dest: Destination, interactive: dict) -> None:
+    """POST an interactive (button/list) payload to the CRM, which forwards it to WhatsApp.
+
+    The CRM degrades to numbered text on gateways without native buttons, so this never needs a
+    text fallback here. Same 24h-window 422 handling as text.
+    """
+    url = _reply_url(dest)
+    payload = {"interactive": interactive}
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {settings.CRM_API_KEY}",
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+        if resp.status_code == 422:
+            logger.warning("crm_reply_rejected", wa_id=dest.wa_id, status=422, body=resp.text[:300])
+            return
+        if not resp.is_success:
+            logger.error("crm_reply_error", wa_id=dest.wa_id, status=resp.status_code, body=resp.text[:300])
+        resp.raise_for_status()
+        logger.info(
+            "crm_interactive_sent",
+            wa_id=dest.wa_id,
+            conversation_id=dest.conversation_id,
+            reply_host=urlsplit(url).netloc,  # confirms which CRM deployment received the reply
+            render_type=interactive.get("type"),
+        )
 
 
 class CrmGateway:
@@ -50,12 +88,20 @@ class CrmGateway:
     name = "sofo-crm"
 
     async def send_response(self, dest: Destination, text: str) -> None:
-        """Send an agent response to the CRM as plain text.
+        """Send an agent response through the CRM.
 
-        The CRM/WhatsApp render Markdown literally, so emphasis markers are stripped like
-        the Meta path. Numbered options stay as text (the CRM has no interactive button API).
+        Markdown emphasis is stripped (the CRM/WhatsApp render it literally). If this deployment's
+        CRM supports interactive messages (CRM_SUPPORTS_INTERACTIVE) and the reply has numbered
+        options, send them as buttons/list; otherwise plain text. The CRM itself degrades interactive
+        to numbered text on gateways without native buttons.
         """
-        await _post_text(dest, _strip_body_markdown(text))
+        stripped = _strip_body_markdown(text)
+        if settings.CRM_SUPPORTS_INTERACTIVE:
+            interactive = build_interactive_payload(stripped, dest.wa_id)
+            if interactive:
+                await _post_interactive(dest, interactive)
+                return
+        await _post_text(dest, stripped)
 
     async def send_text(self, dest: Destination, text: str) -> None:
         """Send a plain text message through the CRM."""
