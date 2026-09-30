@@ -71,9 +71,10 @@ _DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "do
 _MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
              "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
 
-# Brand placeholders in c21.md ({{OFICINA}} / {{UMBRAL}}). Configurable, with sensible defaults so the
-# client never sees a raw placeholder. Adjust UMBRAL to the real derivation threshold.
-_OFICINA = _os.getenv("C21_OFICINA", "Blu Inversiones")
+# Brand placeholders in c21.md ({{OFICINA}} / {{UMBRAL}}). {{OFICINA}} renders the full public brand
+# name the client sees; configurable via C21_OFICINA. Sensible defaults so the client never sees a raw
+# placeholder. Adjust UMBRAL to the real derivation threshold.
+_OFICINA = _os.getenv("C21_OFICINA", "Ponce de León")
 _UMBRAL = _os.getenv("C21_UMBRAL", "USD 300.000")
 
 with open(_PROMPT_FILE, "r") as _f:

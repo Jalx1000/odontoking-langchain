@@ -118,7 +118,7 @@ async def buscar_inmuebles(
     parqueos_min: Optional[int] = None,
     limite: int = 3,
 ) -> str:
-    """Busca inmuebles disponibles en la cartera de CENTURY 21. Única fuente de verdad.
+    """Busca inmuebles disponibles en la cartera de Ponce de León. Única fuente de verdad.
 
     Devuelve solo disponibles (hasta 3 por defecto; subí `limite` si el cliente pide ver más). La
     oficina trabaja una sola plaza: NO se pregunta la ciudad. Para un lote usá `m2_terreno_min` (no
