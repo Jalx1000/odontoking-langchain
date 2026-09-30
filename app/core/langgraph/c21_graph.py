@@ -237,20 +237,35 @@ class C21Agent:
     async def _tool_call(self, state: GraphState, config: RunnableConfig) -> Command:
         tool_calls = state.messages[-1].tool_calls
 
-        async def _execute(tc: dict) -> ToolMessage:
+        def _key(tc: dict) -> str:
+            return f"{tc['name']}:{json.dumps(tc.get('args', {}), sort_keys=True, ensure_ascii=False, default=str)}"
+
+        async def _run(tc: dict) -> str:
             try:
-                result = await self.tools_by_name[tc["name"]].ainvoke(tc["args"], config)
+                return await self.tools_by_name[tc["name"]].ainvoke(tc["args"], config)
             except GraphBubbleUp:
                 raise
             except Exception as e:
                 logger.warning("tool_execution_failed", tool=tc["name"], error=str(e))
-                result = json.dumps({"error": str(e)})
-            return ToolMessage(content=result, name=tc["name"], tool_call_id=tc["id"])
+                return json.dumps({"error": str(e)})
 
-        if len(tool_calls) == 1:
-            outputs = [await _execute(tool_calls[0])]
-        else:
-            outputs = list(await asyncio.gather(*[_execute(tc) for tc in tool_calls]))
+        # Dedup identical calls in the SAME message: the LLM sometimes emits the same tool call twice
+        # (e.g. enviar_media for one codigo → images sent twice). Execute each unique (name, args)
+        # only once and map its result back to every matching tool_call_id, keeping the message valid.
+        first_by_key: dict[str, dict] = {}
+        for tc in tool_calls:
+            first_by_key.setdefault(_key(tc), tc)
+        if len(first_by_key) < len(tool_calls):
+            logger.info("c21_tool_calls_deduped", removed=len(tool_calls) - len(first_by_key))
+
+        keys = list(first_by_key)
+        results = await asyncio.gather(*[_run(first_by_key[k]) for k in keys])
+        result_by_key = dict(zip(keys, results))
+
+        outputs = [
+            ToolMessage(content=result_by_key[_key(tc)], name=tc["name"], tool_call_id=tc["id"])
+            for tc in tool_calls
+        ]
         return Command(update={"messages": outputs}, goto="chat")
 
     async def create_graph(self) -> Optional[CompiledStateGraph]:
