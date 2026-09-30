@@ -75,7 +75,7 @@ _MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
 # so the client never sees a raw placeholder. Adjust UMBRAL to the real derivation threshold.
 _OFICINA = _os.getenv("C21_OFICINA", "Ponce de León")
 _UMBRAL = _os.getenv("C21_UMBRAL", "USD 300.000")
-_UBICACION = _os.getenv("C21_UBICACION_URL", "https://maps.app.goo.gl/X6teQyMTcsWJvxrHn9")
+_UBICACION = _os.getenv("C21_UBICACION_URL", "https://maps.app.goo.gl/X6teQyAFL4AhcHmQ9")
 
 with open(_PROMPT_FILE, "r") as _f:
     _PROMPT_TEMPLATE = _f.read()
