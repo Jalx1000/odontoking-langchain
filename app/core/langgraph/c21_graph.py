@@ -40,7 +40,6 @@ from app.core.langgraph.tools.inmobiliaria import (
     get_historial,
     get_inmueble,
     guardar_telefono,
-    registrar_captacion,
     registrar_postventa,
     registrar_solicitud,
 )
@@ -58,7 +57,6 @@ _C21_TOOLS = [
     enviar_media,
     enviar_ubicacion,
     registrar_solicitud,
-    registrar_captacion,
     registrar_postventa,
     get_historial,
     guardar_telefono,

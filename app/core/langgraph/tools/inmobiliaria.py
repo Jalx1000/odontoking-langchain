@@ -284,7 +284,7 @@ async def enviar_ubicacion(codigo: str, config: RunnableConfig) -> str:
 async def _post_conversation(path: str, body: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """POST to /inmobiliaria/conversations/{id}/<path>, filling nombre from context when absent.
 
-    Shared by solicitud/captacion/postventa. Returns the CRM json (with lead_id/referencia) or an
+    Shared by solicitud/postventa. Returns the CRM json (with lead_id/referencia) or an
     {"error": ...} dict; never raises - a lead failure must not break the reply.
     """
     conversation_id = _ctx_conversation_id(config)
@@ -354,51 +354,6 @@ async def registrar_solicitud(
         "notas": notas,
     }
     data = await _post_conversation("solicitud", body, config)
-    lead_id = data.get("lead_id")
-    return json.dumps(
-        {"lead_id": lead_id, "referencia": data.get("referencia") or (f"Solicitud #{lead_id}" if lead_id else None),
-         **({"error": data["error"]} if data.get("error") else {})},
-        ensure_ascii=False,
-    )
-
-
-@tool
-async def registrar_captacion(
-    tipo: str,
-    zona: str,
-    config: RunnableConfig,
-    superficie: Optional[str] = None,
-    dormitorios: Optional[int] = None,
-    precio_esperado: Optional[float] = None,
-    moneda: Optional[str] = None,
-    estado_documental: Optional[str] = None,
-    motivo: Optional[str] = None,
-    detalle: Optional[str] = None,
-    nombre: Optional[str] = None,
-) -> str:
-    """Registra a un PROPIETARIO que quiere listar su inmueble (lead de captación).
-
-    No lo trates como comprador. No tases ni cotices comisión - eso lo ve el asesor.
-
-    Args:
-        tipo: Tipo de inmueble.
-        zona: Zona del inmueble.
-        config: Interno; lo inyecta el sistema. No lo pases.
-        superficie: Superficie (texto libre).
-        dormitorios: Dormitorios.
-        precio_esperado: Precio esperado por el propietario.
-        moneda: "USD" | "BOB".
-        estado_documental: Si los papeles están a su nombre, etc.
-        motivo: Por qué vende.
-        detalle: Detalle adicional.
-        nombre: Nombre del propietario (si no lo pasás, se toma del contexto).
-    """
-    body: dict[str, Any] = {
-        "nombre": nombre, "tipo": tipo, "zona": zona, "superficie": superficie,
-        "dormitorios": dormitorios, "precio_esperado": precio_esperado, "moneda": moneda,
-        "estado_documental": estado_documental, "motivo": motivo, "detalle": detalle,
-    }
-    data = await _post_conversation("captacion", body, config)
     lead_id = data.get("lead_id")
     return json.dumps(
         {"lead_id": lead_id, "referencia": data.get("referencia") or (f"Solicitud #{lead_id}" if lead_id else None),
