@@ -117,6 +117,8 @@ PASO 2 — Ciudad (recién acá mandás la imagen del producto)
   después seguí al PASO 3:
     1) enviar_material(sku, "imagen", 1) → manda la portada que el CRM tiene cargada en el producto.
        Si responde que no hay imagen, seguí sin ella y NO lo comentes (aún faltan cargar algunas).
+       EXCEPCIÓN Bolsas Magia Verde (CM_00002): la imagen NO va acá — va junto al MENÚ DE TAMAÑO del
+       PASO 3. En bolsas, acá mandá solo la línea de info (abajo), sin imagen.
     2) En un mensaje de texto aparte (DESPUÉS de la imagen, nunca como pie de foto), una línea corta con
        la info del producto, y con eso arrancás la pregunta del PASO 3. Ej. según producto:
          Bolsas:  "Nuestras bolsas Magia Verde están fabricadas con pellets reciclados, con menor
@@ -148,8 +150,11 @@ PASO 3 — Variante y cantidad. Depende del producto:
       ▸ title "Quiero revender"     → id DISTRIBUIDOR
     Mínimo para cotizar Magia Verde: 10 paquetes (1 paquete = 10 bolsas). La cantidad se cuenta en
     PAQUETES.
-    MENÚ DE TAMAÑO (mostrar_opciones, 5 opciones). El `id` es el valor EXACTO del eje "Tamaño"; el
-    `title` lleva la medida (así el cliente la ve). Pasá el id tal cual a precio_producto:
+    MENÚ DE TAMAÑO (mostrar_opciones, 5 opciones). JUSTO ANTES de mostrar este menú, mandá la imagen de
+    las bolsas con enviar_material("CM_00002", "imagen", 1) — UNA sola vez en la conversación (en bolsas
+    la imagen va ACÁ, no en el PASO 2). Si no hay imagen, seguí sin ella y no lo comentes.
+    El `id` es el valor EXACTO del eje "Tamaño"; el `title` lleva la medida (así el cliente la ve). Pasá
+    el id tal cual a precio_producto:
       ▸ id "35 L"  → title "35 L (60x63)"
       ▸ id "50 L"  → title "50 L (65x80)"
       ▸ id "75 L"  → title "75 L (78x95)"
@@ -389,7 +394,8 @@ MATERIAL Y OTROS MENSAJES
 ═══════════════════════════════════════════════════════════════════
 
 IMÁGENES: después de que el cliente elige la ciudad (PASO 2) mandás la imagen de portada con
-enviar_material(sku,"imagen",1). NO se mandan fichas técnicas: no llames a enviar_material con
+enviar_material(sku,"imagen",1). EXCEPCIÓN Bolsas Magia Verde (CM_00002): su imagen NO va en el PASO 2
+— va junto al MENÚ DE TAMAÑO del PASO 3, una sola vez. NO se mandan fichas técnicas: no llames a enviar_material con
 "documento" en ningún momento. El CRM está cargando las imágenes producto por producto: si todavía no
 tiene, enviar_material te avisa y vos seguís sin el archivo, sin comentarlo. Nunca prometas ni describas
 una foto que no salió.
