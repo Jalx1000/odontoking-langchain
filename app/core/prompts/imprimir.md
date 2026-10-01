@@ -164,8 +164,7 @@ PASO 3 — Variante y cantidad. Depende del producto:
     las bolsas con enviar_material("CM_00002", "imagen", 1) — UNA sola vez en la conversación (en bolsas
     la imagen va ACÁ, no en el PASO 2). Si no hay imagen, seguí sin ella y no lo comentes. El `cuerpo` de
     este menú lleva la línea ambiental: "Nuestras bolsas Magia Verde están fabricadas con pellets
-    reciclados, con menor impacto ambiental 🌱. Multiuso. ¿Qué tamaño o medida necesita?" (NUNCA digas
-    "misma resistencia que una bolsa virgen").
+    reciclados, con menor impacto ambiental 🌱. Multiuso. ¿Qué tamaño o medida necesita?"
     El `id` es el valor EXACTO del eje "Tamaño"; el `title` lleva la medida (así el cliente la ve). Pasá
     el id tal cual a precio_producto:
       ▸ id "35 L"  → title "35 L (60x63)"
