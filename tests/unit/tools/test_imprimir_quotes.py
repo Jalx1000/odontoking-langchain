@@ -20,6 +20,7 @@ from app.core.langgraph.tools.crm import (
     crear_cotizacion,
     derivar_a_asesor,
     enviar_material,
+    mostrar_opciones,
     quien_atiende,
 )
 
@@ -370,3 +371,128 @@ class TestRouteLeadPipeline:
         monkeypatch.setattr(crm, "_request", req)
         assert await _route_lead_pipeline(MagicMock(), 479, "") is None
         req.assert_not_called()
+
+
+def _patch_httpx_record_all(monkeypatch, *, status=200, payload=None, status_by_path=None):
+    """Patch crm.httpx.AsyncClient recording EVERY POST in order; returns the list.
+
+    `status_by_path` maps a url substring → status, so one call can make /media fail while
+    /interactive succeeds.
+    """
+    posts: list[dict] = []
+
+    def _code_for(url):
+        for frag, code in (status_by_path or {}).items():
+            if frag in url:
+                return code
+        return status
+
+    class _Resp:
+        def __init__(self, url, code):
+            self.url = url
+            self.status_code = code
+            self.headers = {"content-type": "application/json"}
+
+        def json(self):
+            return payload if payload is not None else {"enviados": 1}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            posts.append({"url": url, "json": json})
+            return _Resp(url, _code_for(url))
+
+        async def get(self, url, params=None, headers=None):
+            return _Resp(url, _code_for(url))
+
+    monkeypatch.setattr(crm.httpx, "AsyncClient", _Client)
+    return posts
+
+
+_TAMANO_MENU = [
+    {"id": t, "titulo": f"{t} (x)"} for t in ("35 L", "50 L", "75 L", "140 L", "200 L")
+]
+_CANAL_MENU = [
+    {"id": "HOGAR", "titulo": "Para mi casa"},
+    {"id": "TRADICIONAL", "titulo": "Tienda / mercado"},
+    {"id": "HORECA", "titulo": "Restaurante / hotel"},
+    {"id": "EMPRESARIAL", "titulo": "Empresa / oficina"},
+    {"id": "DISTRIBUIDOR", "titulo": "Quiero revender"},
+]
+
+
+class TestImagenBolsasAuto:
+    """Bolsas Magia Verde: the cover image is sent from code alongside the size menu."""
+
+    def test_detecta_menu_tamano_por_id(self):
+        """The 5-size menu is recognised by its axis ids ('35 L'…'200 L')."""
+        assert crm._es_menu_tamano_bolsas(_TAMANO_MENU) is True
+
+    def test_detecta_menu_tamano_por_titulo(self):
+        """It is recognised even if the id is generic but the title carries the measure."""
+        ops = [
+            {"id": f"op{i}", "titulo": t}
+            for i, t in enumerate(
+                ("35 L (60x63)", "50 L (65x80)", "75 L (78x95)", "140 L (90x110)", "200 L XXL")
+            )
+        ]
+        assert crm._es_menu_tamano_bolsas(ops) is True
+
+    def test_no_detecta_menu_canal(self):
+        """The channel (use) menu is NOT a size menu — no image must fire there."""
+        assert crm._es_menu_tamano_bolsas(_CANAL_MENU) is False
+
+    def test_no_detecta_menu_ciudad(self):
+        """The city menu is not a size menu either."""
+        ciudad = [
+            {"id": "Santa Cruz", "titulo": "Santa Cruz"},
+            {"id": "La Paz", "titulo": "La Paz"},
+            {"id": "Cochabamba", "titulo": "Cochabamba"},
+            {"id": "Otra ciudad", "titulo": "Otra ciudad"},
+        ]
+        assert crm._es_menu_tamano_bolsas(ciudad) is False
+
+    @pytest.mark.asyncio
+    async def test_menu_tamano_posts_image_before_menu(self, monkeypatch):
+        """Showing the size menu first POSTs the CM_00002 image, then the interactive menu."""
+        posts = _patch_httpx_record_all(monkeypatch, payload={"enviados": 1, "sku": "CM_00002"})
+        await mostrar_opciones.ainvoke(
+            {"cuerpo": "¿Qué tamaño o medida necesita?", "opciones": _TAMANO_MENU},
+            {"metadata": {"conversation_id": 77}},
+        )
+        assert len(posts) == 2
+        assert posts[0]["url"].endswith("/api/v1/productos/conversations/77/media")
+        assert posts[0]["json"] == {"sku": "CM_00002", "tipo": "imagen", "cantidad": 1}
+        assert posts[1]["url"].endswith("/api/v1/whatsapp/conversations/77/interactive")
+
+    @pytest.mark.asyncio
+    async def test_menu_canal_does_not_post_image(self, monkeypatch):
+        """The channel menu must NOT trigger an image: only the interactive POST happens."""
+        posts = _patch_httpx_record_all(monkeypatch, payload={})
+        await mostrar_opciones.ainvoke(
+            {"cuerpo": "¿Para qué uso la necesita?", "opciones": _CANAL_MENU},
+            {"metadata": {"conversation_id": 77}},
+        )
+        assert len(posts) == 1
+        assert posts[0]["url"].endswith("/interactive")
+
+    @pytest.mark.asyncio
+    async def test_image_failure_does_not_block_menu(self, monkeypatch):
+        """If the image POST fails, the size menu is still shown (best-effort)."""
+        posts = _patch_httpx_record_all(monkeypatch, status=200, status_by_path={"/media": 500})
+        out = await mostrar_opciones.ainvoke(
+            {"cuerpo": "¿Qué tamaño o medida necesita?", "opciones": _TAMANO_MENU},
+            {"metadata": {"conversation_id": 77}},
+        )
+        # The image (/media) was attempted and failed; the menu (/interactive) still ran.
+        assert any(p["url"].endswith("/media") for p in posts)
+        assert any(p["url"].endswith("/interactive") for p in posts)
+        assert "Opciones enviadas" in out

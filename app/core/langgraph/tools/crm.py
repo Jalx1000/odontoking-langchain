@@ -1349,6 +1349,63 @@ async def enviar_material(
     return _mensaje_error(resp, "No se pudo enviar el material.")
 
 
+# ── Imagen automática de Bolsas Magia Verde junto al menú de tamaño ────────────
+# El modelo NO llama confiablemente a enviar_material en el paso de tamaño de bolsas
+# (verificado en logs de prod 2026-10-01: muestra el menú de 5 tamaños sin la imagen,
+# a diferencia de tapas, cuya imagen va en un paso simple). Para que la portada SIEMPRE
+# acompañe al menú de tamaño sin depender del LLM, la mandamos desde el código cuando
+# mostrar_opciones detecta ese menú por sus 5 tamaños.
+_BOLSAS_SKU = "CM_00002"
+_BOLSAS_TAMANO_MARCADORES = ("35 L", "50 L", "75 L", "140 L", "200 L")
+
+
+def _es_menu_tamano_bolsas(opciones: list[dict]) -> bool:
+    """¿Es el menú de tamaño de Bolsas Magia Verde? Se reconoce por los 5 tamaños.
+
+    Mira tanto el `id` (valor del eje, ej. "35 L") como el `titulo` (ej. "35 L (60x63)"),
+    así funciona reciba el modelo el id o el título. Exige al menos 3 coincidencias para no
+    confundirlo con el menú de canal/ciudad/producto (que no contienen tamaños).
+    """
+    if not 3 <= len(opciones) <= 6:
+        return False
+    coincidencias = sum(
+        any(m in f"{o.get('id', '')} {o.get('titulo', '')}" for m in _BOLSAS_TAMANO_MARCADORES)
+        for o in opciones
+    )
+    return coincidencias >= 3
+
+
+async def _enviar_imagen_bolsas(conversation_id: Any) -> None:
+    """Manda la portada de Bolsas Magia Verde (CM_00002), best-effort.
+
+    Va justo ANTES del menú de tamaño para que la imagen llegue primero. No propaga errores:
+    si el envío falla, el menú igual se muestra. Sin tenacity a propósito (reintentar el POST
+    de /media puede duplicar el archivo).
+    """
+    body = {"sku": _BOLSAS_SKU, "tipo": "imagen", "cantidad": 1}
+    try:
+        async with httpx.AsyncClient(timeout=_PRODUCTOS_TIMEOUT) as http:
+            resp = await http.post(
+                f"{_BASE}/api/v1/productos/conversations/{conversation_id}/media",
+                json=body,
+                headers=_HEADERS,
+            )
+        if resp.status_code == 200:
+            logger.info(
+                "crm_imagen_bolsas_auto_ok",
+                conversation_id=conversation_id,
+                enviados=resp.json().get("enviados") if _es_json(resp) else None,
+            )
+        else:
+            logger.warning(
+                "crm_imagen_bolsas_auto_failed",
+                conversation_id=conversation_id,
+                status=resp.status_code,
+            )
+    except Exception:
+        logger.exception("crm_imagen_bolsas_auto_error", conversation_id=conversation_id)
+
+
 @tool
 async def mostrar_opciones(
     cuerpo: str,
@@ -1420,6 +1477,11 @@ async def mostrar_opciones(
     else:
         # Los botones no admiten descripción: WhatsApp solo muestra el título.
         cuerpo_envio["buttons"] = [{"id": str(o["id"]), "title": o["titulo"]} for o in opciones]
+
+    # Bolsas Magia Verde: la portada va SIEMPRE junto al menú de tamaño, mandada desde el
+    # código (el LLM no la manda confiablemente). Primero la imagen, después el menú.
+    if _es_menu_tamano_bolsas(opciones):
+        await _enviar_imagen_bolsas(conversation_id)
 
     async with httpx.AsyncClient(timeout=_PRODUCTOS_TIMEOUT) as http:
         resp = await http.post(
