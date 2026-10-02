@@ -63,8 +63,19 @@ def _verify_agent_token(request: Request) -> bool:
     header = request.headers.get("authorization", "")
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token:
+        logger.warning("crm_webhook_no_bearer", scheme=scheme[:12], has_token=bool(token))
         return False
-    return hmac.compare_digest(token, expected)
+    ok = hmac.compare_digest(token, expected)
+    if not ok:
+        # DEBUG temporal: comparar por hash (no expone el secreto) para alinear el token con el CRM.
+        logger.warning(
+            "crm_webhook_token_mismatch",
+            recv_sha=sha256(token.encode()).hexdigest()[:12],
+            recv_len=len(token),
+            exp_sha=sha256(expected.encode()).hexdigest()[:12],
+            exp_len=len(expected),
+        )
+    return ok
 
 
 def _is_duplicate_message(msg_id: str) -> bool:
