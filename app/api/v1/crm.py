@@ -16,7 +16,9 @@ from fastapi import APIRouter, HTTPException, Request
 from app.core.broker import broker
 from app.core.config import settings
 from app.core.langgraph.kohlberg_graph import kohlberg_agent
-from app.core.langgraph.tools.kohlberg import request_handoff
+from app.core.langgraph.sensia_graph import sensia_agent
+from app.core.langgraph.tools.kohlberg import request_handoff as _kohlberg_request_handoff
+from app.core.langgraph.tools.sensia import request_handoff as _sensia_request_handoff
 from app.core.limiter import limiter
 from app.core.logging import logger
 from app.schemas import Message
@@ -76,9 +78,25 @@ def _is_duplicate_message(msg_id: str) -> bool:
     return False
 
 
+# Which sofo-crm agent this deploy serves. Each tenant is its own Railway deploy pointing at its own
+# CRM (CRM_BASE_URL / CRM_API_KEY), so one env var selects the agent + handoff for the inbound webhook.
+# Default "kohlberg" keeps the existing Kohlberg deploy unchanged.
+_SOFOCRM_AGENTS = {
+    "kohlberg": (kohlberg_agent, _kohlberg_request_handoff),
+    "sensia": (sensia_agent, _sensia_request_handoff),
+}
+
+
+def _resolve_sofocrm_agent():
+    """Return (agent, request_handoff) for this deploy's CRM_AGENT_TENANT (fallback: kohlberg)."""
+    slug = (settings.CRM_AGENT_TENANT or "kohlberg").strip().lower()
+    return _SOFOCRM_AGENTS.get(slug, _SOFOCRM_AGENTS["kohlberg"])
+
+
 def _make_process_fn(dest: Destination, patient_ctx: dict):
     """Return a ProcessFn closure bound to the CRM destination + contact context."""
     gateway = get_gateway()
+    agent, request_handoff = _resolve_sofocrm_agent()
 
     async def _process(wa_id: str, text: str) -> None:
         messages = [Message(role="user", content=text)]
@@ -93,7 +111,7 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
         try:
             logger.info("crm_agent_turn_started", wa_id=wa_id, turn_id=turn_id, text_preview=text[:120])
             agent_task = asyncio.create_task(
-                kohlberg_agent.get_response(
+                agent.get_response(
                     messages,
                     wa_id,
                     conversation_id=dest.conversation_id,
@@ -239,10 +257,10 @@ async def receive_crm_event(request: Request) -> dict:
         # Cola durable (flag ON): publicá al broker y el worker responde (ACK-tras-éxito + reintento
         # + DLQ). Lleva reply_url/conversation_id para que el worker pueda contestar por el CRM. Si el
         # publish falla (Redis caído), caemos al path en-proceso para no perder el mensaje.
-        if settings.KOHLBERG_USE_BROKER:
+        if settings.CRM_USE_BROKER:
             try:
                 await broker.publish(
-                    settings.KOHLBERG_BROKER_TENANT,
+                    settings.CRM_BROKER_TENANT,
                     convo_key,
                     {
                         "text": text,

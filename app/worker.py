@@ -26,7 +26,9 @@ _APP_ENV = os.getenv("APP_ENV", "development")
 from app.core.broker import RedisStreamBroker, create_broker
 from app.core.config import settings
 from app.core.langgraph.kohlberg_graph import kohlberg_agent
-from app.core.langgraph.tools.kohlberg import request_handoff
+from app.core.langgraph.sensia_graph import sensia_agent
+from app.core.langgraph.tools.kohlberg import request_handoff as kohlberg_request_handoff
+from app.core.langgraph.tools.sensia import request_handoff as sensia_request_handoff
 from app.core.logging import logger
 from app.core.tenant import get_tenant
 from app.schemas import Message
@@ -41,6 +43,7 @@ def _build_agent_registry():
         "odontoking": agent,
         "imprimir": agent,
         "kohlberg": kohlberg_agent,
+        "sensia": sensia_agent,
     }
 
 
@@ -125,8 +128,8 @@ async def _handle_message(payload: dict, agent, tenant_slug: str) -> None:
             pass
 
 
-async def _handle_kohlberg_message(payload: dict) -> None:
-    """Procesa un mensaje de Kohlberg (gateway sofo-crm) y responde por reply_url.
+async def _handle_sofocrm_message(payload: dict, agent, handoff_fn) -> None:
+    """Procesa un mensaje de un tenant gateway sofo-crm (Kohlberg, Sensia) y responde por reply_url.
 
     Semántica de error CLAVE para la cola durable: si get_response o el envío LANZAN
     (cuota de OpenAI, timeout, red), la excepción PROPAGA → el broker NO hace ACK →
@@ -152,9 +155,9 @@ async def _handle_kohlberg_message(payload: dict) -> None:
     async def _on_handoff(signal: dict) -> None:
         handoff.update(signal)
 
-    logger.info("worker_kohlberg_turn_started", wa_id=wa_id, message_id=message_id, text_preview=text[:120])
+    logger.info("worker_sofocrm_turn_started", wa_id=wa_id, message_id=message_id, text_preview=text[:120])
     # NO envolvemos en try/except que trague: un fallo del LLM debe propagar para reintentar.
-    response_text = await kohlberg_agent.get_response(
+    response_text = await agent.get_response(
         [Message(role="user", content=text)],
         wa_id,
         conversation_id=conversation_id,
@@ -166,12 +169,12 @@ async def _handle_kohlberg_message(payload: dict) -> None:
         handoff_callback=_on_handoff,
     )
     await gateway.send_response(dest, response_text)
-    logger.info("worker_kohlberg_response_sent", wa_id=wa_id, message_id=message_id, preview=response_text[:120])
+    logger.info("worker_sofocrm_response_sent", wa_id=wa_id, message_id=message_id, preview=response_text[:120])
 
     # Derivar DESPUÉS de responder (la respuesta es el aviso al cliente; una vez derivado el CRM 409ea
     # cualquier /messages posterior, por eso el orden importa).
     if "reason" in handoff and conversation_id is not None:
-        await request_handoff(conversation_id, handoff.get("reason", ""), handoff.get("ciudad"))
+        await handoff_fn(conversation_id, handoff.get("reason", ""), handoff.get("ciudad"))
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -207,11 +210,17 @@ async def run_worker(tenant_slug: str) -> None:
         logger.error("worker_requires_redis", tenant=tenant_slug)
         sys.exit(1)
 
-    # Handler closure captures agent and tenant_slug. Kohlberg (gateway sofo-crm) usa su propio
-    # handler: responde por reply_url y propaga errores para que la cola reintente.
-    if tenant_slug == "kohlberg":
+    # Handler closure captures agent and tenant_slug. Los tenants gateway sofo-crm (Kohlberg, Sensia)
+    # usan su propio handler: responden por reply_url y propagan errores para que la cola reintente.
+    _SOFOCRM_HANDOFF = {
+        "kohlberg": kohlberg_request_handoff,
+        "sensia": sensia_request_handoff,
+    }
+    if tenant_slug in _SOFOCRM_HANDOFF:
+        handoff_fn = _SOFOCRM_HANDOFF[tenant_slug]
+
         async def handler(payload: dict) -> None:
-            await _handle_kohlberg_message(payload)
+            await _handle_sofocrm_message(payload, agent, handoff_fn)
     else:
         async def handler(payload: dict) -> None:
             await _handle_message(payload, agent, tenant_slug)

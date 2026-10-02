@@ -254,6 +254,16 @@ class Settings:
         # Auto-create the patient in the Odontoking CRM on first contact for the CRM inbound path.
         self.WHATSAPP_AUTO_CREATE_PERSON = os.getenv("WHATSAPP_AUTO_CREATE_PERSON", "true").lower() in ("true", "1", "yes")
 
+        # Which sofo-crm agent this deploy serves (one deploy = one tenant). Selects the agent +
+        # handoff for the inbound /api/v1/crm/webhook. "kohlberg" (default) | "sensia".
+        self.CRM_AGENT_TENANT = os.getenv("CRM_AGENT_TENANT", "kohlberg").strip().lower()
+        # Durable queue (Redis Streams) for the sofo-crm inbound path. Falls back to the legacy
+        # KOHLBERG_* vars so the existing Kohlberg deploy keeps working without new env vars.
+        self.CRM_USE_BROKER = (
+            os.getenv("CRM_USE_BROKER", os.getenv("KOHLBERG_USE_BROKER", "false")).lower() in ("true", "1", "yes")
+        )
+        self.CRM_BROKER_TENANT = os.getenv("CRM_BROKER_TENANT", "") or self.CRM_AGENT_TENANT
+
         # Odontoking API
         self.ODONTOKING_API_URL = os.getenv("ODONTOKING_API_URL", "https://odontoking.sofopolis.com")
         self.ODONTOKING_API_TOKEN = os.getenv("ODONTOKING_API_TOKEN", "")
@@ -276,6 +286,20 @@ class Settings:
         # Slug del tenant al que se publica/consume (debe existir en app/core/tenant.py y coincidir
         # con WORKER_TENANT del worker de Kohlberg).
         self.KOHLBERG_BROKER_TENANT = os.getenv("KOHLBERG_BROKER_TENANT", "kohlberg")
+
+        # Sensia API (Krayin CRM, sensia.sofopolis.com) - agente de venta de botellones de agua (Sofía).
+        # Mismo CRM que los otros tenants, distinto subdominio. Cae al par del gateway sofo-crm
+        # (CRM_BASE_URL / CRM_API_KEY) para que un único deploy sofo-crm funcione sin config extra.
+        self.SENSIA_API_URL = (os.getenv("SENSIA_API_URL", "").rstrip("/") or self.CRM_BASE_URL)
+        self.SENSIA_API_TOKEN = os.getenv("SENSIA_API_TOKEN", "") or self.CRM_API_KEY
+        self.SENSIA_LLM_MODEL = os.getenv("SENSIA_LLM_MODEL", self.ODONTOKING_LLM_MODEL)
+        # TTL (segundos) del cache en-proceso del catálogo de productos en get_promos.
+        self.SENSIA_PROMOS_CACHE_TTL = int(os.getenv("SENSIA_PROMOS_CACHE_TTL", "60"))
+        # Cola durable (Redis Streams). OFF por default: el webhook usa el message_buffer en-proceso.
+        # ON → crm.py publica al broker y el worker (WORKER_TENANT=sensia) consume con ACK+reintento+DLQ.
+        self.SENSIA_USE_BROKER = os.getenv("SENSIA_USE_BROKER", "false").lower() in ("true", "1", "yes")
+        self.SENSIA_BROKER_TENANT = os.getenv("SENSIA_BROKER_TENANT", "sensia")
+
         # Deterministic intake (steps 1-6 forced by code). Disable to fall back to LLM-only flow.
         self.INTAKE_ENABLED = os.getenv("INTAKE_ENABLED", "true").lower() in ("true", "1", "yes")
         # Booking mode flag: when true, the LLM agent (LangGraph) drives the whole conversation

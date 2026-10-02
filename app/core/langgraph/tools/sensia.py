@@ -1,0 +1,1582 @@
+"""Kohlberg "Club del Vino" (Sofía) CRM tools - promos catalog, sucursales, order registration.
+
+Flow: WhatsApp -> Krayin CRM (kohlberg.sofopolis.com) -> agent -> CrmGateway. Same CRM as the other
+tenants, different subdomain (KOHLBERG_API_URL / KOHLBERG_API_TOKEN, falling back to the sofo-crm
+gateway pair CRM_BASE_URL / CRM_API_KEY).
+
+Design note - one coarse tool per action, only plain fields (no ids threaded by the LLM):
+
+    get_promos()          - active wine promotions (the ONLY source of truth for wines/prices).
+    get_sucursales(...)   - branch info by city (pickup point / advisor phone). Static catalog.
+    registrar_pedido(...) - registers the confirmed order as a Krayin lead with product lines.
+    think(...)            - no-op scratchpad so the model can verify flow coherence before replying.
+
+The conversation's auto-created lead (contact.lead_id) and person (contact.person_id) are injected
+server-side via config.metadata and never reach the model; registrar_pedido reuses them so an order
+enriches the existing lead instead of creating a duplicate. Wines carry a real product_id that comes
+from get_promos - the LLM passes those ids straight through (they are catalog ids, safe to surface).
+"""
+
+import json
+import asyncio
+import time
+import unicodedata
+from typing import Any, Optional
+
+import httpx
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+
+from app.core.config import settings
+from app.core.logging import logger
+
+_BASE = settings.SENSIA_API_URL
+_HEADERS = {
+    "accept": "application/json",
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {settings.SENSIA_API_TOKEN}",
+}
+
+_PLACEHOLDER_NAME = "Cliente WhatsApp"
+_SOURCE_WHATSAPP = 6          # lead_source_id "Whatsapp"
+_LEAD_TYPE_VENTA = 1          # "Nuevo Cliente"
+_OWNER_USER_ID = 1           # default lead owner (Sofopolis)
+
+# Real Sensia per-zone pipeline + stage ids (CRM sensia.sofopolis.com). Each zone is its own pipeline;
+# the STAGE marks an order's state, so we move the lead by stage id. "entregado" ("Pedido entregado")
+# is a concreted order and is immutable. Key is the canonical zone (see _CITY_ALIASES). Sensia pipelines
+# have 4 stages (prospectos/confirmado/entregado/cancelado); sin_interes/otros reuse "prospectos".
+# "sin ciudad" falls back to the CRM default pipeline (Palpalá, is_default) so stage ids stay valid.
+_CITY_STAGES: dict[str, dict[str, int]] = {
+    "san salvador de jujuy": {"pipeline": 4, "no_atendido": 15, "confirmado": 16, "sin_interes": 15, "entregado": 17, "cancelado": 18, "otros": 15},
+    "barrio alto comedero":  {"pipeline": 3, "no_atendido": 11, "confirmado": 12, "sin_interes": 11, "entregado": 13, "cancelado": 14, "otros": 11},
+    "palpala":               {"pipeline": 1, "no_atendido": 1,  "confirmado": 2,  "sin_interes": 1,  "entregado": 5,  "cancelado": 6,  "otros": 1},
+    "sin ciudad":            {"pipeline": 1, "no_atendido": 1,  "confirmado": 2,  "sin_interes": 1,  "entregado": 5,  "cancelado": 6,  "otros": 1},
+}
+# Stage-id sets (across every zone) for classifying a lead by its lead_pipeline_stage_id.
+_STAGE_NO_ATENDIDO_IDS = {s["no_atendido"] for s in _CITY_STAGES.values()}
+_STAGE_ENTREGADO_IDS = {s["entregado"] for s in _CITY_STAGES.values()}
+
+# Canonical zone -> sales rep user id (lead owner). TODO(crm): confirmar asesor por zona; por ahora
+# todas al owner por defecto (Sofopolis=1). Usuarios disponibles: Gustavo Ortiz 11, Danitza 2, Andres 10.
+_CITY_SALES_REP: dict[str, int] = {
+    "san salvador de jujuy": _OWNER_USER_ID,
+    "barrio alto comedero": _OWNER_USER_ID,
+    "palpala": _OWNER_USER_ID,
+}
+_DEFAULT_SALES_REP = _OWNER_USER_ID  # no/unrecognised zone -> default owner
+
+# Last lead this agent registered per WhatsApp id, so a CORRECTION right after ("que sean 3", "me
+# equivoqué") PUTs onto that same lead instead of POSTing a duplicate (the CRM only echoes its own
+# auto-lead in contact.lead_id, not the leads we POST for separate orders). Per-process cache; the
+# fallback to contact.lead_id covers the first-order case across replicas.
+_LAST_LEAD_BY_WA: dict[str, int] = {}
+
+# Live "draft" of the in-progress order per WhatsApp id, so incremental updates accumulate: the client
+# gives data piecemeal (city, then name, then age, then each wine) and each actualizar_pedido call
+# merges into this draft and re-PUTs the FULL lead. Per-process; cold drafts seed from the lead GET.
+_DRAFT_BY_WA: dict[str, dict[str, Any]] = {}
+
+# Canonical zone -> product-city id (the `ciudad_producto_sucursal` values on each product). This
+# attribute is a `warehouses` lookup, so the id IS the warehouse id (a DIFFERENT id space from the
+# pipeline ids above - do not conflate them). A product is available in a zone if its list includes
+# that id OR the "todas" id.
+_CITY_PRODUCT_IDS: dict[str, int] = {
+    "san salvador de jujuy": 8,
+    "barrio alto comedero": 1,
+    "palpala": 9,
+}
+_TODAS_CITY_ID = 10  # warehouse "Todas" - product available in every zone
+
+# Product types on the Sensia catalog (custom `product_type` attribute).
+_TIPO_VINO = 10   # "Productos Sensia"
+_TIPO_PACK = 11   # "Promociones Combos"
+
+# Free-text zone (accents/abbreviations the client may type) -> canonical key.
+_CITY_ALIASES = {
+    "san salvador de jujuy": "san salvador de jujuy", "san salvador": "san salvador de jujuy",
+    "jujuy": "san salvador de jujuy", "ssj": "san salvador de jujuy", "capital": "san salvador de jujuy",
+    "barrio alto comedero": "barrio alto comedero", "alto comedero": "barrio alto comedero",
+    "comedero": "barrio alto comedero", "bac": "barrio alto comedero",
+    "palpala": "palpala", "palpalá": "palpala",
+}
+
+# ── Low-level HTTP ────────────────────────────────────────────────────────────
+
+def _is_transient(exc: BaseException) -> bool:
+    """Retry only on transient failures: 5xx and network timeouts/connection errors.
+
+    Deliberately does NOT retry 429 (Too Many Attempts): the CRM's throttle is shared across every
+    call this agent makes with one Sanctum token, so retrying a 429 hammers it further and deepens the
+    throttle. On 429 we fail fast and let the turn degrade gracefully.
+    """
+    if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError)):
+        return True
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=8),
+    retry=retry_if_exception(_is_transient),
+    reraise=True,
+)
+async def _request(client: httpx.AsyncClient, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    """Call the Krayin API with shared headers, retrying only on transient errors."""
+    resp = await client.request(method, f"{_BASE}{path}", headers=_HEADERS, **kwargs)
+    resp.raise_for_status()
+    return resp
+
+
+def _data(resp: httpx.Response) -> Any:
+    """Return the 'data' field of a Krayin JSON response (dict or list), else the raw json."""
+    payload = resp.json() if resp.content else {}
+    return payload.get("data", payload) if isinstance(payload, dict) else payload
+
+
+def _normalize_wa_id(wa_id: str) -> str:
+    """Digits-only WhatsApp id - strip '+', spaces so the CRM lookup never misses."""
+    return (wa_id or "").replace("+", "").replace(" ", "").strip()
+
+
+def _clean_name(name: Optional[str]) -> str:
+    """Return a real name or the placeholder used until the client tells us who they are."""
+    clean = name.strip() if isinstance(name, str) else ""
+    return clean or _PLACEHOLDER_NAME
+
+
+# ── Context (injected via config.metadata; the LLM never passes ids) ───────────
+
+def _ctx_ids(config: Optional[RunnableConfig]) -> tuple[Optional[int], Optional[int]]:
+    """Read (lead_id, person_id) injected by the graph via config.metadata."""
+    metadata = (config or {}).get("metadata") or {}
+    return metadata.get("lead_id"), metadata.get("person_id")
+
+
+def _ctx_contact_name(config: Optional[RunnableConfig]) -> Optional[str]:
+    """Best contact name from metadata (registered name, else WhatsApp profile), or None."""
+    metadata = (config or {}).get("metadata") or {}
+    name = metadata.get("nombre_registrado") or metadata.get("nombre_whatsapp")
+    clean = name.strip() if isinstance(name, str) else ""
+    return clean or None
+
+
+def _ctx_wa_id(config: Optional[RunnableConfig]) -> str:
+    """WhatsApp/conversation key injected via metadata (used only as a person-create fallback)."""
+    metadata = (config or {}).get("metadata") or {}
+    wa = metadata.get("wa_id")
+    return _normalize_wa_id(wa) if isinstance(wa, str) else ""
+
+
+def _normalizar(texto: Any) -> str:
+    """Lowercase + strip accents + trim (mirrors the n8n `normalizar`)."""
+    s = unicodedata.normalize("NFD", str(texto or "").lower())
+    return "".join(c for c in s if unicodedata.category(c) != "Mn").strip()
+
+
+def _resolve_city_key(ciudad: Optional[str]) -> Optional[str]:
+    """Map free-text city to a canonical key (None when empty/unrecognised)."""
+    return _CITY_ALIASES.get(_normalizar(ciudad))
+
+
+def _city_product_id(ciudad: Optional[str]) -> int:
+    """Product-city id for a free-text city; falls back to the 'todas' id (matches n8n behaviour)."""
+    key = _resolve_city_key(ciudad)
+    return _CITY_PRODUCT_IDS.get(key, _TODAS_CITY_ID) if key else _TODAS_CITY_ID
+
+
+def _city_stages(ciudad: Optional[str]) -> dict[str, int]:
+    """Pipeline + stage ids for a free-text city; falls back to 'sin ciudad' when unrecognised."""
+    key = _resolve_city_key(ciudad)
+    return _CITY_STAGES.get(key, _CITY_STAGES["sin ciudad"]) if key else _CITY_STAGES["sin ciudad"]
+
+
+def _city_sales_rep(ciudad: Optional[str]) -> int:
+    """Sales-rep user id (lead owner) for a free-text city; default owner when unrecognised."""
+    key = _resolve_city_key(ciudad)
+    return _CITY_SALES_REP.get(key, _DEFAULT_SALES_REP) if key else _DEFAULT_SALES_REP
+
+
+def _to_int(valor: Any) -> Optional[int]:
+    """Coerce to int like JS Number() for the enable/type flags; None when not an integer."""
+    try:
+        return int(str(valor).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_float(valor: Any) -> Optional[float]:
+    """Coerce to float; None when not a number (e.g. an empty precio_promocion string)."""
+    try:
+        return float(str(valor).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _product_price(prod: dict[str, Any]) -> float:
+    """Effective unit price of a catalog product: the promo price if set, else the base price."""
+    promo = _to_float(prod.get("precio_promocion"))
+    if promo and promo > 0:
+        return promo
+    return _to_float(prod.get("price")) or 0.0
+
+
+def _parse_ciudades(valor: Any) -> list[int]:
+    """Parse a product's `ciudad_producto_sucursal` (comma-separated ids, or list) into ints > 0.
+
+    Mirrors the n8n `parsearCiudades`.
+    """
+    if valor in (None, ""):
+        return []
+    raw = valor if isinstance(valor, list) else str(valor).split(",")
+    out: list[int] = []
+    for part in raw:
+        s = str(part).strip()
+        if s.lstrip("-").isdigit() and int(s) > 0:
+            out.append(int(s))
+    return out
+
+
+def _parse_combo(valor: Any) -> list[Any]:
+    """Parse a combos field: array, JSON string, bare id ('15'), or empty (mirrors n8n `parseCombo`)."""
+    if valor in (None, ""):
+        return []
+    if isinstance(valor, list):
+        return valor
+    s = str(valor).strip()
+    if s in ("[]", "null"):
+        return []
+    if s.isdigit():
+        return [{"id": int(s), "name": None, "qty": 1}]
+    try:
+        parsed = json.loads(s)
+        return parsed if isinstance(parsed, list) else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+# ── Lead helpers (best-effort; a lead failure must not break the reply) ────────
+
+async def _find_person_by_wa_id(client: httpx.AsyncClient, wa_id: str) -> Optional[dict[str, Any]]:
+    """Look up a Krayin person by WhatsApp number (contact_numbers LIKE). Returns dict or None."""
+    resp = await _request(
+        client,
+        "GET",
+        "/api/v1/contacts/persons/search",
+        params={"search": _normalize_wa_id(wa_id), "searchFields": "contact_numbers:like;"},
+    )
+    data = _data(resp)
+    return data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else None
+
+
+async def _resolve_person(client: httpx.AsyncClient, wa_id: str, nombre: Optional[str]) -> Optional[int]:
+    """Find or create the person; return person_id."""
+    person = await _find_person_by_wa_id(client, wa_id)
+    if person and person.get("id"):
+        return person["id"]
+    payload = {
+        "name": _clean_name(nombre),
+        "contact_numbers": [{"value": wa_id, "label": "work"}],
+        "entity_type": "persons",
+    }
+    resp = await _request(client, "POST", "/api/v1/contacts/persons", json=payload)
+    data = _data(resp)
+    return data.get("id") if isinstance(data, dict) else None
+
+
+async def _set_person_attrs(
+    client: httpx.AsyncClient,
+    person_id: int,
+    *,
+    edad: Any = None,
+    ciudad: Optional[str] = None,
+    nombre: Optional[str] = None,
+    wa_id: str = "",
+) -> None:
+    """Guarda datos del cliente en el contacto: `edad` (custom text) y `cliente_ciudad` (custom select).
+
+    Krayin PUT reemplaza la persona, así que re-enviamos su nombre/contact_numbers/emails/organización
+    (leídos con un GET) para no borrarlos, más los custom que lleguen. Best-effort: el caller envuelve
+    en try. No hace nada si no hay ningún atributo nuevo que escribir.
+    """
+    edad_int = _to_int(edad)
+    ciudad_val = (ciudad or "").strip()
+    nombre_val = (nombre or "").strip()
+    if edad_int is None and not ciudad_val and not nombre_val:
+        return
+    current: dict[str, Any] = {}
+    try:
+        resp = await _request(client, "GET", f"/api/v1/contacts/persons/{person_id}")
+        data = _data(resp)
+        if isinstance(data, dict):
+            current = data
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kohlberg_person_fetch_failed", person_id=person_id, error=str(e))
+
+    numbers = current.get("contact_numbers")
+    if not (isinstance(numbers, list) and numbers):
+        numbers = [{"value": wa_id, "label": "work"}] if wa_id else []
+    body: dict[str, Any] = {
+        "name": current.get("name") or nombre_val or _PLACEHOLDER_NAME,
+        "contact_numbers": numbers,
+        "entity_type": "persons",
+    }
+    if edad_int is not None:
+        body["edad"] = str(edad_int)          # custom text `edad`
+    if ciudad_val:
+        body["cliente_ciudad"] = ciudad_val   # custom select `cliente_ciudad` (el CRM resuelve el texto)
+    emails = current.get("emails")
+    if isinstance(emails, list) and emails:
+        body["emails"] = emails
+    org = current.get("organization_id")
+    if org:
+        body["organization_id"] = org
+    await _request(client, "PUT", f"/api/v1/contacts/persons/{person_id}", json=body)
+
+
+async def _get_lead(client: httpx.AsyncClient, lead_id: int) -> Optional[dict[str, Any]]:
+    """Fetch a lead by id, or None on 404/failure (best-effort)."""
+    try:
+        resp = await _request(client, "GET", f"/api/v1/leads/{lead_id}")
+        data = _data(resp)
+        return data if isinstance(data, dict) else None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kohlberg_lead_fetch_failed", lead_id=lead_id, error=str(e))
+        return None
+
+
+def _lead_stage_name(lead: dict[str, Any]) -> str:
+    """Current stage name of a lead, normalized to lowercase with hyphens as spaces ('' when unknown)."""
+    stage = lead.get("lead_pipeline_stage") or lead.get("stage") or {}
+    name = stage.get("name") if isinstance(stage, dict) else None
+    return (name or "").strip().lower().replace("-", " ")
+
+
+def _lead_stage_id(lead: dict[str, Any]) -> Optional[int]:
+    """Current stage id of a lead (top-level or nested), or None."""
+    sid = lead.get("lead_pipeline_stage_id")
+    if sid is None:
+        stage = lead.get("lead_pipeline_stage") or lead.get("stage") or {}
+        sid = stage.get("id") if isinstance(stage, dict) else None
+    return _to_int(sid)
+
+
+def _is_unattended(lead: dict[str, Any]) -> bool:
+    """True ONLY when we can positively confirm the lead is the untouched auto-created 'No atendido'.
+
+    Fail-safe toward creating a NEW lead: reuse (modify) a lead only on a POSITIVE No-atendido signal
+    (the per-city stage id, or the explicit stage name). An unknown/empty stage is NOT treated as
+    enrichable — otherwise a sparse lead GET (no stage in the payload) makes every order look "fresh"
+    and each new order overwrites the same lead instead of opening a separate pedido.
+    """
+    sid = _lead_stage_id(lead)
+    if sid is not None:
+        return sid in _STAGE_NO_ATENDIDO_IDS
+    return _lead_stage_name(lead) == "prospectos"
+
+
+def _is_delivered(lead: dict[str, Any]) -> bool:
+    """True if the lead is a concreted/delivered order ('Pedido entregado') - immutable."""
+    sid = _lead_stage_id(lead)
+    if sid is not None and sid in _STAGE_ENTREGADO_IDS:
+        return True
+    return _lead_stage_name(lead) == "pedido entregado"
+
+
+def _lead_has_products(lead: dict[str, Any]) -> bool:
+    """True if the lead already has at least one product line (an order was already registered on it)."""
+    products = lead.get("products")
+    if isinstance(products, dict):
+        return len(products) > 0
+    return bool(products) if isinstance(products, list) else False
+
+
+def _is_fresh_for_order(lead: dict[str, Any]) -> bool:
+    """A lead is enrichable only while it is the untouched auto-created lead AND has no order yet.
+
+    Anything else - an advisor already advanced it, it was delivered ('Pedidos entregados'), or it
+    already carries a registered order - is left intact; a new order goes to a brand-new lead.
+    """
+    return _is_unattended(lead) and not _lead_has_products(lead)
+
+
+def _build_products_map(
+    ids: list[Any],
+    names: list[Any],
+    qtys: list[Any],
+    price_by_id: dict[int, float],
+) -> tuple[dict[str, dict[str, Any]], float]:
+    """Build Krayin's `products` object ({product_0: {...}, ...}) and order total.
+
+    Logs every transformation so product mapping problems can be diagnosed.
+
+    Expected parallel arrays:
+        ids[i]   -> product id
+        names[i] -> product name
+        qtys[i]  -> product quantity
+    """
+    log = logger.bind(
+        method="_build_products_map",
+        ids_count=len(ids),
+        names_count=len(names),
+        qtys_count=len(qtys),
+        catalog_prices_count=len(price_by_id),
+    )
+
+    # LOG 1: Datos completos de entrada.
+    log.info(
+        "kohlberg_products_map_start",
+        ids=ids,
+        names=names,
+        qtys=qtys,
+        price_by_id=price_by_id,
+    )
+
+    # LOG 2: Detectar inmediatamente si los arrays paralelos no coinciden.
+    if not (len(ids) == len(names) == len(qtys)):
+        log.warning(
+            "kohlberg_products_map_array_length_mismatch",
+            ids_count=len(ids),
+            names_count=len(names),
+            qtys_count=len(qtys),
+            ids=ids,
+            names=names,
+            qtys=qtys,
+        )
+
+    products: dict[str, dict[str, Any]] = {}
+    total = 0.0
+
+    for i, pid in enumerate(ids):
+
+        raw_id = pid
+        raw_name = names[i] if i < len(names) else None
+        raw_qty = qtys[i] if i < len(qtys) else None
+
+        # LOG 3: Datos originales de esta posición.
+        log.info(
+            "kohlberg_products_map_item_input",
+            index=i,
+            raw_product_id=raw_id,
+            raw_name=raw_name,
+            raw_quantity=raw_qty,
+        )
+
+        pid_int = _to_int(pid)
+
+        # Si el ID no es válido, actualmente el producto se pierde.
+        if pid_int is None:
+            log.warning(
+                "kohlberg_products_map_invalid_product_id",
+                index=i,
+                raw_product_id=raw_id,
+                raw_name=raw_name,
+                raw_quantity=raw_qty,
+                action="skipped",
+            )
+            continue
+
+        # Nombre
+        if i < len(names) and names[i] not in (None, ""):
+            name_i = str(names[i]).strip()
+        else:
+            name_i = ""
+
+        if not name_i:
+            log.warning(
+                "kohlberg_products_map_missing_name",
+                index=i,
+                product_id=pid_int,
+                available_names_count=len(names),
+            )
+
+        # Cantidad
+        qty_raw_int = _to_int(raw_qty)
+        qty_i = qty_raw_int if qty_raw_int and qty_raw_int > 0 else 1
+
+        if qty_raw_int is None or qty_raw_int <= 0:
+            log.warning(
+                "kohlberg_products_map_invalid_quantity_defaulted",
+                index=i,
+                product_id=pid_int,
+                raw_quantity=raw_qty,
+                resolved_quantity=qty_i,
+            )
+
+        # Precio
+        price_found = pid_int in price_by_id
+        raw_price = price_by_id.get(pid_int)
+
+        if not price_found:
+            log.error(
+                "kohlberg_products_map_price_not_found",
+                index=i,
+                product_id=pid_int,
+                available_product_ids=list(price_by_id.keys())[:100],
+                action="using_zero_price",
+            )
+
+        unit = round(_to_float(raw_price) or 0.0, 2)
+
+        # LOG 4: Producto después de normalizar los datos.
+        log.info(
+            "kohlberg_products_map_item_resolved",
+            index=i,
+            product_id=pid_int,
+            name=name_i,
+            quantity=qty_i,
+            price_found=price_found,
+            raw_price=raw_price,
+            unit_price=unit,
+            subtotal=round(unit * qty_i, 2),
+        )
+
+        product_key = f"product_{len(products)}"
+
+        mapped_product = {
+            "name": name_i,
+            "product_id": str(pid_int),
+            "price": f"{unit:.2f}",
+            "quantity": qty_i,
+        }
+
+        products[product_key] = mapped_product
+
+        total += unit * qty_i
+
+        # LOG 5: Ver exactamente cómo está quedando el objeto acumulado.
+        log.info(
+            "kohlberg_products_map_item_added",
+            index=i,
+            product_key=product_key,
+            mapped_product=mapped_product,
+            running_total=round(total, 2),
+            products_so_far=products,
+        )
+
+    total = round(total, 2)
+
+    # LOG 6: RESULTADO FINAL EXACTO.
+    log.info(
+        "kohlberg_products_map_complete",
+        input_ids_count=len(ids),
+        mapped_products_count=len(products),
+        skipped_products_count=len(ids) - len(products),
+        products=products,
+        total=total,
+    )
+
+    return products, total
+
+def _build_lead_body(
+    person_id: Optional[int],
+    wa_id: str,
+    nombre: Optional[str],
+    titulo: Optional[str],
+    descripcion: str,
+    ciudad: Optional[str],
+    stage_key: str,
+    total: float,
+    products: dict[str, dict[str, Any]],
+    edad: Any = None,
+) -> dict[str, Any]:
+    """Build the FULL lead object for create/update."""
+    stages = _city_stages(ciudad)
+    etiqueta = (nombre or "Cliente").strip()
+
+    # Aseguramos que total sea un número decimal válido.
+    total_decimal = round(float(total or 0), 2)
+
+    person: dict[str, Any] = {
+        "name": _clean_name(nombre),
+    }
+
+    if person_id:
+        person["id"] = person_id
+    else:
+        person["contact_numbers"] = [
+            {
+                "value": wa_id,
+                "label": "work",
+            }
+        ]
+
+    body: dict[str, Any] = {
+        "title": (titulo or f"Pedido Club del Vino - {etiqueta}").strip(),
+        "description": descripcion or "Pedido vía WhatsApp",
+
+        # IMPORTANTE: enviar como número, no como string.
+        "lead_value": total_decimal,
+
+        "lead_source_id": _SOURCE_WHATSAPP,
+        "lead_type_id": _LEAD_TYPE_VENTA,
+        "user_id": _city_sales_rep(ciudad),
+        "lead_pipeline_id": stages["pipeline"],
+        "lead_pipeline_stage_id": stages.get(
+            stage_key,
+            stages["no_atendido"],
+        ),
+        "person": person,
+        "entity_type": "leads",
+    }
+
+    # Edad del cliente en el atributo custom del lead (`edad_lead`, tipo text, id 68).
+    edad_int = _to_int(edad)
+    if edad_int is not None:
+        body["edad_lead"] = str(edad_int)
+
+    if products:
+        body["products"] = products
+
+    logger.info(
+        "kohlberg_build_lead_body",
+        person_id=person_id,
+        total_input=total,
+        total_decimal=total_decimal,
+        lead_value=body["lead_value"],
+        lead_value_type=type(body["lead_value"]).__name__,
+        products_count=len(products),
+        products=products,
+        body=body,
+    )
+
+    return body
+
+
+async def _upsert_lead(
+    client: httpx.AsyncClient, lead_id: Optional[int], body: dict[str, Any]
+) -> Optional[int]:
+    """PUT the full body to an existing lead, or POST a new one. Returns the lead id."""
+    if lead_id:
+        await _request(client, "PUT", f"/api/v1/leads/{lead_id}", json=body)
+        return lead_id
+    resp = await _request(client, "POST", "/api/v1/leads", json=body)
+    data = _data(resp)
+    return data.get("id") if isinstance(data, dict) else None
+
+
+async def _add_lead_note(
+    client: httpx.AsyncClient, lead_id: int, title: str, fields: list[tuple[str, Any]]
+) -> None:
+    """Post a note activity on the lead from (label, value) pairs (blank values skipped)."""
+    lines = [f"{label}: {value}" for label, value in fields if value not in (None, "", [])]
+    if not lines:
+        return
+    await _request(
+        client,
+        "POST",
+        "/api/v1/activities",
+        json={"lead_id": lead_id, "type": "note", "title": title, "comment": "\n".join(lines)},
+    )
+
+
+async def _move_lead(
+    client: httpx.AsyncClient,
+    lead_id: int,
+    ciudad: Optional[str],
+    stage_key: str,
+    lead_value: Optional[float] = None,
+) -> None:
+    """Move the lead to the given stage of the city's pipeline and, optionally, set its lead_value.
+
+    Uses the real per-city pipeline + stage ids. Never touches tags: a tag here means delivery type, so
+    tagging with a wrong id mislabels the order (e.g. as 'Delivery' when it's pickup-only). Krayin
+    accepts this partial PUT (same shape the IMPRIMIR agent uses in production).
+    """
+    stages = _city_stages(ciudad)
+    body: dict[str, Any] = {"lead_pipeline_id": stages["pipeline"]}
+    stage_id = stages.get(stage_key)
+    if stage_id is not None:
+        body["lead_pipeline_stage_id"] = stage_id
+    if lead_value is not None:
+        body["lead_value"] = str(round(lead_value, 2))
+    await _request(client, "PUT", f"/api/v1/leads/{lead_id}", json=body)
+
+
+def _clean_product(item: dict[str, Any]) -> dict[str, Any]:
+    """Clean a catalog product for the model (mirrors the n8n `limpiarBase` + combo parsing).
+
+    Drops Krayin's created_at/updated_at, parses the combo fields, and adds a `product_id` alias for
+    the id so the model passes it straight to registrar_pedido. Every other field is kept as-is.
+    """
+    out = {k: v for k, v in item.items() if k not in ("created_at", "updated_at")}
+    out["product_id"] = item.get("id")
+    out["combos_productos"] = _parse_combo(item.get("combos_productos"))
+    out["combos_productos_cantidad"] = _parse_combo(item.get("combos_productos_cantidad"))
+    return out
+
+
+# ── LLM-facing tools ──────────────────────────────────────────────────────────
+
+async def _fetch_all_products(client: httpx.AsyncClient, max_pages: int = 20) -> list[dict[str, Any]]:
+    """Fetch the FULL Krayin product list (with the flat custom attributes), following pagination.
+
+    The n8n flow reads the whole `/api/v1/products` list and filters by `products` (enabled),
+    `product_type` and `ciudad_producto_sucursal` in code - those flat custom fields come on this
+    list, not on the trimmed por-ciudad endpoint. So we replicate that: fetch all, filter here.
+    """
+    productos: list[dict[str, Any]] = []
+    page = 1
+    while page <= max_pages:
+        resp = await _request(client, "GET", "/api/v1/products", params={"page": page, "limit": 100})
+        payload = resp.json() if resp.content else {}
+        # This endpoint wraps the page in a one-element array: [{data:[...], meta:{...}}] (the n8n flow
+        # handles the same: `if Array.isArray(rawJson) items = rawJson[0].data`). Unwrap it, but also
+        # tolerate the plain {data:[...]} shape.
+        if isinstance(payload, list):
+            payload = payload[0] if payload else {}
+        data = payload.get("data", payload) if isinstance(payload, dict) else payload
+        productos.extend(p for p in (data if isinstance(data, list) else []) if isinstance(p, dict))
+        meta = payload.get("meta") if isinstance(payload, dict) else None
+        last_page = meta.get("last_page") if isinstance(meta, dict) else None
+        if not last_page or page >= int(last_page):
+            break
+        page += 1
+    return productos
+
+
+# Short-TTL cache of the FULL catalog (shared across cities and conversations). The catalog changes
+# rarely, so this collapses the heaviest CRM call (the whole product list) to once per window across
+# every user - the main lever against the CRM's 429 throttle. Only successful (non-empty) fetches are
+# cached, per the project caching rule.
+_PROMOS_CACHE_TTL = float(getattr(settings, "KOHLBERG_PROMOS_CACHE_TTL", 60) or 60)
+_promos_cache: dict[str, Any] = {"items": None, "at": 0.0}
+_promos_lock = asyncio.Lock()
+
+
+async def _get_products_cached() -> list[dict[str, Any]]:
+    """Return the full product list, served from a short-TTL in-process cache on a hit."""
+    now = time.monotonic()
+    cached = _promos_cache.get("items")
+    if cached is not None and (now - _promos_cache["at"]) < _PROMOS_CACHE_TTL:
+        return cached
+    async with _promos_lock:
+        now = time.monotonic()  # re-check: another coroutine may have filled it while we waited
+        cached = _promos_cache.get("items")
+        if cached is not None and (now - _promos_cache["at"]) < _PROMOS_CACHE_TTL:
+            return cached
+        async with httpx.AsyncClient(timeout=25) as client:
+            items = await _fetch_all_products(client)
+        if items:  # cache only successful, non-empty responses
+            _promos_cache["items"] = items
+            _promos_cache["at"] = time.monotonic()
+        return items
+
+
+@tool
+async def get_promos(ciudad: Optional[str] = None) -> str:
+    """Vinos y promos ACTIVOS del Club del Vino (ÚNICA fuente de verdad de vinos/precios; nunca los inventes).
+
+    Filtra por la CIUDAD del cliente (pásala apenas la conozcas). Devuelve `vinos` y `packs`; cada ítem
+    trae `product_id` (úsalo tal cual al registrar), `name` (respétalo), descripción y precio. Sin precio
+    de descuento, no muestres un "Precio Club del Vino" inventado. Máximo 3 por respuesta.
+
+    Args:
+        ciudad: Ciudad del cliente (texto libre; se normaliza). Sin ciudad → solo productos para todas.
+    """
+    log = logger.bind(tool="get_promos", ciudad=(ciudad or "")[:40])
+    ciudad_id = _city_product_id(ciudad)
+    try:
+        items = await _get_products_cached()  # short-TTL cache; one CRM fetch serves every city/turn
+        vinos: list[dict[str, Any]] = []
+        packs: list[dict[str, Any]] = []
+        vistos: set[Any] = set()
+        for prod in items:
+            pid = prod.get("id")
+            if pid in vistos:                                     # dedup por id (n8n `vistos`)
+                continue
+            # TOLERANTE (catálogo Sensia aún sin atributos cargados): solo excluyo si el campo
+            # `products` (Estado) está presente y es 0. Si falta, trato el producto como activo.
+            estado = _to_int(prod.get("products"))
+            if estado is not None and estado != 1:               # estaHabilitado
+                continue
+            # Ciudad: si el producto TIENE ciudades cargadas, filtro por la del cliente (o "Todas").
+            # Si NO tiene ninguna (atributo vacío), lo incluyo igual (todavía no taggeado por zona).
+            ciudades = _parse_ciudades(prod.get("ciudad_producto_sucursal"))
+            if ciudades and ciudad_id not in ciudades and _TODAS_CITY_ID not in ciudades:  # matchCiudad
+                continue
+            # Tipo: 10=Productos Sensia, 11=Promociones Combos. Si falta el tipo, lo trato como producto.
+            tipo = _to_int(prod.get("product_type"))
+            if tipo == _TIPO_PACK:
+                packs.append(_clean_product(prod))
+                vistos.add(pid)
+            else:
+                vinos.append(_clean_product(prod))
+                vistos.add(pid)
+        log.info(
+            "kohlberg_get_promos_ok",
+            ciudad_id=ciudad_id, total_items=len(items), vinos=len(vinos), packs=len(packs),
+        )
+        return json.dumps(
+            {
+                "ciudad_input": ciudad or "",
+                "ciudad_id": ciudad_id,
+                "total_vinos": len(vinos),
+                "total_packs": len(packs),
+                "vinos": vinos,
+                "packs": packs,
+            },
+            ensure_ascii=False,
+        )
+    except httpx.HTTPStatusError as e:
+        log.warning("kohlberg_get_promos_http_error", status=e.response.status_code)
+        return json.dumps({"vinos": [], "packs": [], "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        log.exception("kohlberg_get_promos_failed", error=str(e))
+        return json.dumps({"vinos": [], "packs": [], "error": str(e) or type(e).__name__}, ensure_ascii=False)
+
+
+@tool
+async def get_sucursales(ciudad: Optional[str] = None) -> str:
+    """Sucursales de Kohlberg (warehouses) por ciudad. No hay delivery: el cliente SIEMPRE recoge en sucursal.
+
+    Úsala: (1) tras confirmar, para indicar la sucursal de recojo; (2) al pedir asesor, comparte SOLO el
+    teléfono de esa ciudad (nunca otro, nunca inventado).
+
+    Args:
+        ciudad: Ciudad del cliente (texto libre; se normaliza). Si se omite, devuelve todas.
+    """
+    log = logger.bind(tool="get_sucursales", ciudad=(ciudad or "")[:40])
+    # Match on the canonical city name when we recognise it, else on the raw text (mirrors the n8n
+    # exact-name filter). Empty city → return every branch.
+    filtro = _normalizar(_resolve_city_key(ciudad) or ciudad)
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await _request(
+                client, "GET", "/api/v1/settings/warehouses", params={"sort": "id"}
+            )
+            data = _data(resp)
+            if isinstance(data, dict):
+                data = data.get("data", [])
+            warehouses = [w for w in (data if isinstance(data, list) else []) if isinstance(w, dict)]
+        if filtro:
+            sucursales = [
+                w for w in warehouses if _normalizar(w.get("name") or w.get("nombre")) == filtro
+            ]
+        else:
+            sucursales = warehouses
+        log.info("kohlberg_get_sucursales_ok", encontrados=len(sucursales), total=len(warehouses))
+        return json.dumps(
+            {"filtro_input": ciudad or "", "total_encontrados": len(sucursales), "sucursales": sucursales},
+            ensure_ascii=False,
+        )
+    except httpx.HTTPStatusError as e:
+        log.warning("kohlberg_get_sucursales_http_error", status=e.response.status_code)
+        return json.dumps({"sucursales": [], "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        log.exception("kohlberg_get_sucursales_failed", error=str(e))
+        return json.dumps({"sucursales": [], "error": str(e) or type(e).__name__}, ensure_ascii=False)
+
+
+@tool
+async def registrar_pedido(
+    config: RunnableConfig,
+    mensaje: Optional[str] = None,
+    product_id: Optional[list[int]] = None,
+    product_name: Optional[list[str]] = None,
+    cantidad_product: Optional[list[int]] = None,
+    nombre_del_cliente: Optional[str] = None,
+    edad_del_cliente: Optional[int] = None,
+    titulo_de_pedido: Optional[str] = None,
+    ciudad_del_cliente: Optional[str] = None,
+    ubicacion_del_cliente: Optional[str] = None,
+    descripcion_corta: Optional[str] = None,
+    es_pedido_confirmado: bool = False,
+    es_pedido_cancelado: bool = False,
+    es_correccion: bool = False,
+) -> str:
+    """Registra el pedido del cliente como oportunidad (lead) en el CRM Kohlberg.
+
+    es_correccion=True SOLO cuando el cliente corrige el pedido que ACABA de hacer (cambió la
+    cantidad, se equivocó, "que sean 3", "cambiá X por Y"): en ese caso NO se crea un pedido nuevo,
+    se REEMPLAZA el último pedido de esta conversación con la lista corregida COMPLETA (mandá todos
+    los productos que el pedido debe tener al final, no solo lo que cambió). Si el cliente quiere OTRO
+    pedido aparte, es_correccion=False (se crea uno nuevo).
+    """
+    lead_ctx, person_ctx = _ctx_ids(config)
+
+    log = logger.bind(
+        tool="registrar_pedido",
+        lead_id=lead_ctx,
+        cancelado=es_pedido_cancelado,
+    )
+
+    log.info(
+        "registrar_pedido_entered",
+        mensaje=mensaje,
+        product_id=product_id,
+        product_name=product_name,
+        cantidad_product=cantidad_product,
+        nombre_del_cliente=nombre_del_cliente,
+        ciudad_del_cliente=ciudad_del_cliente,
+        es_pedido_confirmado=es_pedido_confirmado,
+        es_pedido_cancelado=es_pedido_cancelado,
+    )
+
+    nombre = (nombre_del_cliente or "").strip() or _ctx_contact_name(config)
+    ids = list(product_id or [])
+    names = list(product_name or [])
+    qtys = list(cantidad_product or [])
+
+    resumen = ", ".join(
+        f"{qtys[i] if i < len(qtys) else '?'} x {names[i]}"
+        for i in range(len(names))
+    )
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            # Only the FRESH auto-created lead (No atendido, sin productos) is enrichable. A lead that
+            # already carries an order, was advanced by an advisor, or is DELIVERED ("Pedidos
+            # entregados") is immutable -> a new order opens a brand-new lead (pedidos separados).
+            fresh_lead: Optional[int] = None
+            if lead_ctx:
+                lead = await _get_lead(client, lead_ctx)
+                if lead is not None:
+                    log.info(
+                        "registrar_pedido_lead_fetched",
+                        stage_id=_lead_stage_id(lead),
+                        stage=_lead_stage_name(lead),
+                        has_products=_lead_has_products(lead),
+                        fresh=_is_fresh_for_order(lead),
+                    )
+                if lead is not None and _is_fresh_for_order(lead):
+                    fresh_lead = lead_ctx
+                elif lead is not None:
+                    log.info("registrar_pedido_lead_locked", stage=_lead_stage_name(lead),
+                             entregado=_is_delivered(lead))
+
+            # Cancellation only applies to the fresh lead being built now; a concreted/delivered order
+            # cannot be cancelled from here.
+            if es_pedido_cancelado:
+                if fresh_lead is None:
+                    log.info("registrar_pedido_cancel_no_editable_lead")
+                    return json.dumps(
+                        {"lead_id": lead_ctx, "cancelado": False, "note": "sin_pedido_editable"},
+                        ensure_ascii=False,
+                    )
+                try:
+                    await _add_lead_note(
+                        client, fresh_lead, "Pedido cancelado",
+                        [("Cliente", nombre), ("Ciudad", ciudad_del_cliente), ("Detalle", mensaje)],
+                    )
+                    await _move_lead(client, fresh_lead, ciudad_del_cliente, "cancelado")
+                except Exception as e:  # noqa: BLE001
+                    log.warning("registrar_pedido_cancel_note_failed", lead_id=fresh_lead, error=str(e))
+                log.info("kohlberg_pedido_cancelado", lead_id=fresh_lead)
+                return json.dumps(
+                    {"lead_id": fresh_lead, "solicitud": f"#{fresh_lead}", "cancelado": True},
+                    ensure_ascii=False,
+                )
+
+            # Real unit prices from the (cached) catalog, so the product lines and lead_value reflect
+            # the order - the LLM never passes prices (it could hallucinate them).
+            price_by_id: dict[int, float] = {}
+            try:
+                for p in await _get_products_cached():
+                    pidc = _to_int(p.get("id"))
+                    if pidc is not None:
+                        price_by_id[pidc] = _product_price(p)
+            except Exception as e:  # noqa: BLE001
+                log.warning("registrar_pedido_price_lookup_failed", error=str(e))
+
+            products_map, total = _build_products_map(ids, names, qtys, price_by_id)
+
+            # Fold all client/order detail into the lead description so we DON'T need a separate note
+            # activity - one fewer CRM call per order (matters against the 429 throttle).
+            detalle = [
+                f"Cliente: {nombre}" if nombre else None,
+                f"Edad: {edad_del_cliente}" if edad_del_cliente else None,
+                f"Ciudad: {ciudad_del_cliente}" if ciudad_del_cliente else None,
+                f"Ubicación: {ubicacion_del_cliente}" if ubicacion_del_cliente else None,
+                f"Pedido: {resumen}" if resumen else None,
+                f"Total: Bs {total:.2f}" if total else None,
+                descripcion_corta or None,
+                mensaje or None,
+            ]
+            descripcion = " | ".join(x for x in detalle if x) or "Pedido vía WhatsApp"
+
+            # Person for the lead body: from context, else find/create by wa_id.
+            person_id = person_ctx
+            if person_id is None:
+                person_id = await _resolve_person(client, _ctx_wa_id(config), nombre)
+
+            # Guarda edad + ciudad en el contacto (custom `edad`/`cliente_ciudad`). Best-effort.
+            if person_id and (edad_del_cliente is not None or (ciudad_del_cliente or "").strip()):
+                try:
+                    await _set_person_attrs(
+                        client, person_id, edad=edad_del_cliente, ciudad=ciudad_del_cliente,
+                        nombre=nombre, wa_id=_ctx_wa_id(config),
+                    )
+                    log.info("kohlberg_person_attrs_set", person_id=person_id,
+                             edad=_to_int(edad_del_cliente), ciudad=ciudad_del_cliente)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("registrar_pedido_person_update_failed", person_id=person_id, error=str(e))
+
+            # ONE full-object write does everything: product lines (inline), lead_value, the city's
+            # pipeline + stage (Confirmado on confirm, else No atendido) and the city's sales rep as
+            # owner. Krayin only fills the product lines/value from the WHOLE object (a partial PUT or
+            # the /leads/product endpoint did not) - so reuse the fresh lead with a full PUT, or POST a
+            # new one for a separate order.
+            # HYBRID lead reuse (kills the phantom empty lead WITHOUT collapsing separate orders):
+            # reuse the CRM's fresh auto-created lead (No atendido + NO products) for the FIRST order
+            # so it becomes the real order instead of leaving an empty ghost + a second sale lead. Once
+            # that lead carries products / was advanced, _is_fresh_for_order is False, so a SECOND order
+            # in the same conversation POSTs a new lead (pedidos separados). Reusing only EMPTY leads
+            # also sidesteps the "PUT replaces products" trap — there's nothing previous to lose.
+            # A CORRECTION overrides the hybrid: PUT onto the last lead of this conversation with the
+            # full corrected list (the client restated the whole order), never POST — that's what made
+            # #1772/#1773 duplicates. Prefer the lead we remembered; fall back to contact.lead_id.
+            wa = _ctx_wa_id(config)
+            if es_correccion:
+                target_lead = _LAST_LEAD_BY_WA.get(wa) or lead_ctx
+                log.info("registrar_pedido_correccion", target_lead=target_lead,
+                         remembered=_LAST_LEAD_BY_WA.get(wa), lead_ctx=lead_ctx)
+            else:
+                target_lead = fresh_lead
+            stage_key = "confirmado" if es_pedido_confirmado else "no_atendido"
+            body = _build_lead_body(
+                person_id, wa, nombre, titulo_de_pedido, descripcion,
+                ciudad_del_cliente, stage_key, total, products_map, edad=edad_del_cliente,
+            )
+            lead_id = await _upsert_lead(client, target_lead, body)
+            nuevo = target_lead is None
+            if not lead_id:
+                log.error("registrar_pedido_no_lead_id")
+                return json.dumps({"lead_id": None, "error": "no_lead_id"}, ensure_ascii=False)
+
+            # Remember it so an immediate correction PUTs onto this same lead (see _LAST_LEAD_BY_WA).
+            if wa:
+                _LAST_LEAD_BY_WA[wa] = lead_id
+
+            log.info(
+                "kohlberg_pedido_registered",
+                lead_id=lead_id,
+                lineas=len(products_map),
+                total=total,
+                user_id=_city_sales_rep(ciudad_del_cliente),
+                confirmado=es_pedido_confirmado,
+                nuevo_lead=nuevo,
+            )
+            return json.dumps(
+                {"lead_id": lead_id, "solicitud": f"#{lead_id}", "productos_registrados": len(products_map),
+                 "total": total, "confirmado": es_pedido_confirmado, "nuevo_lead": nuevo},
+                ensure_ascii=False,
+            )
+    except httpx.HTTPStatusError as e:
+        body_text = e.response.text[:800] if e.response is not None else ""
+        log.exception("registrar_pedido_http_error", status=e.response.status_code, body=body_text)
+        return json.dumps({"lead_id": None, "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
+    except Exception as e:
+        log.exception("registrar_pedido_failed", error=str(e))
+        return json.dumps({"lead_id": None, "error": str(e) or type(e).__name__}, ensure_ascii=False)
+
+@tool
+async def get_pedidos(config: RunnableConfig) -> str:
+    """Consulta TODOS los pedidos del cliente por su número de teléfono.
+
+    Usa GET /api/pedidos/por-telefono y devuelve todos los pedidos en una
+    sola llamada.
+    """
+    telefono = _ctx_wa_id(config)
+    metadata = (config or {}).get("metadata") or {}
+    digits = "".join(c for c in telefono if c.isdigit())
+
+    log = logger.bind(
+        tool="get_pedidos",
+        telefono_original=telefono,
+        telefono_digits=digits,
+        metadata_keys=list(metadata.keys()),
+        wa_id_raw=metadata.get("wa_id"),
+        person_id=metadata.get("person_id"),
+    )
+
+    # LOG 1: confirmar qué información llega realmente al tool
+    log.info(
+        "kohlberg_get_pedidos_start",
+        telefono_original=telefono,
+        telefono_digits=digits,
+        metadata_keys=list(metadata.keys()),
+        wa_id_raw=metadata.get("wa_id"),
+    )
+
+    if len(digits) < 7:
+        resultado = {
+            "telefono": telefono or None,
+            "persona": None,
+            "pedidos": [],
+            "total": 0,
+            "note": "sin_telefono_valido",
+        }
+
+        log.warning(
+            "kohlberg_get_pedidos_invalid_phone",
+            resultado=resultado,
+        )
+
+        return json.dumps(resultado, ensure_ascii=False)
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+
+            # LOG 2: antes de realizar la petición
+            log.info(
+                "kohlberg_get_pedidos_request",
+                method="GET",
+                url=f"{_BASE}/api/pedidos/por-telefono",
+                params={"telefono": digits},
+            )
+
+            resp = await _request(
+                client,
+                "GET",
+                "/api/pedidos/por-telefono",
+                params={"telefono": digits},
+            )
+
+            # LOG 3: respuesta HTTP
+            log.info(
+                "kohlberg_get_pedidos_response",
+                status=resp.status_code,
+                content_length=len(resp.content or b""),
+                response_text=resp.text[:5000],
+            )
+
+            payload = resp.json() if resp.content else {}
+
+        # LOG 4: payload ya parseado
+        log.info(
+            "kohlberg_get_pedidos_payload",
+            payload=payload,
+            payload_type=type(payload).__name__,
+        )
+
+        # El endpoint debería devolver directamente un objeto.
+        if not isinstance(payload, dict):
+            log.warning(
+                "kohlberg_get_pedidos_invalid_response",
+                response_type=type(payload).__name__,
+                payload=payload,
+            )
+
+            resultado = {
+                "telefono": digits,
+                "persona": None,
+                "pedidos": [],
+                "total": 0,
+                "error": "respuesta_invalida",
+            }
+
+            log.info(
+                "kohlberg_get_pedidos_output",
+                resultado=resultado,
+            )
+
+            return json.dumps(resultado, ensure_ascii=False)
+
+        persona = payload.get("persona")
+        pedidos = payload.get("pedidos")
+        total = payload.get("total")
+
+        # LOG 5: inspeccionar específicamente los campos importantes
+        log.info(
+            "kohlberg_get_pedidos_fields",
+            telefono_response=payload.get("telefono"),
+            persona=persona,
+            pedidos_type=type(pedidos).__name__,
+            pedidos_count=len(pedidos) if isinstance(pedidos, list) else None,
+            total_raw=total,
+            payload_keys=list(payload.keys()),
+        )
+
+        if not isinstance(pedidos, list):
+            log.warning(
+                "kohlberg_get_pedidos_pedidos_not_list",
+                pedidos_value=pedidos,
+                pedidos_type=type(pedidos).__name__,
+            )
+            pedidos = []
+
+        total_int = _to_int(total)
+
+        # Si el endpoint no manda total correctamente, usamos la cantidad real.
+        if total_int is None:
+            total_int = len(pedidos)
+
+        resultado = {
+            "telefono": payload.get("telefono") or digits,
+            "persona": persona if isinstance(persona, dict) else None,
+            "pedidos": pedidos,
+            "total": total_int,
+        }
+
+        # LOG 6: RESULTADO FINAL EXACTO QUE SALE DEL TOOL
+        log.info(
+            "kohlberg_get_pedidos_output",
+            resultado=resultado,
+            pedidos_count=len(pedidos),
+            total=total_int,
+        )
+
+        return json.dumps(resultado, ensure_ascii=False)
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        retry_after = e.response.headers.get("Retry-After")
+
+        body_text = e.response.text[:5000] if e.response is not None else ""
+
+        log.warning(
+            "kohlberg_get_pedidos_http_error",
+            status=status,
+            retry_after=retry_after,
+            response_body=body_text,
+            telefono=digits,
+        )
+
+        if status == 429:
+            resultado: dict[str, Any] = {
+                "telefono": digits,
+                "persona": None,
+                "pedidos": [],
+                "total": 0,
+                "error": "api_429",
+            }
+
+            if retry_after:
+                resultado["retry_after"] = retry_after
+
+            log.info(
+                "kohlberg_get_pedidos_output",
+                resultado=resultado,
+            )
+
+            return json.dumps(resultado, ensure_ascii=False)
+
+        message: Optional[str] = None
+
+        try:
+            error_payload = e.response.json()
+
+            log.warning(
+                "kohlberg_get_pedidos_error_payload",
+                error_payload=error_payload,
+            )
+
+            if isinstance(error_payload, dict):
+                raw_message = error_payload.get("message")
+
+                if isinstance(raw_message, str):
+                    message = raw_message
+
+        except Exception as parse_error:  # noqa: BLE001
+            log.warning(
+                "kohlberg_get_pedidos_error_parse_failed",
+                error=str(parse_error),
+                response_body=body_text,
+            )
+
+        resultado: dict[str, Any] = {
+            "telefono": digits,
+            "persona": None,
+            "pedidos": [],
+            "total": 0,
+            "error": f"api_{status}",
+        }
+
+        if message:
+            resultado["message"] = message
+
+        log.info(
+            "kohlberg_get_pedidos_output",
+            resultado=resultado,
+        )
+
+        return json.dumps(resultado, ensure_ascii=False)
+
+    except Exception as e:  # noqa: BLE001
+        log.exception(
+            "kohlberg_get_pedidos_failed",
+            telefono=digits,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+
+        resultado = {
+            "telefono": digits,
+            "persona": None,
+            "pedidos": [],
+            "total": 0,
+            "error": str(e) or type(e).__name__,
+        }
+
+        log.info(
+            "kohlberg_get_pedidos_output",
+            resultado=resultado,
+        )
+
+        return json.dumps(resultado, ensure_ascii=False)
+
+@tool
+async def get_persona(config: RunnableConfig) -> str:
+    """Trae lo que el CRM ya sabe del cliente por su teléfono (nombre, ciudad si consta, etc.).
+
+    Llamala UNA sola vez al inicio de la conversación, antes de pedir datos. Si el CRM ya conoce al
+    cliente, saludalo por su nombre y NO le pidas de nuevo lo que ya venga (nombre y/o ciudad); pide
+    solo lo que falte. Solo lectura, una sola llamada. El teléfono sale del contexto (no lo pidas).
+    """
+    telefono = _ctx_wa_id(config)
+    digits = "".join(c for c in telefono if c.isdigit())
+    log = logger.bind(tool="get_persona", telefono_digits=digits)
+
+    if len(digits) < 7:
+        resultado = {"telefono": telefono or None, "persona": None, "note": "sin_telefono_valido"}
+        log.warning("kohlberg_get_persona_invalid_phone", resultado=resultado)
+        return json.dumps(resultado, ensure_ascii=False)
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            log.info(
+                "kohlberg_get_persona_request",
+                url=f"{_BASE}/api/personas/por-telefono",
+                telefono=digits,
+            )
+            resp = await _request(
+                client, "GET", "/api/personas/por-telefono", params={"telefono": digits}
+            )
+            log.info(
+                "kohlberg_get_persona_response",
+                status=resp.status_code,
+                response_text=resp.text[:2000],
+            )
+            payload = resp.json() if resp.content else {}
+
+        if not isinstance(payload, dict):
+            log.warning("kohlberg_get_persona_invalid_response", response_type=type(payload).__name__)
+            return json.dumps(
+                {"telefono": digits, "persona": None, "error": "respuesta_invalida"},
+                ensure_ascii=False,
+            )
+
+        # Pass the CRM object through as-is (schema-agnostic): whatever fields it carries
+        # (persona.nombre, ciudad, edad, ...) reach the LLM directly.
+        payload.setdefault("telefono", digits)
+        payload.setdefault("persona", None)
+        log.info("kohlberg_get_persona_output", resultado=payload)
+        return json.dumps(payload, ensure_ascii=False)
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        retry_after = e.response.headers.get("Retry-After")
+        log.warning("kohlberg_get_persona_http_error", status=status, retry_after=retry_after)
+        resultado: dict[str, Any] = {"telefono": digits, "persona": None, "error": f"api_{status}"}
+        if status == 429 and retry_after:
+            resultado["retry_after"] = retry_after
+        return json.dumps(resultado, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        log.exception("kohlberg_get_persona_failed", error=str(e))
+        return json.dumps(
+            {"telefono": digits, "persona": None, "error": str(e) or type(e).__name__},
+            ensure_ascii=False,
+        )
+
+async def _catalog_price_by_id() -> dict[int, float]:
+    """Unit price by product id from the cached catalog (promo price if set, else base)."""
+    out: dict[int, float] = {}
+    try:
+        for p in await _get_products_cached():
+            pid = _to_int(p.get("id"))
+            if pid is not None:
+                out[pid] = _product_price(p)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kohlberg_price_lookup_failed", error=str(e))
+    return out
+
+
+@tool
+async def actualizar_pedido(
+    config: RunnableConfig,
+    ciudad: Optional[str] = None,
+    nombre: Optional[str] = None,
+    edad: Optional[int] = None,
+    product_id: Optional[list[int]] = None,
+    product_name: Optional[list[str]] = None,
+    cantidad_product: Optional[list[int]] = None,
+    es_cancelado: bool = False,
+) -> str:
+    """Registra EN VIVO el pedido del cliente en los momentos clave (no esperes al final).
+
+    Un lead = el pedido de hoy de ese cliente. Llamala: (1) apenas diga su CIUDAD (mueve el lead a la
+    ciudad/asesor correctos) y (2) cada vez que elija/cambie VINOS. Si ya sabés nombre/edad, incluílos
+    de paso en esa misma llamada, pero NO llames solo por el nombre o la edad. Pasá SIEMPRE la lista
+    COMPLETA de vinos conocida (no solo el último): reemplaza la del lead. Los precios salen del catálogo
+    (get_promos), no los pases vos. es_cancelado=True marca el pedido como cancelado. NO confirma el
+    pedido final: para el cierre + sucursal usá registrar_pedido.
+
+    Args:
+        config: contexto inyectado por el grafo (lead/persona/teléfono). No lo pasa el modelo.
+        ciudad: ciudad del cliente cuando la diga.
+        nombre: nombre del cliente (mandalo de paso con ciudad o vinos; no llames solo por esto).
+        edad: edad del cliente (mandala de paso con ciudad o vinos; no llames solo por esto).
+        product_id: ids (de get_promos) de TODOS los vinos elegidos hasta ahora, lista completa.
+        product_name: nombres exactos (de get_promos), en el mismo orden que product_id.
+        cantidad_product: cantidad de cada vino, en el mismo orden.
+        es_cancelado: True si el cliente cancela el pedido.
+    """
+    lead_ctx, person_ctx = _ctx_ids(config)
+    wa = _ctx_wa_id(config)
+    log = logger.bind(tool="actualizar_pedido", lead_id=lead_ctx, wa_id=wa)
+
+    draft = _DRAFT_BY_WA.setdefault(wa, {})
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            # Cold draft on this replica: seed products from the existing lead so we don't clobber them.
+            if not draft.get("_seeded") and lead_ctx:
+                lead = await _get_lead(client, lead_ctx)
+                if lead is not None:
+                    prods = lead.get("products")
+                    if isinstance(prods, dict) and prods and "ids" not in draft:
+                        draft["ids"] = [_to_int(p.get("product_id")) for p in prods.values()]
+                        draft["names"] = [p.get("name") for p in prods.values()]
+                        draft["qtys"] = [_to_int(p.get("quantity")) or 1 for p in prods.values()]
+                draft["_seeded"] = True
+
+            # Merge the newly-provided data into the draft.
+            ciudad_val = (ciudad or "").strip()
+            nombre_val = (nombre or "").strip()
+            if ciudad_val:
+                draft["ciudad"] = ciudad_val
+            if nombre_val:
+                draft["nombre"] = nombre_val
+            if edad is not None:
+                draft["edad"] = edad
+            if product_id:  # full list each time (replaces)
+                draft["ids"] = list(product_id)
+                draft["names"] = list(product_name or [])
+                draft["qtys"] = list(cantidad_product or [])
+
+            ids = draft.get("ids") or []
+            names = draft.get("names") or []
+            qtys = draft.get("qtys") or []
+            price_by_id = await _catalog_price_by_id() if ids else {}
+            products_map, total = _build_products_map(ids, names, qtys, price_by_id)
+
+            person_id = person_ctx
+            if person_id is None:
+                person_id = await _resolve_person(client, wa, draft.get("nombre"))
+
+            stage_key = "cancelado" if es_cancelado else "no_atendido"
+            body = _build_lead_body(
+                person_id, wa, draft.get("nombre"), None, "Pedido en curso (WhatsApp)",
+                draft.get("ciudad"), stage_key, total, products_map, edad=draft.get("edad"),
+            )
+            lead_id = await _upsert_lead(client, lead_ctx, body)
+            if lead_id and wa:
+                _LAST_LEAD_BY_WA[wa] = lead_id
+
+            # Persist person attrs (edad/ciudad) best-effort so a returning client isn't re-asked.
+            if person_id and (draft.get("edad") is not None or draft.get("ciudad")):
+                try:
+                    await _set_person_attrs(
+                        client, person_id, edad=draft.get("edad"), ciudad=draft.get("ciudad"),
+                        nombre=draft.get("nombre"), wa_id=wa,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    log.warning("actualizar_pedido_person_update_failed", person_id=person_id, error=str(e))
+
+        log.info(
+            "kohlberg_pedido_actualizado",
+            lead_id=lead_id, ciudad=draft.get("ciudad"), nombre=draft.get("nombre"),
+            edad=_to_int(draft.get("edad")), lineas=len(products_map), total=total, cancelado=es_cancelado,
+        )
+        return json.dumps(
+            {"lead_id": lead_id, "ciudad": draft.get("ciudad"), "lineas": len(products_map),
+             "total": total, "cancelado": es_cancelado},
+            ensure_ascii=False,
+        )
+    except httpx.HTTPStatusError as e:
+        log.warning("actualizar_pedido_http_error", status=e.response.status_code)
+        return json.dumps({"lead_id": lead_ctx, "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        log.exception("actualizar_pedido_failed", error=str(e))
+        return json.dumps({"lead_id": lead_ctx, "error": str(e) or type(e).__name__}, ensure_ascii=False)
+
+
+@tool
+async def think(pensamiento: str) -> str:
+    """Verifica la coherencia del flujo antes de responder (borrador interno, no lo ve el cliente).
+
+    Úsala para razonar en silencio: comprobar que no repites un paso ya avanzado, que no contradices
+    datos previos del cliente, que los vinos/precios salen de get_promos y que respetas las reglas
+    (máx. 3 vinos por respuesta, no combinar el paso de pedido con el de sucursal, etc.). No realiza
+    ninguna acción externa.
+
+    Args:
+        pensamiento: Tu razonamiento sobre el estado del flujo y el siguiente paso.
+    """
+    return json.dumps({"ok": True}, ensure_ascii=False)
+
+
+# ── Handoff (signal only - the webhook POSTs after the client notice) ──────────
+
+@tool
+async def derivar_a_asesor(reason: str, ciudad: Optional[str] = None) -> str:
+    """Deriva la conversación a un asesor humano de la ciudad del cliente.
+
+    Úsala cuando el cliente pida hablar con una persona, esté molesto/repita un reclamo, o la consulta
+    exceda lo que resolvés (reclamos de un pedido entregado, pago, precios especiales, cambios sobre un
+    pedido ya confirmado). El mensaje de ESTA respuesta es el aviso al cliente (breve, sin prometer
+    tiempos). Después de derivar NO le vuelvas a escribir; no derives dos veces.
+
+    Args:
+        reason: Motivo en una frase (español) para que el asesor entienda el contexto.
+        ciudad: Ciudad del cliente SOLO si la sabés con certeza por la conversación. NO la deduzcas del
+            código de área ni del nombre (una ciudad errada lo manda con el asesor equivocado). Sin
+            ciudad, cae al pool del equipo (válido).
+    """
+    # Pure signal: the actual POST /handoff is done by the caller AFTER the client notice is sent
+    # (once derived the CRM 409s any further /messages, so order matters).
+    return json.dumps(
+        {"status": "handoff_signaled", "reason": reason, "ciudad": (ciudad or None)},
+        ensure_ascii=False,
+    )
+
+
+async def request_handoff(
+    conversation_id: int | str, reason: str, ciudad: Optional[str] = None
+) -> dict[str, Any]:
+    """Derive a conversation to an advisor: POST .../conversations/{id}/handoff {reason, ciudad?}.
+
+    Not a tool - the webhook calls this AFTER sending the client notice (once derived the CRM 409s any
+    further /messages, so order matters). The CRM routes to the city's Encargado (or the team pool);
+    idempotent CRM-side (a re-request returns changed=false). `assigned_user` in the response is an
+    INT (the id), never an object; `assigned_user_name` carries the name. Best-effort: logs and returns
+    {} on failure, never raises.
+    """
+    log = logger.bind(conversation_id=conversation_id, ciudad=(ciudad or "")[:40])
+    body: dict[str, Any] = {"reason": reason}
+    if ciudad and ciudad.strip():
+        body["ciudad"] = ciudad.strip()
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await _request(
+                client, "POST", f"/api/v1/whatsapp/conversations/{conversation_id}/handoff", json=body
+            )
+            payload = resp.json() if resp.content else {}
+            handoff = payload.get("handoff") if isinstance(payload, dict) else None
+            handoff = handoff if isinstance(handoff, dict) else {}
+            log.info(
+                "kohlberg_handoff_requested",
+                state=handoff.get("state"),
+                pooled=handoff.get("pooled"),
+                city=handoff.get("city"),
+                assigned_user=handoff.get("assigned_user"),
+                changed=handoff.get("changed"),
+            )
+            return payload if isinstance(payload, dict) else {}
+    except httpx.HTTPStatusError as e:
+        log.error("kohlberg_handoff_http_error", status=e.response.status_code)
+        return {}
+    except Exception as e:  # noqa: BLE001
+        log.exception("kohlberg_handoff_failed", error=str(e))
+        return {}

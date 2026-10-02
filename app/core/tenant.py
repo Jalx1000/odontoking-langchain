@@ -91,6 +91,19 @@ def _build_env_registry() -> dict[str, TenantConfig]:
         crm_token=settings.KOHLBERG_API_TOKEN,
         llm_model=settings.KOHLBERG_LLM_MODEL,
     )
+    # Sensia (gateway sofo-crm): mismo patrón que Kohlberg — sin phone_number_id de Meta; el worker
+    # (WORKER_TENANT=sensia) necesita que get_tenant("sensia") NO sea None.
+    registry["sensia"] = TenantConfig(
+        slug="sensia",
+        display_name="Sensia",
+        verify_token=settings.WHATSAPP_VERIFY_TOKEN,
+        phone_number_id="",
+        wa_access_token="",
+        agent_type="sensia",
+        crm_url=settings.SENSIA_API_URL,
+        crm_token=settings.SENSIA_API_TOKEN,
+        llm_model=settings.SENSIA_LLM_MODEL,
+    )
     logger.info("tenant_env_registry_loaded", tenants=list(registry.keys()))
     return registry
 
