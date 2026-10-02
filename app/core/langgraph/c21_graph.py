@@ -1,8 +1,8 @@
-"""C21Agent - LangGraph agent for the CENTURY 21 (Sofía) WhatsApp real-estate assistant.
+"""C21Agent - LangGraph agent for the CENTURY 21 (Eliana) WhatsApp real-estate assistant.
 
 Flow: WhatsApp → Krayin CRM (c21.sofopolis.com) → agent → CRM. Same Postgres checkpointer / Langfuse
 infrastructure as the IMPRIMIR agent; the difference is the prompt (c21.md) and the tool set
-(inmobiliaria.py). v1 does NOT schedule visits - Sofía captures a visit preference and hands off to the
+(inmobiliaria.py). v1 does NOT schedule visits - Eliana captures a visit preference and hands off to the
 titular advisor. The ONLY id the LLM handles is the public property `codigo`; conversation_id /
 person_id / lead_id are injected via config.metadata and never reach the model.
 """
@@ -153,7 +153,7 @@ async def _persist_messages_async(wa_id: str, messages: list[BaseMessage]) -> No
 
 
 class C21Agent:
-    """LangGraph agent for the CENTURY 21 (Sofía) WhatsApp real-estate assistant."""
+    """LangGraph agent for the CENTURY 21 (Eliana) WhatsApp real-estate assistant."""
 
     def __init__(self):
         """Initialize the C21 agent with its own LLM and real-estate tool set."""
@@ -316,7 +316,7 @@ class C21Agent:
         nombre_whatsapp: Optional[str] = None,
         handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
-        """Process one WhatsApp message and return Sofía's plain-text reply.
+        """Process one WhatsApp message and return Eliana's plain-text reply.
 
         If the agent calls `derivar_a_asesor` this turn, `handoff_callback` is invoked with the reason
         (and codigo) so the caller can POST /handoff AFTER sending the reply.

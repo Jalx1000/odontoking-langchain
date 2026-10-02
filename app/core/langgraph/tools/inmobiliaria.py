@@ -1,4 +1,4 @@
-"""CENTURY 21 (Sofía) CRM tools - inmuebles, disponibilidad-less v1, leads and handoff.
+"""CENTURY 21 (Eliana) CRM tools - inmuebles, disponibilidad-less v1, leads and handoff.
 
 Flow: WhatsApp → Krayin CRM (c21.sofopolis.com) → agent → CRM. The agent receives conversation_id +
 wa_id; the ONLY identifier the LLM handles is the public property `codigo` (it appears in the listing
@@ -30,7 +30,9 @@ _BASE = settings.CRM_BASE_URL
 # Every conversation action lives under /api/v1/inmobiliaria/conversations/{id}/… (catalog, leads,
 # historial, handoff, media, location, telefono) - verified against the live CRM instance.
 _NS_INMO = "/api/v1/inmobiliaria"
-_MEDIA_MAX = 8                           # hard cap per the CRM contract (asking for more returns 8)
+_MEDIA_MAX = 10                          # we request up to 10. NOTE: the CRM previously capped at 8
+                                         # ("asking for more returns 8"); if it still does, only 8
+                                         # arrive until the CRM raises its own limit.
 
 _HEADERS = {
     "accept": "application/json",
@@ -192,26 +194,26 @@ async def get_inmueble(codigo: str) -> str:
 
 @tool
 async def enviar_media(
-    codigo: str, config: RunnableConfig, tipo: str = "foto", cantidad: int = 4
+    codigo: str, config: RunnableConfig, tipo: str = "foto", cantidad: int = 10
 ) -> str:
     """Envía al cliente los archivos de un inmueble (fotos, plano, video o tour).
 
     Usala SOLO después de confirmar con `get_inmueble` que el inmueble tiene ese material
     (campos `tiene_fotos` / `tiene_plano` / `tiene_tour`) - si no, promete algo que no puede cumplir.
     La galería vive en el CRM: elige los archivos y el orden (portada primero, caption solo en la
-    primera). El agente nunca ve URLs. Para una primera muestra 3-4 fotos alcanzan (tope duro 8).
+    primera). El agente nunca ve URLs. Se envían 10 fotos por defecto (tope duro 10).
 
     Args:
         codigo: Código público del inmueble.
         config: Interno; lo inyecta el sistema. No lo pases.
         tipo: "foto" | "plano" | "video" | "tour" (por defecto "foto").
-        cantidad: Cuántos archivos enviar (por defecto 4, máximo 8).
+        cantidad: Cuántos archivos enviar (por defecto 10, máximo 10).
     """
     conversation_id = _ctx_conversation_id(config)
     log = logger.bind(conversation_id=conversation_id, codigo=codigo, tipo=tipo)
     if not conversation_id:
         return json.dumps({"enviado": False, "error": "no_conversation_id"}, ensure_ascii=False)
-    body = {"codigo": codigo, "tipo": tipo, "cantidad": max(1, min(int(cantidad or 4), _MEDIA_MAX))}
+    body = {"codigo": codigo, "tipo": tipo, "cantidad": max(1, min(int(cantidad or 10), _MEDIA_MAX))}
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await _request(
@@ -222,7 +224,7 @@ async def enviar_media(
             log.info("c21_enviar_media_ok", enviados=enviados)
             return json.dumps({"enviado": True, "enviados": enviados, "codigo": codigo}, ensure_ascii=False)
     except httpx.HTTPStatusError as e:
-        # Non-transient statuses (_request already retried 5xx/429): map each to a result Sofía reacts
+        # Non-transient statuses (_request already retried 5xx/429): map each to a result Eliana reacts
         # to. 404 = no material of that type (o código inexistente) → decírselo, NO reintentar; 409 =
         # derivada a un asesor → callarse; 422 = fuera de la ventana 24h; 501 = canal sin media.
         status = e.response.status_code

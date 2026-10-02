@@ -6,6 +6,10 @@ leads que quedaron sin responder.
 Base URL (despliegue Ponce): `https://poncedeleon.sofopolis.com`
 Zona horaria de referencia: **America/La_Paz**.
 
+> **Decisión acordada:** se implementa **íntegramente en el CRM**, versión **MVP §4.1** (mensaje de
+> texto fijo en voz de Sofía). **No requiere ningún cambio en el agente.** La Fase 2 (§4.2, recordatorio
+> contextual generado por el agente) queda **para más adelante**, no es parte de esta entrega.
+
 ---
 
 ## 1. Objetivo
