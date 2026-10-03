@@ -201,7 +201,8 @@ async def enviar_media(
     Usala SOLO después de confirmar con `get_inmueble` que el inmueble tiene ese material
     (campos `tiene_fotos` / `tiene_plano` / `tiene_tour`) - si no, promete algo que no puede cumplir.
     La galería vive en el CRM: elige los archivos y el orden (portada primero, caption solo en la
-    primera). El agente nunca ve URLs. Se envían 10 fotos por defecto (tope duro 10).
+    primera). El agente nunca ve URLs. Pide hasta 10 archivos; el CRM manda los que el inmueble tenga
+    (nunca duplica para llegar al número; tope duro 10).
 
     Args:
         codigo: Código público del inmueble.
@@ -215,7 +216,11 @@ async def enviar_media(
         return json.dumps({"enviado": False, "error": "no_conversation_id"}, ensure_ascii=False)
     body = {"codigo": codigo, "tipo": tipo, "cantidad": max(1, min(int(cantidad or 10), _MEDIA_MAX))}
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        # 30s: enviar 10 imágenes a la Cloud API tarda varios segundos; un timeout corto disparaba un
+        # reintento (tenacity, _is_transient reintenta TimeoutException) que duplicaba el envío. El CRM
+        # ahora es idempotente 60s, así que un reintento dentro de esa ventana se deduplica en vez de
+        # reenviar. Mantener el timeout por debajo de esa ventana para que los reintentos queden dentro.
+        async with httpx.AsyncClient(timeout=30) as client:
             resp = await _request(
                 client, "POST", f"{_NS_INMO}/conversations/{conversation_id}/media", json=body
             )
