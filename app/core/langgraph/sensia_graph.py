@@ -1,15 +1,17 @@
-"""SensiaAgent - LangGraph agent for the Sensia "Club del Vino" (Sofía) WhatsApp sales assistant.
+"""SensiaAgent - LangGraph agent for Sensia (Sofía), a bottled-water distributor WhatsApp sales assistant.
+
+Sensia vende botellones de agua de 20 L y accesorios en Jujuy, Argentina (envío a domicilio o retiro).
 
 Flow: WhatsApp -> Krayin CRM (sensia.sofopolis.com) -> agent -> CRM. Same Postgres checkpointer /
 Langfuse infrastructure as the other agents; the difference is the prompt (sensia.md) and the tool
-set (sensia.py): get_promos (wine catalog / única fuente de verdad), get_sucursales (pickup branch /
+set (sensia.py): get_promos (product catalog / única fuente de verdad), get_sucursales (pickup branch /
 advisor phone) and registrar_pedido (the confirmed order as a Krayin lead).
 
 The only ids the tools use (conversation_id / lead_id / person_id) are injected via config.metadata and
 never reach the model; the ONLY ids the LLM handles are the public product_id values it reads back from
-get_promos. There is no delivery. A client who wants a person is handed off with derivar_a_asesor: the
-tool only SIGNALS, and the webhook POSTs the handoff AFTER the client notice is sent (once derived the
-CRM 409s any further /messages, so order matters).
+get_promos. A client who wants a person is handed off with derivar_a_asesor: the tool only SIGNALS, and
+the webhook POSTs the handoff AFTER the client notice is sent (once derived the CRM 409s any further
+/messages, so order matters).
 """
 
 import asyncio
@@ -168,7 +170,7 @@ def _log_llm_token_usage(message: BaseMessage, *, wa_id: str, thread_id: Optiona
 
 
 class SensiaAgent:
-    """LangGraph agent for the Sensia "Club del Vino" (Sofía) WhatsApp sales assistant."""
+    """LangGraph agent for Sensia (Sofía), a bottled-water distributor WhatsApp sales assistant."""
 
     def __init__(self):
         """Initialize the Sensia agent with its own LLM and wine-sales tool set."""

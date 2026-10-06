@@ -1,19 +1,21 @@
-"""Kohlberg "Club del Vino" (Sofía) CRM tools - promos catalog, sucursales, order registration.
+"""Sensia (Sofía) CRM tools - botellones de agua: catálogo, sucursales, registro de pedidos.
 
-Flow: WhatsApp -> Krayin CRM (kohlberg.sofopolis.com) -> agent -> CrmGateway. Same CRM as the other
-tenants, different subdomain (KOHLBERG_API_URL / KOHLBERG_API_TOKEN, falling back to the sofo-crm
+Sensia es una distribuidora de agua embotellada (botellones de 20 L) en Jujuy, Argentina.
+
+Flow: WhatsApp -> Krayin CRM (sensia.sofopolis.com) -> agent -> CrmGateway. Same CRM as the other
+tenants, different subdomain (SENSIA_API_URL / SENSIA_API_TOKEN, falling back to the sofo-crm
 gateway pair CRM_BASE_URL / CRM_API_KEY).
 
 Design note - one coarse tool per action, only plain fields (no ids threaded by the LLM):
 
-    get_promos()          - active wine promotions (the ONLY source of truth for wines/prices).
-    get_sucursales(...)   - branch info by city (pickup point / advisor phone). Static catalog.
+    get_promos()          - active products & promos by zone (the ONLY source of truth for products/prices).
+    get_sucursales(...)   - branch info by zone (pickup point / advisor phone).
     registrar_pedido(...) - registers the confirmed order as a Krayin lead with product lines.
     think(...)            - no-op scratchpad so the model can verify flow coherence before replying.
 
 The conversation's auto-created lead (contact.lead_id) and person (contact.person_id) are injected
 server-side via config.metadata and never reach the model; registrar_pedido reuses them so an order
-enriches the existing lead instead of creating a duplicate. Wines carry a real product_id that comes
+enriches the existing lead instead of creating a duplicate. Products carry a real product_id that comes
 from get_promos - the LLM passes those ids straight through (they are catalog ids, safe to surface).
 """
 
@@ -312,7 +314,7 @@ async def _set_person_attrs(
         if isinstance(data, dict):
             current = data
     except Exception as e:  # noqa: BLE001
-        logger.warning("kohlberg_person_fetch_failed", person_id=person_id, error=str(e))
+        logger.warning("sensia_person_fetch_failed", person_id=person_id, error=str(e))
 
     numbers = current.get("contact_numbers")
     if not (isinstance(numbers, list) and numbers):
@@ -342,7 +344,7 @@ async def _get_lead(client: httpx.AsyncClient, lead_id: int) -> Optional[dict[st
         data = _data(resp)
         return data if isinstance(data, dict) else None
     except Exception as e:  # noqa: BLE001
-        logger.warning("kohlberg_lead_fetch_failed", lead_id=lead_id, error=str(e))
+        logger.warning("sensia_lead_fetch_failed", lead_id=lead_id, error=str(e))
         return None
 
 
@@ -426,7 +428,7 @@ def _build_products_map(
 
     # LOG 1: Datos completos de entrada.
     log.info(
-        "kohlberg_products_map_start",
+        "sensia_products_map_start",
         ids=ids,
         names=names,
         qtys=qtys,
@@ -436,7 +438,7 @@ def _build_products_map(
     # LOG 2: Detectar inmediatamente si los arrays paralelos no coinciden.
     if not (len(ids) == len(names) == len(qtys)):
         log.warning(
-            "kohlberg_products_map_array_length_mismatch",
+            "sensia_products_map_array_length_mismatch",
             ids_count=len(ids),
             names_count=len(names),
             qtys_count=len(qtys),
@@ -456,7 +458,7 @@ def _build_products_map(
 
         # LOG 3: Datos originales de esta posición.
         log.info(
-            "kohlberg_products_map_item_input",
+            "sensia_products_map_item_input",
             index=i,
             raw_product_id=raw_id,
             raw_name=raw_name,
@@ -468,7 +470,7 @@ def _build_products_map(
         # Si el ID no es válido, actualmente el producto se pierde.
         if pid_int is None:
             log.warning(
-                "kohlberg_products_map_invalid_product_id",
+                "sensia_products_map_invalid_product_id",
                 index=i,
                 raw_product_id=raw_id,
                 raw_name=raw_name,
@@ -485,7 +487,7 @@ def _build_products_map(
 
         if not name_i:
             log.warning(
-                "kohlberg_products_map_missing_name",
+                "sensia_products_map_missing_name",
                 index=i,
                 product_id=pid_int,
                 available_names_count=len(names),
@@ -497,7 +499,7 @@ def _build_products_map(
 
         if qty_raw_int is None or qty_raw_int <= 0:
             log.warning(
-                "kohlberg_products_map_invalid_quantity_defaulted",
+                "sensia_products_map_invalid_quantity_defaulted",
                 index=i,
                 product_id=pid_int,
                 raw_quantity=raw_qty,
@@ -510,7 +512,7 @@ def _build_products_map(
 
         if not price_found:
             log.error(
-                "kohlberg_products_map_price_not_found",
+                "sensia_products_map_price_not_found",
                 index=i,
                 product_id=pid_int,
                 available_product_ids=list(price_by_id.keys())[:100],
@@ -521,7 +523,7 @@ def _build_products_map(
 
         # LOG 4: Producto después de normalizar los datos.
         log.info(
-            "kohlberg_products_map_item_resolved",
+            "sensia_products_map_item_resolved",
             index=i,
             product_id=pid_int,
             name=name_i,
@@ -547,7 +549,7 @@ def _build_products_map(
 
         # LOG 5: Ver exactamente cómo está quedando el objeto acumulado.
         log.info(
-            "kohlberg_products_map_item_added",
+            "sensia_products_map_item_added",
             index=i,
             product_key=product_key,
             mapped_product=mapped_product,
@@ -559,7 +561,7 @@ def _build_products_map(
 
     # LOG 6: RESULTADO FINAL EXACTO.
     log.info(
-        "kohlberg_products_map_complete",
+        "sensia_products_map_complete",
         input_ids_count=len(ids),
         mapped_products_count=len(products),
         skipped_products_count=len(ids) - len(products),
@@ -603,7 +605,7 @@ def _build_lead_body(
         ]
 
     body: dict[str, Any] = {
-        "title": (titulo or f"Pedido Club del Vino - {etiqueta}").strip(),
+        "title": (titulo or f"Pedido Sensia - {etiqueta}").strip(),
         "description": descripcion or "Pedido vía WhatsApp",
 
         # IMPORTANTE: enviar como número, no como string.
@@ -630,7 +632,7 @@ def _build_lead_body(
         body["products"] = products
 
     logger.info(
-        "kohlberg_build_lead_body",
+        "sensia_build_lead_body",
         person_id=person_id,
         total_input=total,
         total_decimal=total_decimal,
@@ -740,7 +742,7 @@ async def _fetch_all_products(client: httpx.AsyncClient, max_pages: int = 20) ->
 # rarely, so this collapses the heaviest CRM call (the whole product list) to once per window across
 # every user - the main lever against the CRM's 429 throttle. Only successful (non-empty) fetches are
 # cached, per the project caching rule.
-_PROMOS_CACHE_TTL = float(getattr(settings, "KOHLBERG_PROMOS_CACHE_TTL", 60) or 60)
+_PROMOS_CACHE_TTL = float(getattr(settings, "SENSIA_PROMOS_CACHE_TTL", 60) or 60)
 _promos_cache: dict[str, Any] = {"items": None, "at": 0.0}
 _promos_lock = asyncio.Lock()
 
@@ -766,21 +768,22 @@ async def _get_products_cached() -> list[dict[str, Any]]:
 
 @tool
 async def get_promos(ciudad: Optional[str] = None) -> str:
-    """Vinos y promos ACTIVOS del Club del Vino (ÚNICA fuente de verdad de vinos/precios; nunca los inventes).
+    """Productos y promos ACTIVOS de Sensia (ÚNICA fuente de verdad de productos/precios; nunca los inventes).
 
-    Filtra por la CIUDAD del cliente (pásala apenas la conozcas). Devuelve `vinos` y `packs`; cada ítem
-    trae `product_id` (úsalo tal cual al registrar), `name` (respétalo), descripción y precio. Sin precio
-    de descuento, no muestres un "Precio Club del Vino" inventado. Máximo 3 por respuesta.
+    Sensia vende botellones de agua de 20 L y accesorios (bomba eléctrica) en Jujuy. Filtra por la
+    ZONA del cliente (pásala apenas la conozcas). Devuelve `productos` y `combos`; cada ítem trae
+    `product_id` (úsalo tal cual al registrar), `name` (respétalo), descripción y precio. Sin precio de
+    descuento, no inventes uno. Máximo 3 por respuesta.
 
     Args:
-        ciudad: Ciudad del cliente (texto libre; se normaliza). Sin ciudad → solo productos para todas.
+        ciudad: Zona del cliente (texto libre; se normaliza). Sin zona → solo productos para todas.
     """
     log = logger.bind(tool="get_promos", ciudad=(ciudad or "")[:40])
     ciudad_id = _city_product_id(ciudad)
     try:
-        items = await _get_products_cached()  # short-TTL cache; one CRM fetch serves every city/turn
-        vinos: list[dict[str, Any]] = []
-        packs: list[dict[str, Any]] = []
+        items = await _get_products_cached()  # short-TTL cache; one CRM fetch serves every zone/turn
+        productos: list[dict[str, Any]] = []
+        combos: list[dict[str, Any]] = []
         vistos: set[Any] = set()
         for prod in items:
             pid = prod.get("id")
@@ -791,7 +794,7 @@ async def get_promos(ciudad: Optional[str] = None) -> str:
             estado = _to_int(prod.get("products"))
             if estado is not None and estado != 1:               # estaHabilitado
                 continue
-            # Ciudad: si el producto TIENE ciudades cargadas, filtro por la del cliente (o "Todas").
+            # Zona: si el producto TIENE zonas cargadas, filtro por la del cliente (o "Todas").
             # Si NO tiene ninguna (atributo vacío), lo incluyo igual (todavía no taggeado por zona).
             ciudades = _parse_ciudades(prod.get("ciudad_producto_sucursal"))
             if ciudades and ciudad_id not in ciudades and _TODAS_CITY_ID not in ciudades:  # matchCiudad
@@ -799,43 +802,44 @@ async def get_promos(ciudad: Optional[str] = None) -> str:
             # Tipo: 10=Productos Sensia, 11=Promociones Combos. Si falta el tipo, lo trato como producto.
             tipo = _to_int(prod.get("product_type"))
             if tipo == _TIPO_PACK:
-                packs.append(_clean_product(prod))
+                combos.append(_clean_product(prod))
                 vistos.add(pid)
             else:
-                vinos.append(_clean_product(prod))
+                productos.append(_clean_product(prod))
                 vistos.add(pid)
         log.info(
-            "kohlberg_get_promos_ok",
-            ciudad_id=ciudad_id, total_items=len(items), vinos=len(vinos), packs=len(packs),
+            "sensia_get_promos_ok",
+            ciudad_id=ciudad_id, total_items=len(items), productos=len(productos), combos=len(combos),
         )
         return json.dumps(
             {
                 "ciudad_input": ciudad or "",
                 "ciudad_id": ciudad_id,
-                "total_vinos": len(vinos),
-                "total_packs": len(packs),
-                "vinos": vinos,
-                "packs": packs,
+                "total_productos": len(productos),
+                "total_combos": len(combos),
+                "productos": productos,
+                "combos": combos,
             },
             ensure_ascii=False,
         )
     except httpx.HTTPStatusError as e:
-        log.warning("kohlberg_get_promos_http_error", status=e.response.status_code)
-        return json.dumps({"vinos": [], "packs": [], "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
+        log.warning("sensia_get_promos_http_error", status=e.response.status_code)
+        return json.dumps({"productos": [], "combos": [], "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
-        log.exception("kohlberg_get_promos_failed", error=str(e))
-        return json.dumps({"vinos": [], "packs": [], "error": str(e) or type(e).__name__}, ensure_ascii=False)
+        log.exception("sensia_get_promos_failed", error=str(e))
+        return json.dumps({"productos": [], "combos": [], "error": str(e) or type(e).__name__}, ensure_ascii=False)
 
 
 @tool
 async def get_sucursales(ciudad: Optional[str] = None) -> str:
-    """Sucursales de Kohlberg (warehouses) por ciudad. No hay delivery: el cliente SIEMPRE recoge en sucursal.
+    """Sucursales de Sensia (warehouses) por zona. Para la modalidad RETIRO EN SUCURSAL (Sensia también
+    hace envío a domicilio; eso no usa esta tool).
 
-    Úsala: (1) tras confirmar, para indicar la sucursal de recojo; (2) al pedir asesor, comparte SOLO el
-    teléfono de esa ciudad (nunca otro, nunca inventado).
+    Úsala: (1) cuando el cliente elige retiro, para indicar la sucursal (dirección y horarios); (2) al
+    pedir asesor, comparte SOLO el teléfono de esa zona (nunca otro, nunca inventado).
 
     Args:
-        ciudad: Ciudad del cliente (texto libre; se normaliza). Si se omite, devuelve todas.
+        ciudad: Zona del cliente (texto libre; se normaliza). Si se omite, devuelve todas.
     """
     log = logger.bind(tool="get_sucursales", ciudad=(ciudad or "")[:40])
     # Match on the canonical city name when we recognise it, else on the raw text (mirrors the n8n
@@ -856,16 +860,16 @@ async def get_sucursales(ciudad: Optional[str] = None) -> str:
             ]
         else:
             sucursales = warehouses
-        log.info("kohlberg_get_sucursales_ok", encontrados=len(sucursales), total=len(warehouses))
+        log.info("sensia_get_sucursales_ok", encontrados=len(sucursales), total=len(warehouses))
         return json.dumps(
             {"filtro_input": ciudad or "", "total_encontrados": len(sucursales), "sucursales": sucursales},
             ensure_ascii=False,
         )
     except httpx.HTTPStatusError as e:
-        log.warning("kohlberg_get_sucursales_http_error", status=e.response.status_code)
+        log.warning("sensia_get_sucursales_http_error", status=e.response.status_code)
         return json.dumps({"sucursales": [], "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
-        log.exception("kohlberg_get_sucursales_failed", error=str(e))
+        log.exception("sensia_get_sucursales_failed", error=str(e))
         return json.dumps({"sucursales": [], "error": str(e) or type(e).__name__}, ensure_ascii=False)
 
 
@@ -886,7 +890,7 @@ async def registrar_pedido(
     es_pedido_cancelado: bool = False,
     es_correccion: bool = False,
 ) -> str:
-    """Registra el pedido del cliente como oportunidad (lead) en el CRM Kohlberg.
+    """Registra el pedido del cliente como oportunidad (lead) en el CRM de Sensia.
 
     es_correccion=True SOLO cuando el cliente corrige el pedido que ACABA de hacer (cambió la
     cantidad, se equivocó, "que sean 3", "cambiá X por Y"): en ese caso NO se crea un pedido nuevo,
@@ -962,7 +966,7 @@ async def registrar_pedido(
                     await _move_lead(client, fresh_lead, ciudad_del_cliente, "cancelado")
                 except Exception as e:  # noqa: BLE001
                     log.warning("registrar_pedido_cancel_note_failed", lead_id=fresh_lead, error=str(e))
-                log.info("kohlberg_pedido_cancelado", lead_id=fresh_lead)
+                log.info("sensia_pedido_cancelado", lead_id=fresh_lead)
                 return json.dumps(
                     {"lead_id": fresh_lead, "solicitud": f"#{fresh_lead}", "cancelado": True},
                     ensure_ascii=False,
@@ -1007,7 +1011,7 @@ async def registrar_pedido(
                         client, person_id, edad=edad_del_cliente, ciudad=ciudad_del_cliente,
                         nombre=nombre, wa_id=_ctx_wa_id(config),
                     )
-                    log.info("kohlberg_person_attrs_set", person_id=person_id,
+                    log.info("sensia_person_attrs_set", person_id=person_id,
                              edad=_to_int(edad_del_cliente), ciudad=ciudad_del_cliente)
                 except Exception as e:  # noqa: BLE001
                     log.warning("registrar_pedido_person_update_failed", person_id=person_id, error=str(e))
@@ -1049,7 +1053,7 @@ async def registrar_pedido(
                 _LAST_LEAD_BY_WA[wa] = lead_id
 
             log.info(
-                "kohlberg_pedido_registered",
+                "sensia_pedido_registered",
                 lead_id=lead_id,
                 lineas=len(products_map),
                 total=total,
@@ -1092,7 +1096,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
 
     # LOG 1: confirmar qué información llega realmente al tool
     log.info(
-        "kohlberg_get_pedidos_start",
+        "sensia_get_pedidos_start",
         telefono_original=telefono,
         telefono_digits=digits,
         metadata_keys=list(metadata.keys()),
@@ -1109,7 +1113,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
         }
 
         log.warning(
-            "kohlberg_get_pedidos_invalid_phone",
+            "sensia_get_pedidos_invalid_phone",
             resultado=resultado,
         )
 
@@ -1120,7 +1124,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
 
             # LOG 2: antes de realizar la petición
             log.info(
-                "kohlberg_get_pedidos_request",
+                "sensia_get_pedidos_request",
                 method="GET",
                 url=f"{_BASE}/api/pedidos/por-telefono",
                 params={"telefono": digits},
@@ -1135,7 +1139,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
 
             # LOG 3: respuesta HTTP
             log.info(
-                "kohlberg_get_pedidos_response",
+                "sensia_get_pedidos_response",
                 status=resp.status_code,
                 content_length=len(resp.content or b""),
                 response_text=resp.text[:5000],
@@ -1145,7 +1149,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
 
         # LOG 4: payload ya parseado
         log.info(
-            "kohlberg_get_pedidos_payload",
+            "sensia_get_pedidos_payload",
             payload=payload,
             payload_type=type(payload).__name__,
         )
@@ -1153,7 +1157,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
         # El endpoint debería devolver directamente un objeto.
         if not isinstance(payload, dict):
             log.warning(
-                "kohlberg_get_pedidos_invalid_response",
+                "sensia_get_pedidos_invalid_response",
                 response_type=type(payload).__name__,
                 payload=payload,
             )
@@ -1167,7 +1171,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
             }
 
             log.info(
-                "kohlberg_get_pedidos_output",
+                "sensia_get_pedidos_output",
                 resultado=resultado,
             )
 
@@ -1179,7 +1183,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
 
         # LOG 5: inspeccionar específicamente los campos importantes
         log.info(
-            "kohlberg_get_pedidos_fields",
+            "sensia_get_pedidos_fields",
             telefono_response=payload.get("telefono"),
             persona=persona,
             pedidos_type=type(pedidos).__name__,
@@ -1190,7 +1194,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
 
         if not isinstance(pedidos, list):
             log.warning(
-                "kohlberg_get_pedidos_pedidos_not_list",
+                "sensia_get_pedidos_pedidos_not_list",
                 pedidos_value=pedidos,
                 pedidos_type=type(pedidos).__name__,
             )
@@ -1211,7 +1215,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
 
         # LOG 6: RESULTADO FINAL EXACTO QUE SALE DEL TOOL
         log.info(
-            "kohlberg_get_pedidos_output",
+            "sensia_get_pedidos_output",
             resultado=resultado,
             pedidos_count=len(pedidos),
             total=total_int,
@@ -1226,7 +1230,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
         body_text = e.response.text[:5000] if e.response is not None else ""
 
         log.warning(
-            "kohlberg_get_pedidos_http_error",
+            "sensia_get_pedidos_http_error",
             status=status,
             retry_after=retry_after,
             response_body=body_text,
@@ -1246,7 +1250,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
                 resultado["retry_after"] = retry_after
 
             log.info(
-                "kohlberg_get_pedidos_output",
+                "sensia_get_pedidos_output",
                 resultado=resultado,
             )
 
@@ -1258,7 +1262,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
             error_payload = e.response.json()
 
             log.warning(
-                "kohlberg_get_pedidos_error_payload",
+                "sensia_get_pedidos_error_payload",
                 error_payload=error_payload,
             )
 
@@ -1270,7 +1274,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
 
         except Exception as parse_error:  # noqa: BLE001
             log.warning(
-                "kohlberg_get_pedidos_error_parse_failed",
+                "sensia_get_pedidos_error_parse_failed",
                 error=str(parse_error),
                 response_body=body_text,
             )
@@ -1287,7 +1291,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
             resultado["message"] = message
 
         log.info(
-            "kohlberg_get_pedidos_output",
+            "sensia_get_pedidos_output",
             resultado=resultado,
         )
 
@@ -1295,7 +1299,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
 
     except Exception as e:  # noqa: BLE001
         log.exception(
-            "kohlberg_get_pedidos_failed",
+            "sensia_get_pedidos_failed",
             telefono=digits,
             error=str(e),
             error_type=type(e).__name__,
@@ -1310,7 +1314,7 @@ async def get_pedidos(config: RunnableConfig) -> str:
         }
 
         log.info(
-            "kohlberg_get_pedidos_output",
+            "sensia_get_pedidos_output",
             resultado=resultado,
         )
 
@@ -1330,13 +1334,13 @@ async def get_persona(config: RunnableConfig) -> str:
 
     if len(digits) < 7:
         resultado = {"telefono": telefono or None, "persona": None, "note": "sin_telefono_valido"}
-        log.warning("kohlberg_get_persona_invalid_phone", resultado=resultado)
+        log.warning("sensia_get_persona_invalid_phone", resultado=resultado)
         return json.dumps(resultado, ensure_ascii=False)
 
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             log.info(
-                "kohlberg_get_persona_request",
+                "sensia_get_persona_request",
                 url=f"{_BASE}/api/personas/por-telefono",
                 telefono=digits,
             )
@@ -1344,14 +1348,14 @@ async def get_persona(config: RunnableConfig) -> str:
                 client, "GET", "/api/personas/por-telefono", params={"telefono": digits}
             )
             log.info(
-                "kohlberg_get_persona_response",
+                "sensia_get_persona_response",
                 status=resp.status_code,
                 response_text=resp.text[:2000],
             )
             payload = resp.json() if resp.content else {}
 
         if not isinstance(payload, dict):
-            log.warning("kohlberg_get_persona_invalid_response", response_type=type(payload).__name__)
+            log.warning("sensia_get_persona_invalid_response", response_type=type(payload).__name__)
             return json.dumps(
                 {"telefono": digits, "persona": None, "error": "respuesta_invalida"},
                 ensure_ascii=False,
@@ -1361,19 +1365,19 @@ async def get_persona(config: RunnableConfig) -> str:
         # (persona.nombre, ciudad, edad, ...) reach the LLM directly.
         payload.setdefault("telefono", digits)
         payload.setdefault("persona", None)
-        log.info("kohlberg_get_persona_output", resultado=payload)
+        log.info("sensia_get_persona_output", resultado=payload)
         return json.dumps(payload, ensure_ascii=False)
 
     except httpx.HTTPStatusError as e:
         status = e.response.status_code
         retry_after = e.response.headers.get("Retry-After")
-        log.warning("kohlberg_get_persona_http_error", status=status, retry_after=retry_after)
+        log.warning("sensia_get_persona_http_error", status=status, retry_after=retry_after)
         resultado: dict[str, Any] = {"telefono": digits, "persona": None, "error": f"api_{status}"}
         if status == 429 and retry_after:
             resultado["retry_after"] = retry_after
         return json.dumps(resultado, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
-        log.exception("kohlberg_get_persona_failed", error=str(e))
+        log.exception("sensia_get_persona_failed", error=str(e))
         return json.dumps(
             {"telefono": digits, "persona": None, "error": str(e) or type(e).__name__},
             ensure_ascii=False,
@@ -1388,7 +1392,7 @@ async def _catalog_price_by_id() -> dict[int, float]:
             if pid is not None:
                 out[pid] = _product_price(p)
     except Exception as e:  # noqa: BLE001
-        logger.warning("kohlberg_price_lookup_failed", error=str(e))
+        logger.warning("sensia_price_lookup_failed", error=str(e))
     return out
 
 
@@ -1405,21 +1409,21 @@ async def actualizar_pedido(
 ) -> str:
     """Registra EN VIVO el pedido del cliente en los momentos clave (no esperes al final).
 
-    Un lead = el pedido de hoy de ese cliente. Llamala: (1) apenas diga su CIUDAD (mueve el lead a la
-    ciudad/asesor correctos) y (2) cada vez que elija/cambie VINOS. Si ya sabés nombre/edad, incluílos
-    de paso en esa misma llamada, pero NO llames solo por el nombre o la edad. Pasá SIEMPRE la lista
-    COMPLETA de vinos conocida (no solo el último): reemplaza la del lead. Los precios salen del catálogo
+    Un lead = el pedido de hoy de ese cliente. Llamala: (1) apenas diga su ZONA (mueve el lead a la
+    zona/asesor correctos) y (2) cada vez que elija/cambie PRODUCTOS. Si ya sabés el nombre, incluílo
+    de paso en esa misma llamada, pero NO llames solo por el nombre. Pasá SIEMPRE la lista COMPLETA de
+    productos conocida (no solo el último): reemplaza la del lead. Los precios salen del catálogo
     (get_promos), no los pases vos. es_cancelado=True marca el pedido como cancelado. NO confirma el
-    pedido final: para el cierre + sucursal usá registrar_pedido.
+    pedido final: para el cierre usá registrar_pedido.
 
     Args:
         config: contexto inyectado por el grafo (lead/persona/teléfono). No lo pasa el modelo.
-        ciudad: ciudad del cliente cuando la diga.
-        nombre: nombre del cliente (mandalo de paso con ciudad o vinos; no llames solo por esto).
-        edad: edad del cliente (mandala de paso con ciudad o vinos; no llames solo por esto).
-        product_id: ids (de get_promos) de TODOS los vinos elegidos hasta ahora, lista completa.
+        ciudad: zona del cliente cuando la diga.
+        nombre: nombre del cliente (mandalo de paso con la zona o los productos; no llames solo por esto).
+        edad: no se usa en Sensia (el agua no requiere edad); dejalo vacío.
+        product_id: ids (de get_promos) de TODOS los productos elegidos hasta ahora, lista completa.
         product_name: nombres exactos (de get_promos), en el mismo orden que product_id.
-        cantidad_product: cantidad de cada vino, en el mismo orden.
+        cantidad_product: cantidad de cada producto, en el mismo orden.
         es_cancelado: True si el cliente cancela el pedido.
     """
     lead_ctx, person_ctx = _ctx_ids(config)
@@ -1485,7 +1489,7 @@ async def actualizar_pedido(
                     log.warning("actualizar_pedido_person_update_failed", person_id=person_id, error=str(e))
 
         log.info(
-            "kohlberg_pedido_actualizado",
+            "sensia_pedido_actualizado",
             lead_id=lead_id, ciudad=draft.get("ciudad"), nombre=draft.get("nombre"),
             edad=_to_int(draft.get("edad")), lineas=len(products_map), total=total, cancelado=es_cancelado,
         )
@@ -1507,9 +1511,9 @@ async def think(pensamiento: str) -> str:
     """Verifica la coherencia del flujo antes de responder (borrador interno, no lo ve el cliente).
 
     Úsala para razonar en silencio: comprobar que no repites un paso ya avanzado, que no contradices
-    datos previos del cliente, que los vinos/precios salen de get_promos y que respetas las reglas
-    (máx. 3 vinos por respuesta, no combinar el paso de pedido con el de sucursal, etc.). No realiza
-    ninguna acción externa.
+    datos previos del cliente, que los productos/precios salen de get_promos y que respetas las reglas
+    (máx. 3 productos por respuesta, no combinar el paso de pedido con el de modalidad/confirmación,
+    etc.). No realiza ninguna acción externa.
 
     Args:
         pensamiento: Tu razonamiento sobre el estado del flujo y el siguiente paso.
@@ -1566,7 +1570,7 @@ async def request_handoff(
             handoff = payload.get("handoff") if isinstance(payload, dict) else None
             handoff = handoff if isinstance(handoff, dict) else {}
             log.info(
-                "kohlberg_handoff_requested",
+                "sensia_handoff_requested",
                 state=handoff.get("state"),
                 pooled=handoff.get("pooled"),
                 city=handoff.get("city"),
@@ -1575,8 +1579,8 @@ async def request_handoff(
             )
             return payload if isinstance(payload, dict) else {}
     except httpx.HTTPStatusError as e:
-        log.error("kohlberg_handoff_http_error", status=e.response.status_code)
+        log.error("sensia_handoff_http_error", status=e.response.status_code)
         return {}
     except Exception as e:  # noqa: BLE001
-        log.exception("kohlberg_handoff_failed", error=str(e))
+        log.exception("sensia_handoff_failed", error=str(e))
         return {}
