@@ -1056,7 +1056,10 @@ async def registrar_pedido(
                 log.info("registrar_pedido_correccion", target_lead=target_lead,
                          remembered=_LAST_LEAD_BY_WA.get(wa), lead_ctx=lead_ctx)
             else:
-                target_lead = fresh_lead
+                # Converger al lead en progreso: el CRM de Sensia no manda contact.lead_id, así que
+                # actualizar_pedido armó el pedido en un lead recordado en _LAST_LEAD_BY_WA. Al confirmar
+                # PUT sobre ESE mismo lead en vez de crear otro (evita el registro múltiple del pedido).
+                target_lead = fresh_lead or _LAST_LEAD_BY_WA.get(wa)
             stage_key = "confirmado" if es_pedido_confirmado else "no_atendido"
             body = _build_lead_body(
                 person_id, wa, nombre, titulo_de_pedido, descripcion,
@@ -1495,7 +1498,11 @@ async def actualizar_pedido(
                 person_id, wa, draft.get("nombre"), None, "Pedido en curso (WhatsApp)",
                 draft.get("ciudad"), stage_key, total, products_map, edad=draft.get("edad"),
             )
-            lead_id = await _upsert_lead(client, lead_ctx, body)
+            # El CRM de Sensia NO manda contact.lead_id (llega null), así que lead_ctx suele ser None.
+            # Para NO crear un lead nuevo en cada llamada (armado en vivo), reutilizamos el lead que ya
+            # creamos para esta conversación (_LAST_LEAD_BY_WA). Solo la PRIMERA llamada hace POST.
+            target = lead_ctx or _LAST_LEAD_BY_WA.get(wa)
+            lead_id = await _upsert_lead(client, target, body)
             if lead_id and wa:
                 _LAST_LEAD_BY_WA[wa] = lead_id
 
