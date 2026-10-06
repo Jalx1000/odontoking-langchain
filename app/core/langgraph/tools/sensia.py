@@ -208,6 +208,17 @@ def _to_int(valor: Any) -> Optional[int]:
         return None
 
 
+def _truthy_flag(valor: Any) -> bool:
+    """Interpret a CRM boolean-ish flag (bool, "true"/"false", 1/0, "1"/"0") as True/False.
+
+    The CRM returns `products` (Estado) as a real JSON boolean now, but older rows or other
+    serialisations may send 1/0 or strings; _to_int("False") is None, so we can't rely on it.
+    """
+    if isinstance(valor, bool):
+        return valor
+    return str(valor).strip().lower() in ("1", "true", "t", "yes", "si", "sí")
+
+
 def _to_float(valor: Any) -> Optional[float]:
     """Coerce to float; None when not a number (e.g. an empty precio_promocion string)."""
     try:
@@ -582,6 +593,7 @@ def _build_lead_body(
     total: float,
     products: dict[str, dict[str, Any]],
     edad: Any = None,
+    ubicacion: Optional[str] = None,
 ) -> dict[str, Any]:
     """Build the FULL lead object for create/update."""
     stages = _city_stages(ciudad)
@@ -627,6 +639,12 @@ def _build_lead_body(
     edad_int = _to_int(edad)
     if edad_int is not None:
         body["edad_lead"] = str(edad_int)
+
+    # Ubicación del cliente en su atributo propio (`ubicacion_lead`, textarea, id 64). El CRM lo
+    # muestra al distribuidor como referencia de entrega. Formato esperado: "<lat>,<lng> | <ref>"
+    # (o solo texto si no hay coordenadas). NO va en el description.
+    if ubicacion and ubicacion.strip():
+        body["ubicacion_lead"] = ubicacion.strip()
 
     if products:
         body["products"] = products
@@ -789,10 +807,11 @@ async def get_promos(ciudad: Optional[str] = None) -> str:
             pid = prod.get("id")
             if pid in vistos:                                     # dedup por id (n8n `vistos`)
                 continue
-            # TOLERANTE (catálogo Sensia aún sin atributos cargados): solo excluyo si el campo
-            # `products` (Estado) está presente y es 0. Si falta, trato el producto como activo.
-            estado = _to_int(prod.get("products"))
-            if estado is not None and estado != 1:               # estaHabilitado
+            # Estado: NUNCA ofrecer un producto inactivo (`products: false`). El CRM ahora manda este
+            # flag como booleano (true/false). Solo incluyo si está presente y es falsy → descartar.
+            # Si el campo falta (producto viejo sin flag), tolerante: lo trato como activo.
+            estado_raw = prod.get("products")
+            if estado_raw is not None and not _truthy_flag(estado_raw):   # estaHabilitado
                 continue
             # Zona: si el producto TIENE zonas cargadas, filtro por la del cliente (o "Todas").
             # Si NO tiene ninguna (atributo vacío), lo incluyo igual (todavía no taggeado por zona).
@@ -987,13 +1006,14 @@ async def registrar_pedido(
 
             # Fold all client/order detail into the lead description so we DON'T need a separate note
             # activity - one fewer CRM call per order (matters against the 429 throttle).
+            # La UBICACIÓN NO va en el description: se escribe en el campo propio `ubicacion_lead`
+            # (el CRM lo muestra al distribuidor como "referencia"; si estuviera en description le
+            # mostraría todo el muro de texto). Moneda: pesos argentinos ($), no Bs.
             detalle = [
                 f"Cliente: {nombre}" if nombre else None,
-                f"Edad: {edad_del_cliente}" if edad_del_cliente else None,
                 f"Ciudad: {ciudad_del_cliente}" if ciudad_del_cliente else None,
-                f"Ubicación: {ubicacion_del_cliente}" if ubicacion_del_cliente else None,
                 f"Pedido: {resumen}" if resumen else None,
-                f"Total: Bs {total:.2f}" if total else None,
+                f"Total: ${total:,.0f}".replace(",", ".") if total else None,
                 descripcion_corta or None,
                 mensaje or None,
             ]
@@ -1041,6 +1061,7 @@ async def registrar_pedido(
             body = _build_lead_body(
                 person_id, wa, nombre, titulo_de_pedido, descripcion,
                 ciudad_del_cliente, stage_key, total, products_map, edad=edad_del_cliente,
+                ubicacion=ubicacion_del_cliente,
             )
             lead_id = await _upsert_lead(client, target_lead, body)
             nuevo = target_lead is None
