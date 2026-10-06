@@ -35,10 +35,19 @@ class CrmContact(BaseModel):
 class CrmMessage(BaseModel):
     """The inbound message that triggered the event."""
 
+    # extra="allow" so a WhatsApp location pin's coordinates survive even if the CRM nests them in a
+    # field we don't model yet (latitude/longitude/location/coordinates). We read them defensively in
+    # app/api/v1/crm.py (_location_text). Today the CRM sends type="location" with NO coords at all.
+    model_config = ConfigDict(extra="allow")
+
     id: Optional[int] = None
     type: str = "text"
     text: Optional[str] = None
     timestamp: Optional[str] = None
+    # Optional location fields - populated only when the CRM includes the pin's coordinates.
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    location: Optional[dict] = None
 
 
 class CrmHistoryItem(BaseModel):

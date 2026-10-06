@@ -67,6 +67,45 @@ def _verify_agent_token(request: Request) -> bool:
     return hmac.compare_digest(token, expected)
 
 
+def _location_text(msg) -> str:
+    """Return 'lat,lng' from a WhatsApp location pin, or '' if the CRM didn't include coordinates.
+
+    Defensive across shapes: top-level latitude/longitude, a nested `location`/`coordinates` dict, or
+    any extra fields pydantic kept (model_extra). Today the CRM sends type='location' with no coords;
+    this lets the agent use them the moment the CRM starts including them (see docs/para-crm-ubicacion).
+    """
+    def _pair(lat, lng):
+        try:
+            if lat is None or lng is None:
+                return ""
+            return f"{float(lat)},{float(lng)}"
+        except (TypeError, ValueError):
+            return ""
+
+    # 1) top-level latitude/longitude
+    out = _pair(getattr(msg, "latitude", None), getattr(msg, "longitude", None))
+    if out:
+        return out
+    # 2) nested dict under `location` or `coordinates`, or anything in model_extra
+    candidates = []
+    loc = getattr(msg, "location", None)
+    if isinstance(loc, dict):
+        candidates.append(loc)
+    extra = getattr(msg, "model_extra", None) or {}
+    if isinstance(extra.get("location"), dict):
+        candidates.append(extra["location"])
+    if isinstance(extra.get("coordinates"), dict):
+        candidates.append(extra["coordinates"])
+    candidates.append(extra)  # flat lat/lng directly in extra
+    for d in candidates:
+        lat = d.get("latitude", d.get("lat"))
+        lng = d.get("longitude", d.get("lng", d.get("lon", d.get("long"))))
+        out = _pair(lat, lng)
+        if out:
+            return out
+    return ""
+
+
 def _is_duplicate_message(msg_id: str) -> bool:
     """Return True if this msg_id was already processed within the dedup TTL window."""
     now = time.monotonic()
@@ -172,7 +211,7 @@ async def receive_crm_event(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     raw = await request.body()
-    logger.info("crm_raw_payload", body=raw.decode("utf-8", errors="replace")[:500])
+    logger.info("crm_raw_payload", body=raw.decode("utf-8", errors="replace")[:2000])
     try:
         event = CrmWebhookEvent.model_validate_json(raw)
     except Exception as e:
@@ -195,11 +234,23 @@ async def receive_crm_event(request: Request) -> dict:
         )
         return {"status": "ignored"}
 
-    # Accept text AND interactive (button/list replies): the CRM now puts the selected option's label
-    # in `message.text` for interactive messages, so a city/option picker resolves to plain text. Any
-    # other type (image/audio/document/location) still carries no usable text and is ignored.
+    # Accept text AND interactive (button/list replies): the CRM puts the selected option's label in
+    # `message.text` for interactive messages, so a city/option picker resolves to plain text.
     text = (event.message.text or "").strip()
-    if event.message.type not in ("text", "interactive") or not text:
+    # WhatsApp location pin: turn it into text the agent can act on. If the CRM included coordinates
+    # we pass "lat,lng" (the agent stores it in ubicacion_lead); if it didn't (today's case), we ask
+    # the client to type the address so the agent NEVER stays silent on a shared location.
+    if not text and event.message.type == "location":
+        coords = _location_text(event.message)
+        if coords:
+            text = f"Mi ubicación: {coords}"
+            logger.info("crm_location_coords", conversation_id=event.conversation_id, coords=coords)
+        else:
+            text = ("[El cliente compartió su ubicación por el mapa, pero no llegaron las coordenadas. "
+                    "Pedile amablemente que escriba su dirección en texto: barrio, calle, número y una "
+                    "referencia.]")
+            logger.info("crm_location_no_coords", conversation_id=event.conversation_id)
+    if not text or event.message.type not in ("text", "interactive", "location"):
         logger.info("crm_unsupported_message", msg_type=event.message.type)
         return {"status": "ignored"}
 
