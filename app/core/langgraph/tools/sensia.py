@@ -1061,10 +1061,13 @@ async def registrar_pedido(
                 # PUT sobre ESE mismo lead en vez de crear otro (evita el registro múltiple del pedido).
                 target_lead = fresh_lead or _LAST_LEAD_BY_WA.get(wa)
             stage_key = "confirmado" if es_pedido_confirmado else "no_atendido"
+            # Ubicación: la que pase el LLM al confirmar, o como fallback la que se guardó en vivo en el
+            # draft (actualizar_pedido) — así la dirección de texto no se pierde si no se re-manda acá.
+            ubicacion_final = (ubicacion_del_cliente or "").strip() or _DRAFT_BY_WA.get(wa, {}).get("ubicacion")
             body = _build_lead_body(
                 person_id, wa, nombre, titulo_de_pedido, descripcion,
                 ciudad_del_cliente, stage_key, total, products_map, edad=edad_del_cliente,
-                ubicacion=ubicacion_del_cliente,
+                ubicacion=ubicacion_final,
             )
             lead_id = await _upsert_lead(client, target_lead, body)
             nuevo = target_lead is None
@@ -1429,6 +1432,7 @@ async def actualizar_pedido(
     product_id: Optional[list[int]] = None,
     product_name: Optional[list[str]] = None,
     cantidad_product: Optional[list[int]] = None,
+    ubicacion: Optional[str] = None,
     es_cancelado: bool = False,
 ) -> str:
     """Registra EN VIVO el pedido del cliente en los momentos clave (no esperes al final).
@@ -1448,6 +1452,8 @@ async def actualizar_pedido(
         product_id: ids (de get_promos) de TODOS los productos elegidos hasta ahora, lista completa.
         product_name: nombres exactos (de get_promos), en el mismo orden que product_id.
         cantidad_product: cantidad de cada producto, en el mismo orden.
+        ubicacion: dirección de entrega del cliente apenas la dé (texto con barrio, calle, número y
+            referencia). Mandala en cuanto la tengas: se guarda en el atributo ubicacion_lead del lead.
         es_cancelado: True si el cliente cancela el pedido.
     """
     lead_ctx, person_ctx = _ctx_ids(config)
@@ -1478,6 +1484,9 @@ async def actualizar_pedido(
                 draft["nombre"] = nombre_val
             if edad is not None:
                 draft["edad"] = edad
+            ubicacion_val = (ubicacion or "").strip()
+            if ubicacion_val:
+                draft["ubicacion"] = ubicacion_val
             if product_id:  # full list each time (replaces)
                 draft["ids"] = list(product_id)
                 draft["names"] = list(product_name or [])
@@ -1497,6 +1506,7 @@ async def actualizar_pedido(
             body = _build_lead_body(
                 person_id, wa, draft.get("nombre"), None, "Pedido en curso (WhatsApp)",
                 draft.get("ciudad"), stage_key, total, products_map, edad=draft.get("edad"),
+                ubicacion=draft.get("ubicacion"),
             )
             # El CRM de Sensia NO manda contact.lead_id (llega null), así que lead_ctx suele ser None.
             # Para NO crear un lead nuevo en cada llamada (armado en vivo), reutilizamos el lead que ya
