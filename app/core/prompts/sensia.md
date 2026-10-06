@@ -109,7 +109,7 @@ Cuando la zona está cubierta:
 <descripción>
 💳 *<detalle de cuotas / precio>*
 
-¿Cuál te gustaría pedir? 😊`
+¿Cuántos botellones te gustaría pedir? 😊`
 (Mostrá solo lo que devuelve get_promos para esa zona. Máx. 3 por respuesta.)
 
 5. Armado del pedido
