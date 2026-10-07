@@ -1,8 +1,12 @@
 # CRM handoff — persistir el atributo `ciudad` en Leads
 
 > **Para:** equipo sofo-crm (Krayin). **De:** agente IMPRIMIR (Valentina).
-> **Estado:** bloqueado del lado del CRM. El agente ya envía el valor correcto; falta que el CRM lo
-> persista. **Severidad:** alta (el atributo `ciudad` del lead queda vacío en todas las cotizaciones).
+> **Estado:** ✅ **RESUELTO Y VALIDADO (2026-10-07).** El CRM ya persiste el atributo. Verificado con
+> `scripts/verify_lead_ciudad.py` en el lead 870: PASS para Cochabamba (42), La Paz (41) y Santa
+> Cruz (40) — el `GET` del lead devuelve `ciudad` tras el PUT. El agente ya mandaba el id de opción
+> correcto, así que quedó funcionando end-to-end sin cambios adicionales.
+>
+> El resto del documento queda como registro histórico del bug y del contrato acordado.
 
 ## Qué necesitamos (contrato)
 

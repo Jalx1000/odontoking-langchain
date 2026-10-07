@@ -210,14 +210,12 @@ Nunca re-preguntar producto/tamaño/cantidad/ciudad (ya están).
 > Las tres decisiones confirman el comportamiento ya implementado: esta spec documenta el
 > flujo vigente, no requiere cambios de código. Queda como contrato para futuras ediciones.
 
-## Dependencia abierta del CRM (2026-10-07)
+## Dependencia del CRM — RESUELTA (2026-10-07)
 
-**Atributo `ciudad` del lead no persiste** — bloqueado del lado del CRM, compartido con sofo-crm.
-- El agente ya manda `ciudad` como id de opción del select (attribute 98) dentro del PUT del
-  pipeline (`_route_lead_pipeline`). No requiere más cambios del lado del agente.
-- `PUT /api/v1/leads/{id}` responde 200 pero descarta el atributo; el endpoint estándar de Krayin no
-  maneja custom attributes. Probado con 5 formatos; sin endpoint alternativo.
-- Handoff + contrato: [docs/crm/lead-ciudad-persistence.md](../crm/lead-ciudad-persistence.md).
-- Gate de validación (PASS/FAIL contra prod): `uv run python scripts/verify_lead_ciudad.py 870 Cochabamba`.
-  Hoy FAIL; debe dar PASS cuando el CRM aplique el fix.
+**Atributo `ciudad` del lead: ✅ persiste.** El CRM aplicó el fix; validado con
+`scripts/verify_lead_ciudad.py` en el lead 870 (PASS para Cochabamba 42, La Paz 41, Santa Cruz 40).
+- El agente ya mandaba `ciudad` como id de opción del select (attribute 98) dentro del PUT del
+  pipeline (`_route_lead_pipeline`); quedó funcionando end-to-end sin más cambios.
+- Handoff + registro histórico del bug: [docs/crm/lead-ciudad-persistence.md](../crm/lead-ciudad-persistence.md).
+- Gate de validación (re-corrible contra prod): `uv run python scripts/verify_lead_ciudad.py <lead_id> <ciudad>`.
 ```
