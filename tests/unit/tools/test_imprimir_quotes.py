@@ -508,3 +508,57 @@ class TestImagenBolsasAuto:
         assert any(p["url"].endswith("/media") for p in posts)
         assert any(p["url"].endswith("/interactive") for p in posts)
         assert "Opciones enviadas" in out
+
+
+class TestGreetingEnforcement:
+    """The greeting is enforced in code: exactly once, on the first turn."""
+
+    GREET = "¡Hola! Gracias por escribirnos 👋"
+
+    def test_prepends_greeting_on_first_turn_when_missing(self):
+        """First turn + body without greeting (e.g. a price-question opener) → greeting prepended."""
+        out = crm._apply_greeting("Nuestras bolsas Magia Verde son multiuso. ¿De qué ciudad nos escribe?", True)
+        assert out.startswith(self.GREET)
+        assert "¿De qué ciudad nos escribe?" in out
+
+    def test_keeps_single_greeting_on_first_turn(self):
+        """First turn + body that already greets → not duplicated."""
+        body = f"{self.GREET} Somos Imprimir, fabricantes bolivianos. ¿Qué producto le interesa?"
+        assert crm._apply_greeting(body, True) == body
+        assert crm._apply_greeting(body, True).count(self.GREET) == 1
+
+    def test_strips_greeting_on_later_turn(self):
+        """Later turn + body that greets → greeting stripped (no double greet in CAMINO B)."""
+        body = f"{self.GREET} Nuestras bolsas Magia Verde son multiuso. ¿De qué ciudad nos escribe?"
+        out = crm._apply_greeting(body, False)
+        assert not out.startswith(self.GREET)
+        assert out.startswith("Nuestras bolsas")
+
+    def test_noop_on_later_turn_without_greeting(self):
+        """Later turn + body without greeting → unchanged."""
+        body = "¿Qué tamaño o medida necesita?"
+        assert crm._apply_greeting(body, False) == body
+
+    @pytest.mark.asyncio
+    async def test_mostrar_opciones_greets_on_first_turn(self, monkeypatch):
+        """On the first turn the city menu body goes out with the greeting prepended."""
+        posts = _patch_httpx_record_all(monkeypatch, payload={})
+        await mostrar_opciones.ainvoke(
+            {"cuerpo": "Nuestras bolsas Magia Verde son multiuso. ¿De qué ciudad nos escribe?",
+             "opciones": [{"id": c, "titulo": c} for c in ("Santa Cruz", "La Paz", "Cochabamba", "Otra ciudad")]},
+            {"metadata": {"conversation_id": 5, "is_first_turn": True}},
+        )
+        menu = [p for p in posts if p["url"].endswith("/interactive")][0]
+        assert menu["json"]["body"].startswith(self.GREET)
+
+    @pytest.mark.asyncio
+    async def test_mostrar_opciones_no_greet_on_later_turn(self, monkeypatch):
+        """On a later turn the menu body must not carry the greeting."""
+        posts = _patch_httpx_record_all(monkeypatch, payload={})
+        await mostrar_opciones.ainvoke(
+            {"cuerpo": "¿Para qué uso la necesita?",
+             "opciones": [{"id": "HOGAR", "titulo": "Para mi casa"}, {"id": "TRADICIONAL", "titulo": "Tienda"}]},
+            {"metadata": {"conversation_id": 5, "is_first_turn": False}},
+        )
+        menu = [p for p in posts if p["url"].endswith("/interactive")][0]
+        assert self.GREET not in menu["json"]["body"]

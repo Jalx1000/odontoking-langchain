@@ -206,6 +206,27 @@ def _ctx_conversation_id(config: Optional[RunnableConfig]) -> Optional[int]:
     return metadata.get("conversation_id")
 
 
+# The one greeting, said ONCE on the first turn. The LLM drops it on price-question openers and
+# sometimes repeats it; mostrar_opciones enforces it from the is_first_turn flag (set in get_response).
+_GREETING = "¡Hola! Gracias por escribirnos 👋"
+
+
+def _ctx_is_first_turn(config: Optional[RunnableConfig]) -> bool:
+    """True when this is the conversation's first agent turn (empty checkpoint)."""
+    metadata = (config or {}).get("metadata") or {}
+    return bool(metadata.get("is_first_turn"))
+
+
+def _apply_greeting(cuerpo: str, first_turn: bool) -> str:
+    """Make the menu body greet exactly once: prepend on the first turn, strip on later turns."""
+    has_greeting = cuerpo.lstrip().startswith(_GREETING)
+    if first_turn and not has_greeting:
+        return f"{_GREETING} {cuerpo.lstrip()}"
+    if not first_turn and has_greeting:
+        return cuerpo.lstrip()[len(_GREETING):].lstrip()
+    return cuerpo
+
+
 def _phone_ask_allowed(
     phone_required: bool, phone_prompt_state: Optional[str], phone_prompt_exhausted: bool
 ) -> bool:
@@ -1459,6 +1480,9 @@ async def mostrar_opciones(
             f"Son {len(opciones)} opciones y WhatsApp admite {_WHATSAPP_MAX_OPCIONES} como máximo. "
             "Mostrá las más relevantes o preguntá algo que acote la búsqueda."
         )
+
+    # El saludo se enforza acá, no se deja al LLM: una sola vez, en el primer turno.
+    cuerpo = _apply_greeting(cuerpo, _ctx_is_first_turn(config))
 
     es_lista = len(opciones) > 3
     cuerpo_envio: dict[str, Any] = {

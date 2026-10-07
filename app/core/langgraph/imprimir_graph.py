@@ -357,6 +357,11 @@ class ImprimirAgent:
             prior_messages = state.values.get("messages", []) if state and state.values else []
             existing_count = len(prior_messages)
 
+            # First turn (empty checkpoint) → mostrar_opciones must carry the greeting; later turns must
+            # NOT re-greet. The LLM forgets this on price-question openers ("¿cuánto cuesta…?"), so the
+            # tool enforces it deterministically from this flag instead of trusting the prompt alone.
+            config["metadata"]["is_first_turn"] = existing_count == 0
+
             # Silence while a human is handling this conversation is decided by handoff.open on the
             # webhook (app/api/v1/crm.py: open=true → the event is ignored before we ever get here). We
             # do NOT gate on the checkpointed history: a prior derivar_a_asesor must not silence the
