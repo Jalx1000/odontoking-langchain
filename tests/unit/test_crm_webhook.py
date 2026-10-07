@@ -137,9 +137,20 @@ class TestInteractiveReply:
         assert _extract_agent_text(CrmMessage(type="text", text="hola")) == "hola"
 
     def test_unreadable_media_forwarded_not_dropped(self):
-        """audio/image/etc. reach the agent with a placeholder so it can ask for text (not silence)."""
+        """audio/etc. reach the agent with a placeholder so it can ask for text (not silence)."""
         out = _extract_agent_text(CrmMessage(type="audio", text=None))
-        assert out is not None and "audio" in out
+        assert out is not None and "audio" in out and "no puedo procesar" in out
+
+    def test_image_and_document_forwarded_as_received(self):
+        """Images/documents (the client's design/logo) are forwarded as RECEIVED, never 'unprocessable'.
+
+        The agent must acknowledge and move on, not ask for a resend — see the ARCHIVOS rule.
+        """
+        for mtype in ("image", "document"):
+            out = _extract_agent_text(CrmMessage(type=mtype, text=None))
+            assert out is not None, mtype
+            assert "adjuntó un archivo" in out and "asesor lo revisará" in out, mtype
+            assert "no puedo procesar" not in out, mtype
 
     def test_reaction_ignored(self):
         """An emoji reaction asks nothing → None (the prompt says don't reply)."""

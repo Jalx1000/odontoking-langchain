@@ -101,9 +101,12 @@ def _extract_agent_text(message: CrmMessage) -> str | None:
     - Plain text goes through as-is.
     - Reactions (emoji on a message) → None: the client asks nothing and the prompt says not to reply,
       so the agent is never invoked.
-    - Anything else the client sends that we can't read (audio, image, document, location, sticker…) is
-      forwarded with a placeholder naming its type, so the agent asks them to write it — never ignored
-      in silence (the prompt's "AUDIOS E IMÁGENES" rule).
+    - Images and documents are usually the client's design/logo (e.g. tapas con impresión). The agent
+      can't see them, but the CRM keeps them in the conversation for the advisor, so they're forwarded
+      as RECEIVED (not as "unprocessable") — the agent acknowledges and moves on, never asking for a
+      resend (the prompt's "ARCHIVOS, IMÁGENES Y AUDIOS" rule).
+    - Anything else we can't read (audio, location, sticker…) is forwarded with a placeholder naming
+      its type, so the agent asks them to write it — never ignored in silence.
     """
     if message.type == "interactive":
         if message.selection and message.selection.id:
@@ -114,6 +117,11 @@ def _extract_agent_text(message: CrmMessage) -> str | None:
         return (message.text or "").strip() or None
     if message.type == "reaction":
         return None
+    if message.type in ("image", "document"):
+        return (
+            f"[el cliente adjuntó un archivo de tipo '{message.type}' (posiblemente su diseño o logo). "
+            "No podés verlo, pero quedó guardado en la conversación del CRM y el asesor lo revisará]"
+        )
     return f"[el cliente envió un mensaje de tipo '{message.type}' que no puedo procesar]"
 
 
