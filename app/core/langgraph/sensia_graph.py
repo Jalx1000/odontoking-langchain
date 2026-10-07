@@ -52,7 +52,9 @@ from app.core.langgraph.tools.sensia import (
     get_persona,
     get_promos,
     get_sucursales,
+    reactivar_recompra,
     registrar_pedido,
+    responder_recompra,
 )
 from app.core.logging import logger
 from app.core.observability import langfuse_callback_handler
@@ -70,6 +72,8 @@ _SENSIA_TOOLS = [
     registrar_pedido,
     get_pedidos,
     derivar_a_asesor,
+    responder_recompra,
+    reactivar_recompra,
 ]
 
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "sensia.md")
@@ -93,6 +97,7 @@ def _load_sensia_prompt(
     channel: Optional[str] = None,
     nombre_registrado: Optional[str] = None,
     nombre_whatsapp: Optional[str] = None,
+    recompra: Optional[dict[str, Any]] = None,
 ) -> str:
     """Arma el system prompt: cuerpo ESTÁTICO + bloque VOLÁTIL (fecha/hora + contacto) al final.
 
@@ -126,6 +131,26 @@ def _load_sensia_prompt(
         )
     else:
         volatile_lines.append("nombre_registrado: null  # pide el nombre del contacto si no lo dio")
+
+    # Recordatorio de recompra: solo cuando el CRM manda el bloque. Le damos al agente los datos para
+    # confirmar el domicilio guardado (en vez de re-preguntarlo) y el nº de intento. La URL para
+    # responder NO va acá (la usa responder_recompra desde config.metadata), el LLM no la maneja.
+    if isinstance(recompra, dict) and recompra:
+        dom = recompra.get("domicilio") or {}
+        dom_txt = ", ".join(
+            str(x) for x in (dom.get("direccion"), dom.get("referencia")) if x
+        ) or "sin domicilio guardado"
+        volatile_lines += [
+            "",
+            "# Recordatorio de recompra (ACTIVO en esta conversación)",
+            "El cliente está respondiendo nuestro recordatorio para agendar su próximo pedido. "
+            "Seguí la sección RECORDATORIO DE RECOMPRA del prompt.",
+            f"recompra.datos_completos: {str(recompra.get('datos_completos', False)).lower()}",
+            f"recompra.intento: {recompra.get('intento', 1)}",
+            f"recompra.domicilio: {dom_txt}",
+            "Al responder su decisión, llamá a responder_recompra(respuesta='si'|'no'|'baja'). "
+            "Si pide volver a recibir recordatorios, llamá a reactivar_recompra().",
+        ]
 
     volatile = "\n".join(volatile_lines)
     # El prefijo estable es exactamente _PROMPT_TEMPLATE.rstrip(); todo lo de abajo es volátil.
@@ -233,6 +258,7 @@ class SensiaAgent:
             channel=metadata.get("channel"),
             nombre_registrado=metadata.get("nombre_registrado"),
             nombre_whatsapp=metadata.get("nombre_whatsapp"),
+            recompra=metadata.get("recompra"),
         )
         # C4: acota el historial a un presupuesto de tokens (solo recorta charlas largas).
         # strategy="last" conserva lo más reciente; start_on="human" evita arrancar en un
@@ -332,6 +358,7 @@ class SensiaAgent:
         channel: Optional[str] = None,
         nombre_registrado: Optional[str] = None,
         nombre_whatsapp: Optional[str] = None,
+        recompra: Optional[dict[str, Any]] = None,
         handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
         """Process one WhatsApp message and return Sofía's plain-text reply.
@@ -358,6 +385,9 @@ class SensiaAgent:
                 "channel": channel,
                 "nombre_registrado": nombre_registrado,
                 "nombre_whatsapp": nombre_whatsapp,
+                # Repurchase reminder block (only when a reminder is live). The prompt uses it to
+                # confirm the saved address; responder_recompra reads its URL from here.
+                "recompra": recompra,
             },
             # Cap del loop ReAct por turno: 15 super-steps ≈ 7 ciclos chat/tool, de sobra
             # para un turno de venta guiado; frena un runaway de tools antes de quemar tokens

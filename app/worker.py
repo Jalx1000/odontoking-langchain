@@ -166,6 +166,7 @@ async def _handle_sofocrm_message(payload: dict, agent, handoff_fn) -> None:
         channel=ctx.get("channel"),
         nombre_registrado=ctx.get("nombre_registrado"),
         nombre_whatsapp=ctx.get("nombre_whatsapp"),
+        recompra=ctx.get("recompra"),
         handoff_callback=_on_handoff,
     )
     await gateway.send_response(dest, response_text)

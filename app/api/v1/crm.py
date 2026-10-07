@@ -159,6 +159,7 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
                     channel=patient_ctx.get("channel"),
                     nombre_registrado=patient_ctx.get("nombre_registrado"),
                     nombre_whatsapp=patient_ctx.get("nombre_whatsapp"),
+                    recompra=patient_ctx.get("recompra"),
                     handoff_callback=_on_handoff,
                 )
             )
@@ -280,6 +281,10 @@ async def receive_crm_event(request: Request) -> dict:
         "lead_id": event.contact.lead_id,
         "person_id": event.contact.person_id,
     }
+    # Repurchase reminder: forward the whole block (only present when a reminder is live) so the agent
+    # can confirm the saved address instead of re-asking, and report the client's answer (si/no/baja).
+    if event.recompra is not None:
+        patient_ctx["recompra"] = event.recompra.model_dump()
 
     logger.info(
         "crm_message_received",

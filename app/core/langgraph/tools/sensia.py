@@ -171,6 +171,12 @@ def _ctx_wa_id(config: Optional[RunnableConfig]) -> str:
     return _normalize_wa_id(wa) if isinstance(wa, str) else ""
 
 
+def _ctx_conversation_id(config: Optional[RunnableConfig]) -> Optional[int | str]:
+    """CRM conversation id injected via metadata (needed to report the recompra answer)."""
+    metadata = (config or {}).get("metadata") or {}
+    return metadata.get("conversation_id")
+
+
 def _normalizar(texto: Any) -> str:
     """Lowercase + strip accents + trim (mirrors the n8n `normalizar`)."""
     s = unicodedata.normalize("NFD", str(texto or "").lower())
@@ -1622,3 +1628,63 @@ async def request_handoff(
     except Exception as e:  # noqa: BLE001
         log.exception("sensia_handoff_failed", error=str(e))
         return {}
+
+
+@tool
+async def responder_recompra(config: RunnableConfig, respuesta: str) -> str:
+    """Reporta al CRM qué contestó el cliente al recordatorio de recompra. SOLO si hay recompra activa.
+
+    respuesta:
+      "si"   → el cliente quiere pedir ahora (tomá el pedido sin re-pedir el domicilio guardado).
+      "no"   → ahora no / más adelante ("todavía me queda", "la semana que viene", o silencio).
+      "baja" → NO quiere recibir más estos recordatorios ("no me manden más", "desuscribir", "basta",
+               "sacame de la lista", "no quiero publicidad"). Ante la duda entre "no" y "baja", elegí "baja".
+
+    Llamala UNA vez cuando el cliente exprese su decisión. No la uses en una conversación sin recompra.
+    """
+    conv = _ctx_conversation_id(config)
+    r = (respuesta or "").strip().lower()
+    log = logger.bind(tool="responder_recompra", conversation_id=conv, respuesta=r)
+    if r not in ("si", "no", "baja"):
+        log.warning("sensia_recompra_respuesta_invalida")
+        return json.dumps({"ok": False, "error": "respuesta_invalida"}, ensure_ascii=False)
+    if conv is None:
+        log.warning("sensia_recompra_sin_conversation_id")
+        return json.dumps({"ok": False, "error": "sin_conversation_id"}, ensure_ascii=False)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            await _request(
+                client, "POST", f"/api/v1/whatsapp/conversations/{conv}/recompra",
+                json={"respuesta": r},
+            )
+        log.info("sensia_recompra_respondida", respuesta=r)
+        return json.dumps({"ok": True, "respuesta": r}, ensure_ascii=False)
+    except httpx.HTTPStatusError as e:
+        log.error("sensia_recompra_http_error", status=e.response.status_code)
+        return json.dumps({"ok": False, "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        log.exception("sensia_recompra_failed", error=str(e))
+        return json.dumps({"ok": False, "error": str(e) or type(e).__name__}, ensure_ascii=False)
+
+
+@tool
+async def reactivar_recompra(config: RunnableConfig) -> str:
+    """Reactiva los recordatorios de recompra tras una baja. SOLO si el cliente lo pide explícitamente."""
+    conv = _ctx_conversation_id(config)
+    log = logger.bind(tool="reactivar_recompra", conversation_id=conv)
+    if conv is None:
+        log.warning("sensia_reactivar_sin_conversation_id")
+        return json.dumps({"ok": False, "error": "sin_conversation_id"}, ensure_ascii=False)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            await _request(
+                client, "POST", f"/api/v1/whatsapp/conversations/{conv}/recompra/reactivar",
+            )
+        log.info("sensia_recompra_reactivada")
+        return json.dumps({"ok": True}, ensure_ascii=False)
+    except httpx.HTTPStatusError as e:
+        log.error("sensia_reactivar_http_error", status=e.response.status_code)
+        return json.dumps({"ok": False, "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        log.exception("sensia_reactivar_failed", error=str(e))
+        return json.dumps({"ok": False, "error": str(e) or type(e).__name__}, ensure_ascii=False)

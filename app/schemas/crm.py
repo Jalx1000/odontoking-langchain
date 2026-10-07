@@ -101,6 +101,38 @@ class CrmHandoff(BaseModel):
     assigned_user: Optional[int] = None
 
 
+class CrmRecompraDomicilio(BaseModel):
+    """Saved delivery address for a returning client (recompra flow)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    direccion: Optional[str] = None
+    referencia: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class CrmRecompraResponder(BaseModel):
+    """Where/how the agent reports the client's recompra answer."""
+
+    model_config = ConfigDict(extra="allow")
+
+    method: str = "POST"
+    url: Optional[str] = None
+
+
+class CrmRecompra(BaseModel):
+    """Repurchase-reminder block. Present ONLY when a reminder is live; otherwise null/absent."""
+
+    model_config = ConfigDict(extra="allow")
+
+    esperando_respuesta: bool = False
+    intento: int = 1
+    datos_completos: bool = False
+    domicilio: Optional[CrmRecompraDomicilio] = None
+    responder: Optional[CrmRecompraResponder] = None
+
+
 class CrmWebhookEvent(BaseModel):
     """Root payload for the `message.received` event from the CRM."""
 
@@ -120,3 +152,4 @@ class CrmWebhookEvent(BaseModel):
     window: Optional[CrmWindow] = None
     reply: Optional[CrmReply] = None
     handoff: Optional[CrmHandoff] = None
+    recompra: Optional[CrmRecompra] = None
