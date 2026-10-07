@@ -14,12 +14,18 @@ de leads (idealmente el comportamiento estándar de Krayin para custom attribute
 
 Opciones del select (lo que el agente envía como valor):
 
-| opción (id) | ciudad      | opción (id) | ciudad   |
-|-------------|-------------|-------------|----------|
-| 40          | Santa Cruz  | 45          | Oruro    |
-| 41          | La Paz      | 46          | Potosí   |
-| 42          | Cochabamba  | 47          | Tarija   |
-| 44          | Sucre       | 48–50       | Trinidad / Cobija / Exterior |
+| opción (id) | ciudad     |
+|-------------|------------|
+| 40          | Santa Cruz |
+| 41          | La Paz     |
+| 42          | Cochabamba |
+| 44          | Sucre      |
+| 45          | Oruro      |
+| 46          | Potosí     |
+| 47          | Tarija     |
+| 48          | Trinidad   |
+| 49          | Cobija     |
+| 50          | Exterior   |
 
 El agente envía el **id de opción** (ej. `42` para Cochabamba) dentro del mismo PUT que mueve el
 pipeline:
