@@ -106,6 +106,26 @@ _CITY_ALIASES = {
     "sucre": "sucre", "chuquisaca": "sucre",
 }
 
+# The lead's `ciudad` custom attribute (Krayin attribute id 98) is a SELECT: its value must be the
+# OPTION ID, never the label. Canonical city key → option id (GET /api/v1/settings/attributes).
+# NOTE: the standard Krayin lead PUT currently drops this custom attribute, so sending it only takes
+# effect once sofo-crm handles `ciudad` in the lead update (as it already does for quotes). We send
+# the correct id now so it persists automatically the moment the CRM supports it.
+_CITY_OPTION_IDS = {
+    "santa cruz": 40,
+    "la paz": 41,
+    "cochabamba": 42,
+    "sucre": 44,
+    "oruro": 45,
+    "potosi": 46,
+}
+
+
+def _resolve_ciudad_option_id(ciudad: Optional[str]) -> Optional[int]:
+    """Map a free-text city to the `ciudad` select option id, or None if unrecognised."""
+    canonical = _CITY_ALIASES.get((ciudad or "").strip().lower())
+    return _CITY_OPTION_IDS.get(canonical) if canonical else None
+
 
 # ── Low-level HTTP ────────────────────────────────────────────────────────────
 
@@ -461,25 +481,16 @@ async def _tag_lead(client: httpx.AsyncClient, lead_id: int, temperatura: str) -
     return tag_id
 
 
-async def _set_lead_ciudad(client: httpx.AsyncClient, lead_id: int, ciudad: str) -> None:
-    """Set the lead's `ciudad` custom attribute via a partial PUT (same key the quote uses).
-
-    Krayin's lead PUT accepts a partial body (proven by mover_lead_por_ciudad sending only the
-    pipeline), so we send just `ciudad` to fill the attribute without rebuilding the whole lead.
-    """
-    ciudad = (ciudad or "").strip()
-    if not ciudad:
-        return
-    await _request(client, "PUT", f"/api/v1/leads/{lead_id}", json={"ciudad": ciudad})
-
-
 async def _route_lead_pipeline(client: httpx.AsyncClient, lead_id: int, ciudad: str) -> Optional[int]:
-    """Move the lead to its CITY's sales pipeline (id + initial stage); return the pipeline_id.
+    """Move the lead to its CITY's sales pipeline (id + initial stage) and set its `ciudad`.
 
     The CRM auto-creates every lead in the default (Santa Cruz) pipeline. This routes it to the city's
-    pipeline, same PUT as mover_lead_por_ciudad. Kept separate from the ciudad-attribute PUT so a bad
-    attribute never blocks the pipeline move (the routing matters more). Only call on an unattended
-    lead — register_cotizacion already guards that.
+    pipeline, same PUT as mover_lead_por_ciudad. ONE PUT carries everything because Krayin's lead
+    controller REQUIRES `lead_pipeline_stage_id` on every update (omitting it 500s with
+    "Undefined array key lead_pipeline_stage_id") — so the old separate ciudad-only PUT always failed.
+    The `ciudad` custom attribute (select) travels as its OPTION ID; the standard Krayin endpoint still
+    drops it, but it persists automatically once sofo-crm handles it in the lead update. Only call on an
+    unattended lead — register_cotizacion already guards that.
     """
     ciudad = (ciudad or "").strip()
     if not ciudad:
@@ -489,6 +500,9 @@ async def _route_lead_pipeline(client: httpx.AsyncClient, lead_id: int, ciudad: 
     stage_id = await _initial_stage_id(client, pipeline_id)
     if stage_id is not None:
         body["lead_pipeline_stage_id"] = stage_id
+    ciudad_option = _resolve_ciudad_option_id(ciudad)
+    if ciudad_option is not None:
+        body["ciudad"] = ciudad_option
     await _request(client, "PUT", f"/api/v1/leads/{lead_id}", json=body)
     return pipeline_id
 
@@ -602,15 +616,13 @@ async def register_cotizacion(
             except Exception as e:  # noqa: BLE001
                 log.warning("register_cotizacion_tag_failed", lead_id=lead_id, error=str(e))
             if ciudad:
+                # ONE PUT: pipeline + initial stage (required) + ciudad option id. The stage key is
+                # mandatory on every Krayin lead update, so the old separate ciudad-only PUT 500'd.
                 try:
                     routed_pipeline = await _route_lead_pipeline(client, lead_id, ciudad)
                     log.info("register_cotizacion_lead_routed", lead_id=lead_id, pipeline_id=routed_pipeline)
                 except Exception as e:  # noqa: BLE001
                     log.warning("register_cotizacion_pipeline_failed", lead_id=lead_id, error=str(e))
-                try:
-                    await _set_lead_ciudad(client, lead_id, ciudad)
-                except Exception as e:  # noqa: BLE001
-                    log.warning("register_cotizacion_ciudad_failed", lead_id=lead_id, error=str(e))
 
             log.info(
                 "imprimir_cotizacion_registered",
