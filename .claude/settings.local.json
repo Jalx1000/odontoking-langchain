@@ -90,7 +90,8 @@
       "Bash(grep -iA3 \"C21\")",
       "Bash(POSTGRES_HOST=hayabusa.proxy.rlwy.net POSTGRES_PORT=35005 POSTGRES_DB=railway POSTGRES_USER=postgres POSTGRES_PASSWORD=VejSAjfiHlgvtgxeSmqwdAbHsrSROqOz APP_ENV=development uv run alembic upgrade head)",
       "Bash(POSTGRES_HOST=altaria.proxy.rlwy.net POSTGRES_PORT=42586 POSTGRES_DB=railway POSTGRES_USER=postgres POSTGRES_PASSWORD=KWLiggCXZiTstCpHUljWDYoaOxZBorPr APP_ENV=development uv run alembic upgrade head)",
-      "Bash(set -e)"
+      "Bash(set -e)",
+      "Bash(APP_ENV=test uv run python -c ' *)"
     ]
   }
 }
