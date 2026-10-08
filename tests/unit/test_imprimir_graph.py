@@ -2,11 +2,19 @@
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from app.core.langgraph.imprimir_graph import _ended_on_menu
+from app.core.langgraph.imprimir_graph import _ended_on_menu, _thread_tool_names
 
 
 def _tool(name: str, content: str) -> ToolMessage:
     return ToolMessage(content=content, name=name, tool_call_id="x")
+
+
+def _ai_calls(*names: str) -> AIMessage:
+    """An AIMessage carrying the given tool calls (as the graph records them)."""
+    return AIMessage(
+        content="",
+        tool_calls=[{"name": n, "args": {}, "id": f"tc_{i}"} for i, n in enumerate(names)],
+    )
 
 
 # NOTE: there is deliberately no post-handoff history guard. Silence while a human handles the
@@ -46,3 +54,27 @@ class TestEndedOnMenu:
     def test_false_on_empty(self):
         """No messages → nothing sent a menu."""
         assert _ended_on_menu([]) is False
+
+
+class TestThreadToolNames:
+    """_thread_tool_names powers the 'derived without creating the quote' warning."""
+
+    def test_collects_tool_names_across_messages(self):
+        """Every AIMessage tool call across the thread is collected."""
+        msgs = [
+            _ai_calls("precio_producto"),
+            _tool("precio_producto", '{"estado": "resuelto"}'),
+            _ai_calls("register_cotizacion", "crear_cotizacion"),
+        ]
+        assert _thread_tool_names(msgs) == {"precio_producto", "register_cotizacion", "crear_cotizacion"}
+
+    def test_detects_close_without_quote(self):
+        """A close that registered + derived but never created the quote is detectable."""
+        names = _thread_tool_names([_ai_calls("register_cotizacion", "derivar_a_asesor")])
+        assert "derivar_a_asesor" in names
+        assert "crear_cotizacion" not in names  # the bug we now log in prod
+
+    def test_empty_thread(self):
+        """No messages / no tool calls → empty set."""
+        assert _thread_tool_names([]) == set()
+        assert _thread_tool_names([AIMessage(content="hola")]) == set()

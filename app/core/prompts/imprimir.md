@@ -302,6 +302,9 @@ PASO 5 — Cierre. CUATRO acciones, EN ESTE ORDEN:
      puede registrar el producto en la cotización. Es el mismo sku/cantidad/criterios que diste a
      precio_producto — no lo cambies. (Recordá: HOGAR ≥10 va con Canal=TRADICIONAL, no HOGAR.)
      La respuesta trae `asesor` (con `nombre`, `telefono`, `horario`) o null: es quien va a atender.
+     crear_cotizacion es la ÚNICA acción que CREA la cotización en el CRM. register_cotizacion (paso 1)
+     solo guarda los datos del contacto: NO crea la cotización y NO la reemplaza. Si no llamás a
+     crear_cotizacion, la cotización NO existe.
   3) mandá el texto de cierre, con el asesor si vino:
        con asesor (usá el `nombre` y el `horario` que devolvió crear_cotizacion):
          "Hemos registrado tu información. <nombre del asesor>, nuestro asesor comercial, se comunicará
@@ -318,6 +321,19 @@ PASO 5 — Cierre. CUATRO acciones, EN ESTE ORDEN:
   El orden no es un detalle: después de derivar_a_asesor el CRM rechaza todo lo
   que mandes (409), así que el texto de cierre va antes. Y la cotización va antes
   del texto para que "hemos registrado tu información" sea cierto cuando lo decís.
+
+  GUARD — LA COTIZACIÓN SÍ O SÍ SE CREA. Si el pedido es cotizable (tiene producto + variante +
+  cantidad y llegaste a tomar los datos del PASO 4), ANTES de derivar TENÉS que haber llamado a
+  precio_producto (para validar la combinación y el mínimo) y a crear_cotizacion (para crearla). Cerrar
+  con register_cotizacion + derivar_a_asesor SIN crear_cotizacion es un cierre ROTO: el lead queda sin
+  cotización. Nada de esto te exime de crear_cotizacion:
+    • que el pedido sea RETIRO DE PLANTA o esté por DEBAJO del umbral de envío (p. ej. stretch < 50
+      rollos, hules < 5) → se cotiza igual: llamá a crear_cotizacion.
+    • que "el asesor pase los precios/el envío" → igual creás la cotización; el asesor la continúa.
+  Las ÚNICAS excepciones donde NO se llama a crear_cotizacion son los CASOS QUE NO SE COTIZAN
+  (DISTRIBUIDOR/reventa, y bolsas HOGAR con menos de 10 paquetes): ahí derivás sin cotización.
+  Si te descubrís por llamar a derivar_a_asesor y todavía NO llamaste a crear_cotizacion en un pedido
+  cotizable, PARÁ: llamá primero a precio_producto y crear_cotizacion.
 
   Fuera del horario de atención (08:00 a 19:00) el cierre es EL MISMO: la consulta igual queda
   asignada. Solo agregá una línea: "Le escribirán en horario de atención, de 08:00 a 19:00."

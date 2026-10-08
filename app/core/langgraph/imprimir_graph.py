@@ -151,6 +151,20 @@ def _ended_on_menu(messages: list) -> bool:
     )
 
 
+def _thread_tool_names(messages: list) -> set[str]:
+    """Names of every tool the agent called across the given messages (AIMessage.tool_calls).
+
+    Used to tell whether a close actually created the quote (crear_cotizacion) before deriving, since
+    register_cotizacion alone does not create it.
+    """
+    return {
+        tc.get("name")
+        for m in messages
+        for tc in (getattr(m, "tool_calls", None) or [])
+        if tc.get("name")
+    }
+
+
 async def _persist_messages_async(wa_id: str, messages: list[BaseMessage]) -> None:
     await asyncio.to_thread(_persist_messages, wa_id, messages)
 
@@ -386,6 +400,13 @@ class ImprimirAgent:
                 self._persist_tasks.add(task)
                 task.add_done_callback(self._persist_tasks.discard)
 
+            # Tool names called across the WHOLE thread (prior + this turn) — used to detect a close
+            # that derives without ever creating the quote (crear_cotizacion is the only action that
+            # creates it; register_cotizacion does not). The LLM occasionally skips it on retiro-de-planta
+            # / below-shipping-threshold orders; this surfaces it in prod so we can tell real misses from
+            # legit no-quote cases (DISTRIBUIDOR, bolsas HOGAR < 10).
+            all_tool_names = _thread_tool_names(response.get("messages", []))
+
             # Handoff signal: if the agent called derivar_a_asesor THIS turn, surface the reason so
             # the caller derives AFTER sending the reply (the reply is the client's notice).
             if handoff_callback is not None:
@@ -399,6 +420,11 @@ class ImprimirAgent:
                             ciudad = (args.get("ciudad") or None) or None
                             logger.info("imprimir_handoff_signaled", wa_id=wa_id, reason=reason[:80],
                                         sku=sku, ciudad=ciudad)
+                            if "crear_cotizacion" not in all_tool_names:
+                                logger.warning(
+                                    "imprimir_handoff_without_quote", wa_id=wa_id, sku=sku, ciudad=ciudad,
+                                    note="derivó sin crear_cotizacion; ok sólo en casos no-cotizables",
+                                )
                             try:
                                 await handoff_callback({"reason": reason, "sku": sku, "ciudad": ciudad})
                             except Exception as e:  # noqa: BLE001
