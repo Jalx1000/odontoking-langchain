@@ -318,6 +318,21 @@ async def _post_conversation(path: str, body: dict[str, Any], config: RunnableCo
         return {"lead_id": None, "error": str(e) or type(e).__name__}
 
 
+async def abrir_lead_inicial(config: RunnableConfig) -> Optional[int]:
+    """Open the conversation's lead on the first inbound message - deterministic, NOT LLM-driven.
+
+    Ponce de León's CRM does not auto-create a lead per conversation (the webhook's contact.lead_id is
+    always null) and `registrar_solicitud` only fires once the model has qualified the client, so a
+    fresh conversation had NO lead until then - incoming contacts were invisible in the pipeline. This
+    opens the lead eagerly with just the contact name (the sole required field). It is the same
+    conversation-scoped UPSERT endpoint `registrar_solicitud` uses, so a later call updates THIS lead
+    and never duplicates it. Best-effort: `_post_conversation` swallows errors and returns lead_id None.
+    """
+    nombre = _ctx_contact_name(config) or "Cliente WhatsApp"
+    data = await _post_conversation("solicitud", {"nombre": nombre}, config)
+    return data.get("lead_id")
+
+
 @tool
 async def registrar_solicitud(
     operacion: str,

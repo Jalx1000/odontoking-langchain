@@ -33,6 +33,7 @@ from pydantic import SecretStr
 from app.core.config import settings
 from app.core.langgraph.tools.inmobiliaria import (
     _phone_ask_allowed,
+    abrir_lead_inicial,
     buscar_inmuebles,
     derivar_a_asesor,
     enviar_media,
@@ -260,7 +261,7 @@ class C21Agent:
 
         keys = list(first_by_key)
         results = await asyncio.gather(*[_run(first_by_key[k]) for k in keys])
-        result_by_key = dict(zip(keys, results))
+        result_by_key = dict(zip(keys, results, strict=False))
 
         outputs = [
             ToolMessage(content=result_by_key[_key(tc)], name=tc["name"], tool_call_id=tc["id"])
@@ -344,6 +345,17 @@ class C21Agent:
         try:
             state = await graph.aget_state(config)
             existing_count = len(state.values.get("messages", [])) if state and state.values else 0
+
+            # First inbound message of the conversation → open the lead eagerly (deterministic, not
+            # LLM-driven) so every incoming contact exists in the CRM pipeline from message 1. The CRM
+            # does not auto-create it and registrar_solicitud fires only after qualifying. Same
+            # conversation-scoped UPSERT endpoint, so later registrar_solicitud updates THIS lead.
+            if existing_count == 0 and not (state and state.next):
+                try:
+                    lead_id = await abrir_lead_inicial(config)
+                    logger.info("c21_lead_opened_on_arrival", wa_id=wa_id, lead_id=lead_id)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("c21_lead_open_failed", wa_id=wa_id, error=str(e))
 
             if state and state.next:
                 logger.info("c21_resuming_graph", wa_id=wa_id)
