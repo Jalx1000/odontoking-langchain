@@ -44,7 +44,7 @@ _BASE = settings.ODONTOKING_API_URL
 _SOURCE_WHATSAPP = 6          # lead_source_id "WhatsApp"
 _LEAD_TYPE_VENTA = 1          # New Business
 _LEAD_TYPE_POSTVENTA = 2      # Existing Business
-_OWNER_USER_ID = 1            # default lead owner
+_OWNER_USER_ID = 6            # default lead owner
 # Initial stage of the sales pipeline. Krayin's REST lead-create REQUIRES lead_pipeline_stage_id -
 # omitting it 500s with "Undefined array key lead_pipeline_stage_id". Krayin's default first stage
 # is id 1; adjust if the IMPRIMIR sales pipeline's initial stage differs.
