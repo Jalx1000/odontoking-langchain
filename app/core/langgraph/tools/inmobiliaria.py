@@ -33,6 +33,9 @@ _NS_INMO = "/api/v1/inmobiliaria"
 _MEDIA_MAX = 10                          # we request up to 10. NOTE: the CRM previously capped at 8
                                          # ("asking for more returns 8"); if it still does, only 8
                                          # arrive until the CRM raises its own limit.
+_OWNER_USER_ID = 6                       # default lead owner (mirror of crm.py _OWNER_USER_ID); every
+                                         # conversation-scoped lead write carries it so leads are owned
+                                         # by user 6, same as the Krayin /leads path.
 
 _HEADERS = {
     "accept": "application/json",
@@ -301,6 +304,9 @@ async def _post_conversation(path: str, body: dict[str, Any], config: RunnableCo
         return {"lead_id": None, "error": "no_conversation_id"}
     if not (body.get("nombre") or "").strip():
         body["nombre"] = _ctx_contact_name(config) or ""
+    # Every conversation-scoped lead must be owned by user 6 (same default as the Krayin /leads path in
+    # crm.py). setdefault so a caller could override it, but by default the lead respects the owner.
+    body.setdefault("user_id", _OWNER_USER_ID)
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await _request(

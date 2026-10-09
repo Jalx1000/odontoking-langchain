@@ -59,6 +59,7 @@ class TestAbrirLeadInicial:
         assert box["method"] == "POST"
         assert box["url"].endswith("/api/v1/inmobiliaria/conversations/245/solicitud")
         assert box["json"]["nombre"] == "Alejandro"
+        assert box["json"]["user_id"] == 6  # lead owned by user 6 (respects _OWNER_USER_ID)
 
     @pytest.mark.asyncio
     async def test_falls_back_to_placeholder_name(self, monkeypatch):
