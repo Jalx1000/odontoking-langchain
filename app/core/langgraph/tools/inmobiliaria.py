@@ -1,4 +1,4 @@
-"""CENTURY 21 (Eliana) CRM tools - inmuebles, disponibilidad-less v1, leads and handoff.
+"""CENTURY 21 (Sofía) CRM tools - inmuebles, disponibilidad-less v1, leads and handoff.
 
 Flow: WhatsApp → Krayin CRM (c21.sofopolis.com) → agent → CRM. The agent receives conversation_id +
 wa_id; the ONLY identifier the LLM handles is the public property `codigo` (it appears in the listing
@@ -232,7 +232,7 @@ async def enviar_media(
             log.info("c21_enviar_media_ok", enviados=enviados)
             return json.dumps({"enviado": True, "enviados": enviados, "codigo": codigo}, ensure_ascii=False)
     except httpx.HTTPStatusError as e:
-        # Non-transient statuses (_request already retried 5xx/429): map each to a result Eliana reacts
+        # Non-transient statuses (_request already retried 5xx/429): map each to a result Sofía reacts
         # to. 404 = no material of that type (o código inexistente) → decírselo, NO reintentar; 409 =
         # derivada a un asesor → callarse; 422 = fuera de la ventana 24h; 501 = canal sin media.
         status = e.response.status_code
