@@ -261,7 +261,7 @@ class Settings:
 
         # Odontoking API
         self.ODONTOKING_API_URL = os.getenv("ODONTOKING_API_URL", "https://odontoking.sofopolis.com")
-        self.ODONTOKING_API_TOKEN = os.getenv("ODONTOKING_API_TOKEN", "")
+        self.CRM_API_TOKEN = os.getenv("CRM_API_TOKEN", "")
         self.ODONTOKING_MEMORY_ENABLED = os.getenv("ODONTOKING_MEMORY_ENABLED", "false").lower() in ("true", "1", "yes")
         self.ODONTOKING_LLM_MODEL = os.getenv("ODONTOKING_LLM_MODEL", "gpt-4o-mini")
         # Deterministic intake (steps 1-6 forced by code). Disable to fall back to LLM-only flow.

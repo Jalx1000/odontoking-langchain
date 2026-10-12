@@ -75,7 +75,7 @@ def _build_env_registry() -> dict[str, TenantConfig]:
             wa_access_token=settings.WHATSAPP_ACCESS_TOKEN,
             agent_type="odontoking",
             crm_url=settings.ODONTOKING_API_URL,
-            crm_token=settings.ODONTOKING_API_TOKEN,
+            crm_token=settings.CRM_API_TOKEN,
             llm_model="gpt-4o-mini",
         )
     logger.info("tenant_env_registry_loaded", tenants=list(registry.keys()))

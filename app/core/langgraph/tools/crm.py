@@ -1,26 +1,3 @@
-"""IMPRIMIR CRM tool - Krayin contacts, leads, products, activities and tags.
-
-Flow: WhatsApp → Krayin CRM → agent → CrmGateway. The agent receives conversation_id + wa_id,
-drives the quotation, and replies in plain text (the gateway sends it).
-
-Design note - ONE coarse tool per action:
-The naive design (resolve_person → ensure_organization → create_lead → add_lead_product →
-add_lead_note → tag_lead as six separate LLM tools) forces the model to thread person_id / lead_id
-between calls. Weaker models call them in parallel in a single turn and hallucinate those ids
-(e.g. person_id=0). So the LLM-facing surface is just:
-
-    register_cotizacion(...)          - ventas: does the whole resolve→org→lead→product→note→tag
-    registrar_consulta_postventa(...) - postventa: creates a lead in the postventa pipeline
-    get_person_leads(wa_id)           - what this contact already has
-
-Each takes only wa_id (always in context) plus plain fields - no ids to thread. The step functions
-below are internal helpers, not tools.
-
-Reuses the ODONTOKING_API_URL / ODONTOKING_API_TOKEN settings - those env vars point at the
-IMPRIMIR Krayin instance (https://imprimir.sofopolis.com), authenticated with a sanctum_admin
-Bearer token.
-"""
-
 import json
 from datetime import date, timedelta
 from typing import Any, Optional
@@ -36,7 +13,7 @@ from app.core.logging import logger
 _HEADERS = {
     "accept": "application/json",
     "Content-Type": "application/json",
-    "Authorization": f"Bearer {settings.ODONTOKING_API_TOKEN}",
+    "Authorization": f"Bearer {settings.CRM_API_TOKEN}",
 }
 _BASE = settings.ODONTOKING_API_URL
 
@@ -60,42 +37,7 @@ _TEMP_ALIASES = {
     "🌤️": "tibio", "☁️": "tibio", "tibio": "tibio", "cálido": "tibio", "calido": "tibio",
     "❄️": "frio", "frío": "frio", "frio": "frio",
 }
-
-# Static catalog → product_id map: fallback when the live product search misses. These are the
-# REAL ids from the IMPRIMIR Krayin catalog (verified via GET /api/v1/products) - the live
-# products/search is still tried first, this is only the last resort.
-_PRODUCT_IDS = {
-    "bolsa pouch": 12,
-    "bolsa flow pack": 6,
-    "bolsa sachet": 8,
-    "bolsa almohada": 9,
-    "bolsa wicket": 11,
-    "bolsa sello lateral": 7,
-    "etiqueta sleeve": 15,
-    "etiqueta roll feed": 16,
-    "tapa plástica 1881 short finish": 14,
-}
-
 _PLACEHOLDER_NAME = "Cliente WhatsApp"
-
-# ── City → sales pipeline routing (agent-quotes.md §1) ────────────────────────
-# The CRM's default pipeline is Santa Cruz, so EVERY messaging lead is born there regardless of the
-# client's city; the agent moves it once the city is confirmed. The ids are NOT correlative (2, 3, 5
-# are absent) - never generate or assume them: use this map, or resolve by name via
-# GET /api/v1/settings/pipelines.
-_CITY_PIPELINE_IDS = {
-    "santa cruz": 1,
-    "potosi": 4,
-    "oruro": 6,
-    "la paz": 7,
-    "cochabamba": 8,
-    "sucre": 9,
-}
-_PIPELINE_SIN_CIUDAD = 10  # fallback: no city / unrecognised city - keeps Santa Cruz metrics clean
-
-# The CRM auto-creates the lead in this initial stage. A lead in ANY other stage means a human
-# advisor already took it, so the agent must NOT move or modify it (see the Q1 "mixta" rule).
-_UNATTENDED_STAGE_NAME = "no atendido"
 
 # Free-text city (accents/abbreviations the client may type) → canonical pipeline key.
 _CITY_ALIASES = {
@@ -165,6 +107,7 @@ async def find_person_by_wa_id(client: httpx.AsyncClient, wa_id: str) -> Optiona
         params={"search": _normalize_wa_id(wa_id), "searchFields": "contact_numbers:like;"},
     )
     data = _data(resp)
+    logger.info("find_person_by_wa_id", wa_id=wa_id, data=data)
     return data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else None
 
 
