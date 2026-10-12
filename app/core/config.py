@@ -265,6 +265,13 @@ class Settings:
         # including scheduling; when false (default) the deterministic intake/booking handles it.
         # Setting this true bypasses the intake so every turn goes through the graph.
         self.AI_BOOKING_ENABLED = os.getenv("AI_BOOKING_ENABLED", "false").lower() in ("true", "1", "yes")
+        # WhatsApp native forms (flows): agendar / cancelar / reprogramar are handled by native
+        # WhatsApp forms published on the CRM side; the agent only detects intent and sends the
+        # form (tool enviar_formulario). When true: the deterministic intake is bypassed, the forms
+        # prompt (odontoking.md) and the enviar_formulario tool are active, and inbound flow_reply
+        # events are processed. When false (default): classic chat-based flow, unchanged.
+        # See docs/agente-flows-instrucciones.md (CRM repo).
+        self.WHATSAPP_FLOWS_ENABLED = os.getenv("WHATSAPP_FLOWS_ENABLED", "false").lower() in ("true", "1", "yes")
 
         # WhatsApp message buffer
         self.BUFFER_ENABLED = os.getenv("BUFFER_ENABLED", "true").lower() in ("true", "1", "yes")

@@ -66,6 +66,7 @@ from app.core.langgraph.tools.odontoking import (
     get_specialties,
     get_specialty_doctors,
 )
+from app.core.langgraph.tools.whatsapp_flows import enviar_formulario
 from app.core.langgraph.booking import advance_booking, start_reschedule
 from app.core.langgraph.intake import (
     advance_intake,
@@ -91,7 +92,8 @@ from app.utils import (
 
 PostgresConnPool = AsyncConnectionPool[AsyncConnection[DictRow]]
 
-_ODONTOKING_TOOLS = [
+# Classic chat-based deployment: the LLM drives the whole booking flow and writes to the CRM.
+_CLASSIC_TOOLS = [
     get_services,
     get_specialties,
     get_doctors,
@@ -107,7 +109,25 @@ _ODONTOKING_TOOLS = [
     sync_transcript_to_crm,
 ]
 
-_PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", "odontoking.md")
+# WhatsApp native-forms mode: the LLM only detects intent and sends a form; the CRM books, cancels
+# and reschedules. The write tools (create/cancel/reschedule/save/verify) are intentionally NOT
+# bound so the agent cannot touch citas "por otra vía" — only read tools remain (FAQ + answering
+# cita questions) plus enviar_formulario.
+_FORMS_TOOLS = [
+    enviar_formulario,
+    get_citas,
+    get_services,
+    get_specialties,
+    sync_transcript_to_crm,
+]
+
+_ODONTOKING_TOOLS = _FORMS_TOOLS if settings.WHATSAPP_FLOWS_ENABLED else _CLASSIC_TOOLS
+
+# Forms mode uses odontoking.md (send-a-form flows); the classic chat-based flows live in
+# odontoking-classic.md and remain the default so WHATSAPP_FLOWS_ENABLED=false is byte-for-byte
+# the previous behaviour.
+_PROMPT_NAME = "odontoking.md" if settings.WHATSAPP_FLOWS_ENABLED else "odontoking-classic.md"
+_PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", _PROMPT_NAME)
 _TZ_BOLIVIA = ZoneInfo("America/La_Paz")
 _DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 _MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
@@ -139,6 +159,25 @@ def _format_citas_context(citas: list[dict] | None, cita_activa: int | None) -> 
     return lines
 
 
+def _format_pacientes_a_cargo(pacientes: list[dict] | None) -> list[str]:
+    """Render who this contact schedules for (hijos, padres, …) as context lines.
+
+    Forms mode (patient_context.pacientes_a_cargo): lets the agent answer about their citas
+    without sending a form.
+    """
+    if not pacientes:
+        return []
+    lines = ["pacientes_a_cargo:  # personas que este contacto agenda (hijos, padres, pareja, …)"]
+    for p in pacientes:
+        if not isinstance(p, dict):
+            continue
+        nombre = p.get("nombre") or p.get("name") or p.get("patient_name") or "s/nombre"
+        relacion = p.get("relacion") or p.get("relation") or ""
+        extra = f" ({relacion})" if relacion else ""
+        lines.append(f"  - {nombre}{extra}")
+    return lines
+
+
 def _load_odontoking_prompt(
     wa_id: str,
     *,
@@ -150,6 +189,7 @@ def _load_odontoking_prompt(
     person_id: int | None = None,
     citas: list[dict] | None = None,
     cita_activa: int | None = None,
+    pacientes_a_cargo: list[dict] | None = None,
 ) -> str:
     """Render the odontoking system prompt with Bolivia local datetime and patient context."""
     now = datetime.now(_TZ_BOLIVIA)
@@ -182,34 +222,41 @@ def _load_odontoking_prompt(
         )
     else:
         context_lines.append("nombre_registrado: null  # pedir el nombre completo al paciente")
-    if ci_paciente:
-        context_lines.append(f"ci_paciente_registrada: {ci_paciente}")
-    else:
-        context_lines.append("ci_paciente_registrada: null")
-    if seguro_paciente:
-        context_lines.append(f"seguro_registrado: {seguro_paciente}")
-    else:
-        context_lines.append("seguro_registrado: null")
-    # Insurance is a HARD GATE on every booking (policy: always re-validate). A previously
-    # registered insurance belongs to the wa_id owner, can lapse (mora/vencido), and is NOT
-    # valid for a third-party patient — so it never skips verify_insurance, it only pre-fills.
-    if ci_paciente and seguro_paciente:
-        context_lines.append(
-            "# ⚠️ SEGURO — el titular tiene un seguro registrado. Úsalo SOLO para pre-llenar "
-            "(confírmalo con el paciente y pide/confirma el carnet), pero SIEMPRE vuelve a llamar "
-            "verify_insurance en esta conversación. Si la cita es PARA OTRA PERSONA, ese seguro NO "
-            "aplica: valida el seguro y el carnet de esa persona. Si NO da VIGENTE, NO agendes."
-        )
-    else:
-        context_lines.append(
-            "# ⚠️ SEGURO NO VERIFICADO — OBLIGATORIO antes de agendar (también pacientes recurrentes): "
-            "pregunta por el seguro; si elige una aseguradora pide el carnet y llama verify_insurance. "
-            "Si la verificación NO da VIGENTE, NO agendes. Solo 'No tengo seguro' puede agendar como particular."
-        )
+    # Insurance context is classic-mode only: in WhatsApp-forms mode the CRM form handles the
+    # cédula/seguro and there is no verify_insurance tool, so these verify-insurance instructions
+    # would be contradictory noise. Keep them exactly as-is when forms are off.
+    if not settings.WHATSAPP_FLOWS_ENABLED:
+        if ci_paciente:
+            context_lines.append(f"ci_paciente_registrada: {ci_paciente}")
+        else:
+            context_lines.append("ci_paciente_registrada: null")
+        if seguro_paciente:
+            context_lines.append(f"seguro_registrado: {seguro_paciente}")
+        else:
+            context_lines.append("seguro_registrado: null")
+        # Insurance is a HARD GATE on every booking (policy: always re-validate). A previously
+        # registered insurance belongs to the wa_id owner, can lapse (mora/vencido), and is NOT
+        # valid for a third-party patient — so it never skips verify_insurance, it only pre-fills.
+        if ci_paciente and seguro_paciente:
+            context_lines.append(
+                "# ⚠️ SEGURO — el titular tiene un seguro registrado. Úsalo SOLO para pre-llenar "
+                "(confírmalo con el paciente y pide/confirma el carnet), pero SIEMPRE vuelve a llamar "
+                "verify_insurance en esta conversación. Si la cita es PARA OTRA PERSONA, ese seguro NO "
+                "aplica: valida el seguro y el carnet de esa persona. Si NO da VIGENTE, NO agendes."
+            )
+        else:
+            context_lines.append(
+                "# ⚠️ SEGURO NO VERIFICADO — OBLIGATORIO antes de agendar (también pacientes recurrentes): "
+                "pregunta por el seguro; si elige una aseguradora pide el carnet y llama verify_insurance. "
+                "Si la verificación NO da VIGENTE, NO agendes. Solo 'No tengo seguro' puede agendar como particular."
+            )
 
     # Pre-loaded cita history (CONTRATO A): the agent reviews every past/upcoming cita before
     # replying, so it never re-asks "¿ya vino? ¿qué cita tuvo?" — it reads them here.
     context_lines.extend(_format_citas_context(citas, cita_activa))
+    # People this contact schedules for (forms mode): lets the agent answer "¿la cita de mi hijo?"
+    # without sending a form.
+    context_lines.extend(_format_pacientes_a_cargo(pacientes_a_cargo))
 
     context = "\n".join(context_lines)
     return _PROMPT_TEMPLATE.format(current_datetime=current_datetime) + f"\n\n{context}"
@@ -389,6 +436,7 @@ class OdontokingAgent:
             person_id=metadata.get("person_id"),
             citas=metadata.get("citas"),
             cita_activa=metadata.get("cita_activa"),
+            pacientes_a_cargo=metadata.get("pacientes_a_cargo"),
         )
         # When the deterministic intake already collected steps 1-6, inject that data so the
         # LLM continues from step 7 and never re-asks.
@@ -417,12 +465,18 @@ class OdontokingAgent:
             logger.exception("odontoking_chat_failed", thread_id=thread_id, error=str(e))
             raise
 
-    async def _tool_call(self, state: GraphState) -> Command:
+    async def _tool_call(self, state: GraphState, config: Optional[RunnableConfig] = None) -> Command:
         tool_calls = state.messages[-1].tool_calls
+        # conversation_id is injected into enviar_formulario here (never supplied by the LLM): it
+        # comes from the inbound event via the graph config metadata.
+        conversation_id = ((config or {}).get("metadata") or {}).get("conversation_id")
 
         async def _execute(tc: dict) -> ToolMessage:
+            args = tc["args"]
+            if tc["name"] == "enviar_formulario" and conversation_id is not None:
+                args = {**args, "conversation_id": conversation_id}
             try:
-                result = await self.tools_by_name[tc["name"]].ainvoke(tc["args"])
+                result = await self.tools_by_name[tc["name"]].ainvoke(args)
             except GraphBubbleUp:
                 # ask_human's interrupt() raises GraphInterrupt (a GraphBubbleUp / Exception
                 # subclass). It MUST bubble up to pause the graph — never swallow it here.
@@ -613,6 +667,8 @@ class OdontokingAgent:
         person_id: int | None = None,
         citas: list[dict] | None = None,
         cita_activa: int | None = None,
+        conversation_id: int | None = None,
+        pacientes_a_cargo: list[dict] | None = None,
         handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
         """Process a WhatsApp message and return the agent's texto response.
@@ -628,8 +684,10 @@ class OdontokingAgent:
         # When active it asks one canonical question per turn and returns early; when the
         # intake completes it hands off to the LLM (steps 7-12) with all data injected.
         # AI_BOOKING_ENABLED bypasses the intake entirely so the LLM graph drives everything.
+        # WhatsApp forms mode bypasses the deterministic intake just like AI_BOOKING_ENABLED: the
+        # LLM detects the intent and sends a form instead of collecting data by chat.
         intake_handoff: Optional[str] = None
-        if settings.INTAKE_ENABLED and not settings.AI_BOOKING_ENABLED:
+        if settings.INTAKE_ENABLED and not settings.AI_BOOKING_ENABLED and not settings.WHATSAPP_FLOWS_ENABLED:
             # The intake always asks for the real name (the WhatsApp profile name is often
             # wrong). nombre_whatsapp is only used to build the CRM name afterwards.
             intake_reply, intake_handoff = await self._intake_turn(
@@ -658,6 +716,8 @@ class OdontokingAgent:
                 "person_id": person_id,
                 "citas": citas,
                 "cita_activa": cita_activa,
+                "conversation_id": conversation_id,
+                "pacientes_a_cargo": pacientes_a_cargo,
                 "intake_handoff": intake_handoff,
             },
             "recursion_limit": 50,

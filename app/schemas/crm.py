@@ -21,10 +21,15 @@ class CrmContact(BaseModel):
 class CrmMessage(BaseModel):
     """The inbound message that triggered the event."""
 
+    model_config = ConfigDict(extra="ignore")
+
     id: Optional[int] = None
     type: str = "text"
     text: Optional[str] = None
     timestamp: Optional[str] = None
+    # Present only when type == "flow_reply": the data the patient submitted in a WhatsApp form
+    # (keys: flow, status, patient_name, relation, specialty, doctor_name, date, time, …).
+    flow: Optional[dict] = None
 
 
 class CrmHistoryItem(BaseModel):
@@ -64,6 +69,20 @@ class CrmReply(BaseModel):
     url: str
 
 
+class CrmPatientContext(BaseModel):
+    """Extra context the CRM attaches to each event (optional).
+
+    `pacientes_a_cargo` lists the people this contact schedules for (hijos, padres, pareja, …) and
+    `citas` carries their appointments, so the agent can answer "¿cuándo es la cita de mi hijo?"
+    without sending a form. Shape is CRM-defined; kept as plain dicts (extra fields ignored).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    pacientes_a_cargo: list[dict] = []
+    citas: list[dict] = []
+
+
 class CrmWebhookEvent(BaseModel):
     """Root payload for the `message.received` event from the CRM."""
 
@@ -78,3 +97,4 @@ class CrmWebhookEvent(BaseModel):
     history: list[CrmHistoryItem] = []
     window: Optional[CrmWindow] = None
     reply: Optional[CrmReply] = None
+    patient_context: Optional[CrmPatientContext] = None

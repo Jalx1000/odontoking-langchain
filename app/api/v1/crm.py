@@ -98,7 +98,30 @@ async def _register_patient(phone: str, name: str | None) -> dict:
         return {}
 
 
-def _make_process_fn(dest: Destination, patient_ctx: dict, contact_lead_id: int | None = None):
+def _format_flow_reply(flow: dict) -> str:
+    """Render a WhatsApp form submission (flow_reply) as a compact note for the LLM.
+
+    The CRM already creates/cancels/moves the cita and confirms to the patient; the agent only
+    reacts (brief ack / offer / handoff) per the `status` field, following the prompt rules.
+    """
+    lines = ["[FORMULARIO COMPLETADO POR EL PACIENTE]"]
+    # Surface flow + status first (they drive the agent's reaction), then the rest in order.
+    for key in ("flow", "status"):
+        if flow.get(key) is not None:
+            lines.append(f"{key}: {flow[key]}")
+    for key, value in flow.items():
+        if key in ("flow", "status") or value is None:
+            continue
+        lines.append(f"{key}: {value}")
+    return "\n".join(lines)
+
+
+def _make_process_fn(
+    dest: Destination,
+    patient_ctx: dict,
+    contact_lead_id: int | None = None,
+    pacientes_a_cargo: list[dict] | None = None,
+):
     """Return a ProcessFn closure bound to the CRM destination + patient context."""
     gateway = get_gateway()
 
@@ -124,6 +147,8 @@ def _make_process_fn(dest: Destination, patient_ctx: dict, contact_lead_id: int 
                     seguro_paciente=patient_ctx.get("seguro_paciente"),
                     nombre_registrado=patient_ctx.get("nombre_registrado"),
                     nombre_whatsapp=patient_ctx.get("nombre_whatsapp"),
+                    conversation_id=dest.conversation_id,
+                    pacientes_a_cargo=pacientes_a_cargo,
                     handoff_callback=_on_handoff,
                 )
             )
@@ -196,8 +221,18 @@ async def receive_crm_event(request: Request) -> dict:
     if event.event != "message.received":
         return {"status": "ignored"}
 
+    # A completed WhatsApp form arrives as a flow_reply (data in message.flow). It is only handled
+    # when the forms feature is on; otherwise it falls through to the unsupported-type branch.
+    is_flow_reply = (
+        settings.WHATSAPP_FLOWS_ENABLED
+        and event.message.type == "flow_reply"
+        and bool(event.message.flow)
+    )
+
     text = (event.message.text or "").strip()
-    if event.message.type != "text" or not text:
+    if is_flow_reply:
+        text = _format_flow_reply(event.message.flow or {})
+    elif event.message.type != "text" or not text:
         logger.info("crm_unsupported_message", msg_type=event.message.type)
         return {"status": "ignored"}
 
@@ -217,10 +252,22 @@ async def receive_crm_event(request: Request) -> dict:
     if settings.WHATSAPP_AUTO_CREATE_PERSON:
         patient_ctx = await _register_patient(phone, event.contact.name)
 
-    logger.info("crm_message_received", conversation_id=event.conversation_id, wa_id=phone, preview=text[:60])
+    pacientes_a_cargo = event.patient_context.pacientes_a_cargo if event.patient_context else None
 
-    process_fn = _make_process_fn(dest, patient_ctx, contact_lead_id=event.contact.lead_id)
-    if settings.BUFFER_ENABLED:
+    logger.info(
+        "crm_message_received",
+        conversation_id=event.conversation_id,
+        wa_id=phone,
+        msg_type=event.message.type,
+        preview=text[:60],
+    )
+
+    process_fn = _make_process_fn(
+        dest, patient_ctx, contact_lead_id=event.contact.lead_id, pacientes_a_cargo=pacientes_a_cargo
+    )
+    # A flow_reply is a single discrete event (not free text) — process it immediately instead of
+    # buffering/concatenating it with other messages.
+    if settings.BUFFER_ENABLED and not is_flow_reply:
         await message_buffer_service.enqueue(phone, text, process_fn)
     else:
         task = asyncio.create_task(process_fn(phone, text))

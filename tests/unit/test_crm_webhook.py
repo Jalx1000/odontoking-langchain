@@ -4,7 +4,7 @@ from typing import cast
 
 from fastapi import Request
 
-from app.api.v1.crm import _verify_agent_token
+from app.api.v1.crm import _format_flow_reply, _verify_agent_token
 from app.core.config import settings
 from app.schemas.crm import CrmWebhookEvent
 
@@ -55,6 +55,56 @@ class TestCrmWebhookEvent:
         payload = {**_DOC_EVENT, "unexpected": {"foo": "bar"}}
         ev = CrmWebhookEvent.model_validate(payload)
         assert ev.contact.name == "Alejandro"
+
+    def test_parses_flow_reply_and_patient_context(self):
+        """A flow_reply message and patient_context are parsed into structured fields."""
+        payload = {
+            **_DOC_EVENT,
+            "message": {
+                "id": 200,
+                "type": "flow_reply",
+                "flow": {
+                    "flow": "paciente_tercero",
+                    "status": "pending",
+                    "patient_name": "Juan Pérez",
+                    "relation": "hijo",
+                    "date": "2026-10-15",
+                    "time": "10:00",
+                },
+            },
+            "patient_context": {
+                "pacientes_a_cargo": [{"nombre": "Juan Pérez", "relacion": "hijo"}],
+                "citas": [{"fecha": "2026-10-15", "hora": "10:00"}],
+            },
+        }
+        ev = CrmWebhookEvent.model_validate(payload)
+        assert ev.message.type == "flow_reply"
+        assert ev.message.flow["status"] == "pending"
+        assert ev.patient_context is not None
+        assert ev.patient_context.pacientes_a_cargo[0]["relacion"] == "hijo"
+
+
+class TestFormatFlowReply:
+    """_format_flow_reply renders a form submission as a compact note for the LLM."""
+
+    def test_flow_and_status_lead(self):
+        """Flow and status are surfaced first; None values are dropped."""
+        note = _format_flow_reply(
+            {
+                "patient_name": "Juan Pérez",
+                "flow": "paciente_tercero",
+                "status": "pending",
+                "doctor_name": None,
+                "date": "2026-10-15",
+            }
+        )
+        lines = note.splitlines()
+        assert lines[0] == "[FORMULARIO COMPLETADO POR EL PACIENTE]"
+        assert lines[1] == "flow: paciente_tercero"
+        assert lines[2] == "status: pending"
+        assert "patient_name: Juan Pérez" in note
+        assert "date: 2026-10-15" in note
+        assert "doctor_name" not in note  # None values are omitted
 
 
 class TestVerifyAgentToken:

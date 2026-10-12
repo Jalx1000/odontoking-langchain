@@ -44,3 +44,33 @@ async def test_tool_call_swallows_ordinary_errors():
     msg = command.update["messages"][0]
     assert isinstance(msg, ToolMessage)
     assert "boom" in msg.content
+
+
+@pytest.mark.asyncio
+async def test_tool_call_injects_conversation_id_for_enviar_formulario():
+    """enviar_formulario gets conversation_id from the graph config metadata, not from the LLM."""
+    agent = OdontokingAgent()
+    fake_tool = AsyncMock()
+    fake_tool.ainvoke = AsyncMock(return_value='{"success": true, "flow": "paciente_tercero"}')
+    agent.tools_by_name = {"enviar_formulario": fake_tool}
+
+    state = _state_with_tool_call("enviar_formulario")
+    state.messages[-1].tool_calls[0]["args"] = {"flow": "paciente_tercero"}
+    await agent._tool_call(state, {"metadata": {"conversation_id": 123}})
+
+    fake_tool.ainvoke.assert_awaited_once_with({"flow": "paciente_tercero", "conversation_id": 123})
+
+
+@pytest.mark.asyncio
+async def test_tool_call_other_tools_not_given_conversation_id():
+    """Non-form tools are invoked with their args untouched (no conversation_id leak)."""
+    agent = OdontokingAgent()
+    fake_tool = AsyncMock()
+    fake_tool.ainvoke = AsyncMock(return_value="{}")
+    agent.tools_by_name = {"get_citas": fake_tool}
+
+    state = _state_with_tool_call("get_citas")
+    state.messages[-1].tool_calls[0]["args"] = {"wa_id": "591700"}
+    await agent._tool_call(state, {"metadata": {"conversation_id": 123}})
+
+    fake_tool.ainvoke.assert_awaited_once_with({"wa_id": "591700"})
