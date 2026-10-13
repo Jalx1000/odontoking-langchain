@@ -97,13 +97,20 @@ _PIPELINE_SIN_CIUDAD = 10  # fallback: no city / unrecognised city — keeps San
 _UNATTENDED_STAGE_NAME = "no atendido"
 
 # Free-text city (accents/abbreviations the client may type) → canonical pipeline key.
+# Covers the 9 Bolivian departments. Tarija/Beni/Pando have NO dedicated sales pipeline yet, so they
+# route to pipeline 10 (Sin ciudad) by fallback — but they DO have a `ciudad` select option (below),
+# so the lead attribute still fills. Beni/Pando map to their capitals (Trinidad/Cobija) in the select.
 _CITY_ALIASES = {
     "santa cruz": "santa cruz", "santacruz": "santa cruz", "scz": "santa cruz",
+    "santa cruz de la sierra": "santa cruz",
     "potosi": "potosi", "potosí": "potosi",
     "oruro": "oruro",
     "la paz": "la paz", "lapaz": "la paz", "lp": "la paz",
     "cochabamba": "cochabamba", "cbba": "cochabamba", "cocha": "cochabamba",
     "sucre": "sucre", "chuquisaca": "sucre",
+    "tarija": "tarija",
+    "beni": "beni", "el beni": "beni", "trinidad": "beni",
+    "pando": "pando", "cobija": "pando",
 }
 
 # The lead's `ciudad` custom attribute (Krayin attribute id 98) is a SELECT: its value must be the
@@ -118,6 +125,9 @@ _CITY_OPTION_IDS = {
     "sucre": 44,
     "oruro": 45,
     "potosi": 46,
+    "tarija": 47,
+    "beni": 48,   # option "Trinidad" (capital de Beni)
+    "pando": 49,  # option "Cobija" (capital de Pando)
 }
 
 

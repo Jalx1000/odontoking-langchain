@@ -322,18 +322,21 @@ class TestResolveCiudadOptionId:
     @pytest.mark.parametrize(
         "ciudad,expected",
         [
-            ("Santa Cruz", 40), ("scz", 40),
+            ("Santa Cruz", 40), ("scz", 40), ("Santa Cruz de la Sierra", 40),
             ("La Paz", 41), ("lp", 41),
             ("Cochabamba", 42), ("cbba", 42),
             ("Sucre", 44), ("Oruro", 45),
             ("Potosí", 46), ("potosi", 46),
+            ("Tarija", 47),
+            ("Beni", 48), ("Trinidad", 48),
+            ("Pando", 49), ("Cobija", 49),
         ],
     )
     def test_known_cities_map_to_option_ids(self, ciudad, expected):
-        """Each known city (and alias) resolves to its select option id."""
+        """Each of the 9 departments (and aliases) resolves to its select option id."""
         assert crm._resolve_ciudad_option_id(ciudad) == expected
 
-    @pytest.mark.parametrize("ciudad", ["Tarija", "Trinidad", "otra ciudad", "", None])
+    @pytest.mark.parametrize("ciudad", ["otra ciudad", "Yacuiba", "cualquier cosa", "", None])
     def test_unknown_city_returns_none(self, ciudad):
         """A city without a mapped option id → None (we send no ciudad, never a guess)."""
         assert crm._resolve_ciudad_option_id(ciudad) is None
@@ -367,12 +370,22 @@ class TestRouteLeadPipeline:
         assert "lead_pipeline_stage_id" in body and body["ciudad"] == 40
 
     @pytest.mark.asyncio
-    async def test_unknown_city_routes_without_ciudad(self, monkeypatch):
-        """Tarija → pipeline 10, no stage (unresolved) and NO ciudad key (no option id guess)."""
+    async def test_department_without_pipeline_routes_to_sin_ciudad_but_sets_ciudad(self, monkeypatch):
+        """Tarija → pipeline 10 (no dedicated pipeline) but DOES set its ciudad option id 47."""
         req = AsyncMock(return_value=MagicMock())
         monkeypatch.setattr(crm, "_request", req)
         monkeypatch.setattr(crm, "_initial_stage_id", AsyncMock(return_value=None))
         pid = await _route_lead_pipeline(MagicMock(), 479, "Tarija")
+        assert pid == 10
+        assert req.call_args.kwargs["json"] == {"lead_pipeline_id": 10, "ciudad": 47}
+
+    @pytest.mark.asyncio
+    async def test_unknown_city_routes_without_ciudad(self, monkeypatch):
+        """A truly unmapped locality → pipeline 10, no stage, and NO ciudad key (no option id guess)."""
+        req = AsyncMock(return_value=MagicMock())
+        monkeypatch.setattr(crm, "_request", req)
+        monkeypatch.setattr(crm, "_initial_stage_id", AsyncMock(return_value=None))
+        pid = await _route_lead_pipeline(MagicMock(), 479, "Yacuiba")
         assert pid == 10
         assert req.call_args.kwargs["json"] == {"lead_pipeline_id": 10}
 
