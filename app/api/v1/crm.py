@@ -292,11 +292,11 @@ async def receive_crm_event(request: Request) -> dict:
     # null/empty). asignacion → user_id per zone (resolved in code); cliente → don't re-ask; pedidos
     # pendientes → ask sum-vs-separate before opening a new one.
     if event.asignacion is not None:
-        patient_ctx["asignacion"] = event.asignacion.model_dump()
+        patient_ctx["asignacion"] = event.asignacion
     if event.cliente is not None:
-        patient_ctx["cliente"] = event.cliente.model_dump()
+        patient_ctx["cliente"] = event.cliente
     if event.pedidos_pendientes:
-        patient_ctx["pedidos_pendientes"] = [p.model_dump() for p in event.pedidos_pendientes]
+        patient_ctx["pedidos_pendientes"] = event.pedidos_pendientes
 
     logger.info(
         "crm_message_received",

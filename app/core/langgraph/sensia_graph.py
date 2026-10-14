@@ -90,6 +90,18 @@ with open(_PROMPT_FILE, "r") as _f:
     _PROMPT_TEMPLATE = _f.read()
 
 
+def _as_text(value: Any) -> str:
+    """Render a context value as a short readable string. The CRM may send a field as a dict (e.g.
+    ultimo_pedido / domicilio come as objects), so flatten dicts to 'k: v' pairs instead of leaking a
+    Python repr into the prompt. Lists → comma-joined. Scalars → str."""
+    if isinstance(value, dict):
+        parts = [f"{k}={v}" for k, v in value.items() if v not in (None, "", [], {})]
+        return "; ".join(parts) if parts else ""
+    if isinstance(value, list):
+        return ", ".join(_as_text(v) for v in value if v not in (None, "", [], {}))
+    return str(value)
+
+
 def _load_sensia_prompt(
     wa_id: str,
     *,
@@ -158,15 +170,15 @@ def _load_sensia_prompt(
     if isinstance(cliente, dict) and cliente.get("es_conocido"):
         datos = []
         if cliente.get("nombre"):
-            datos.append(f"nombre: {cliente['nombre']}")
+            datos.append(f"nombre: {_as_text(cliente['nombre'])}")
         if cliente.get("ciudad"):
-            datos.append(f"zona: {cliente['ciudad']}")
+            datos.append(f"zona: {_as_text(cliente['ciudad'])}")
         if cliente.get("domicilio"):
-            datos.append(f"domicilio: {cliente['domicilio']}")
+            datos.append(f"domicilio: {_as_text(cliente['domicilio'])}")
         if cliente.get("bidones_en_su_casa") is not None:
             datos.append(f"bidones sin devolver: {cliente['bidones_en_su_casa']}")
         if cliente.get("ultimo_pedido"):
-            datos.append(f"último pedido: {cliente['ultimo_pedido']}")
+            datos.append(f"último pedido: {_as_text(cliente['ultimo_pedido'])}")
         volatile_lines += [
             "",
             "# Cliente CONOCIDO (ya compró antes)",

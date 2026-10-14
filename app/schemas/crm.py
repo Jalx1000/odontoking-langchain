@@ -133,51 +133,6 @@ class CrmRecompra(BaseModel):
     responder: Optional[CrmRecompraResponder] = None
 
 
-class CrmAsignacionZona(BaseModel):
-    """One zone → distributor mapping row (asignacion.zonas)."""
-
-    model_config = ConfigDict(extra="allow")
-
-    pipeline_id: Optional[int] = None
-    ciudad: Optional[str] = None
-    user_id: Optional[int] = None
-    distribuidor: Optional[str] = None
-
-
-class CrmAsignacion(BaseModel):
-    """Zone→distributor map published by the CRM so the agent sends the right user_id per city."""
-
-    model_config = ConfigDict(extra="allow")
-
-    zonas: list[CrmAsignacionZona] = []
-
-
-class CrmCliente(BaseModel):
-    """Known-client block. `es_conocido` true ⇒ this person already bought; reuse their data."""
-
-    model_config = ConfigDict(extra="allow")
-
-    es_conocido: bool = False
-    nombre: Optional[str] = None
-    ciudad: Optional[str] = None
-    domicilio: Optional[str] = None
-    bidones_en_su_casa: Optional[int] = None
-    ultimo_pedido: Optional[str] = None
-
-
-class CrmPedidoPendiente(BaseModel):
-    """One not-yet-delivered order the person already has open."""
-
-    model_config = ConfigDict(extra="allow")
-
-    id: Optional[int] = None
-    titulo: Optional[str] = None
-    detalle: Optional[str] = None
-    productos: Optional[list] = None
-    total: Optional[float] = None
-    etapa: Optional[str] = None
-
-
 class CrmWebhookEvent(BaseModel):
     """Root payload for the `message.received` event from the CRM."""
 
@@ -198,6 +153,10 @@ class CrmWebhookEvent(BaseModel):
     reply: Optional[CrmReply] = None
     handoff: Optional[CrmHandoff] = None
     recompra: Optional[CrmRecompra] = None
-    asignacion: Optional[CrmAsignacion] = None
-    cliente: Optional[CrmCliente] = None
-    pedidos_pendientes: list[CrmPedidoPendiente] = []
+    # Optional CONTEXT blocks (zone map, known-client, pending orders). Kept as raw dict/list ON
+    # PURPOSE: the CRM enriches these with new/variant fields (e.g. ultimo_pedido came as an object,
+    # not a string), and a strict submodel would 422 the WHOLE message.received event over an optional
+    # extra. Downstream reads them with .get()/iteration, so raw is enough and can never drop a message.
+    asignacion: Optional[dict] = None
+    cliente: Optional[dict] = None
+    pedidos_pendientes: list = []
