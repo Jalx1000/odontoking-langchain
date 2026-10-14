@@ -70,13 +70,15 @@ _DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "do
 _MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
              "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
 
-# Placeholders in c21.md ({{OFICINA}} / {{UMBRAL}} / {{UBICACION}}). {{OFICINA}} renders the full public
-# brand name the client sees; {{UBICACION}} is the fixed Google Maps link of the building (one building,
-# one location), sent with every property info message. All configurable via env, with sensible defaults
-# so the client never sees a raw placeholder. Adjust UMBRAL to the real derivation threshold.
+# Placeholders in c21.md ({{OFICINA}} / {{UMBRAL}} / {{UBICACION}} / {{DIRECCION}}). {{OFICINA}} renders
+# the full public brand name; {{UBICACION}} is the fixed Google Maps link of the building and {{DIRECCION}}
+# its fixed street address (one building, one location) — both go with every property info message so the
+# agent never invents an address. All configurable via env, with sensible defaults so the client never
+# sees a raw placeholder. Adjust UMBRAL to the real derivation threshold.
 _OFICINA = _os.getenv("C21_OFICINA", "Ponce de León")
 _UMBRAL = _os.getenv("C21_UMBRAL", "USD 300.000")
-_UBICACION = _os.getenv("C21_UBICACION_URL", "https://maps.app.goo.gl/X6teQyAFL4AhcHmQ9")
+_UBICACION = _os.getenv("C21_UBICACION_URL", "https://maps.app.goo.gl/V9QChMTcsWJvxrHn9?g_st=iwb")
+_DIRECCION = _os.getenv("C21_DIRECCION", "Avenida Piraí, a cuadra y media de Country Club, calle Tres Cruces Nº 3960")
 
 with open(_PROMPT_FILE, "r") as _f:
     _PROMPT_TEMPLATE = _f.read()
@@ -133,6 +135,7 @@ def _load_c21_prompt(
         .replace("{{OFICINA}}", _OFICINA)
         .replace("{{UMBRAL}}", _UMBRAL)
         .replace("{{UBICACION}}", _UBICACION)
+        .replace("{{DIRECCION}}", _DIRECCION)
     )
     return rendered + f"\n\n{context}"
 
