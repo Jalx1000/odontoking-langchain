@@ -160,6 +160,9 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
                     nombre_registrado=patient_ctx.get("nombre_registrado"),
                     nombre_whatsapp=patient_ctx.get("nombre_whatsapp"),
                     recompra=patient_ctx.get("recompra"),
+                    asignacion=patient_ctx.get("asignacion"),
+                    cliente=patient_ctx.get("cliente"),
+                    pedidos_pendientes=patient_ctx.get("pedidos_pendientes"),
                     handoff_callback=_on_handoff,
                 )
             )
@@ -285,6 +288,15 @@ async def receive_crm_event(request: Request) -> dict:
     # can confirm the saved address instead of re-asking, and report the client's answer (si/no/baja).
     if event.recompra is not None:
         patient_ctx["recompra"] = event.recompra.model_dump()
+    # Assignment map + known-client + pending orders (CRM publishes them on every event; may be
+    # null/empty). asignacion → user_id per zone (resolved in code); cliente → don't re-ask; pedidos
+    # pendientes → ask sum-vs-separate before opening a new one.
+    if event.asignacion is not None:
+        patient_ctx["asignacion"] = event.asignacion.model_dump()
+    if event.cliente is not None:
+        patient_ctx["cliente"] = event.cliente.model_dump()
+    if event.pedidos_pendientes:
+        patient_ctx["pedidos_pendientes"] = [p.model_dump() for p in event.pedidos_pendientes]
 
     logger.info(
         "crm_message_received",

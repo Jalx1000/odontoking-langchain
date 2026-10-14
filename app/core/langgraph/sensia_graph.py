@@ -98,6 +98,8 @@ def _load_sensia_prompt(
     nombre_registrado: Optional[str] = None,
     nombre_whatsapp: Optional[str] = None,
     recompra: Optional[dict[str, Any]] = None,
+    cliente: Optional[dict[str, Any]] = None,
+    pedidos_pendientes: Optional[list] = None,
 ) -> str:
     """Arma el system prompt: cuerpo ESTÁTICO + bloque VOLÁTIL (fecha/hora + contacto) al final.
 
@@ -151,6 +153,40 @@ def _load_sensia_prompt(
             "Al responder su decisión, llamá a responder_recompra(respuesta='si'|'no'|'baja'). "
             "Si pide volver a recibir recordatorios, llamá a reactivar_recompra().",
         ]
+
+    # Cliente conocido (A3): si el CRM dice que ya compró, le damos sus datos para NO rehacer el alta.
+    if isinstance(cliente, dict) and cliente.get("es_conocido"):
+        datos = []
+        if cliente.get("nombre"):
+            datos.append(f"nombre: {cliente['nombre']}")
+        if cliente.get("ciudad"):
+            datos.append(f"zona: {cliente['ciudad']}")
+        if cliente.get("domicilio"):
+            datos.append(f"domicilio: {cliente['domicilio']}")
+        if cliente.get("bidones_en_su_casa") is not None:
+            datos.append(f"bidones sin devolver: {cliente['bidones_en_su_casa']}")
+        if cliente.get("ultimo_pedido"):
+            datos.append(f"último pedido: {cliente['ultimo_pedido']}")
+        volatile_lines += [
+            "",
+            "# Cliente CONOCIDO (ya compró antes)",
+            "Tenemos sus datos; NO rehagas el alta. Confirmá el domicilio en una línea y preguntá solo "
+            "la cantidad (ver sección ASIGNACIÓN Y CLIENTES CONOCIDOS).",
+        ] + [f"cliente.{d}" for d in datos]
+
+    # Pedidos pendientes (A4): si tiene pedidos sin entregar, hay que preguntar antes de abrir otro.
+    if isinstance(pedidos_pendientes, list) and pedidos_pendientes:
+        resumen = []
+        for p in pedidos_pendientes[:5]:
+            if isinstance(p, dict):
+                desc = p.get("detalle") or p.get("titulo") or f"pedido #{p.get('id')}"
+                resumen.append(f"- #{p.get('id')}: {desc}")
+        volatile_lines += [
+            "",
+            "# Pedidos PENDIENTES (sin entregar) de este cliente",
+            "Si pide algo nuevo, NO abras otro pedido sin preguntar si quiere sumarlo a uno pendiente o "
+            "dejarlo aparte (ver sección ASIGNACIÓN Y CLIENTES CONOCIDOS).",
+        ] + resumen
 
     volatile = "\n".join(volatile_lines)
     # El prefijo estable es exactamente _PROMPT_TEMPLATE.rstrip(); todo lo de abajo es volátil.
@@ -259,6 +295,8 @@ class SensiaAgent:
             nombre_registrado=metadata.get("nombre_registrado"),
             nombre_whatsapp=metadata.get("nombre_whatsapp"),
             recompra=metadata.get("recompra"),
+            cliente=metadata.get("cliente"),
+            pedidos_pendientes=metadata.get("pedidos_pendientes"),
         )
         # C4: acota el historial a un presupuesto de tokens (solo recorta charlas largas).
         # strategy="last" conserva lo más reciente; start_on="human" evita arrancar en un
@@ -359,6 +397,9 @@ class SensiaAgent:
         nombre_registrado: Optional[str] = None,
         nombre_whatsapp: Optional[str] = None,
         recompra: Optional[dict[str, Any]] = None,
+        asignacion: Optional[dict[str, Any]] = None,
+        cliente: Optional[dict[str, Any]] = None,
+        pedidos_pendientes: Optional[list] = None,
         handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
         """Process one WhatsApp message and return Sofía's plain-text reply.
@@ -388,6 +429,11 @@ class SensiaAgent:
                 # Repurchase reminder block (only when a reminder is live). The prompt uses it to
                 # confirm the saved address; responder_recompra reads its URL from here.
                 "recompra": recompra,
+                # Zone→distributor map (A1): tools resolve user_id by city from here, in code.
+                "asignacion": asignacion,
+                # Known-client + pending-orders blocks (A3/A4): surfaced in the prompt's volatile tail.
+                "cliente": cliente,
+                "pedidos_pendientes": pedidos_pendientes,
             },
             # Cap del loop ReAct por turno: 15 super-steps ≈ 7 ciclos chat/tool, de sobra
             # para un turno de venta guiado; frena un runaway de tools antes de quemar tokens

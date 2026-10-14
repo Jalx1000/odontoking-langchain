@@ -80,6 +80,24 @@ _LAST_LEAD_BY_WA: dict[str, int] = {}
 # merges into this draft and re-PUTs the FULL lead. Per-process; cold drafts seed from the lead GET.
 _DRAFT_BY_WA: dict[str, dict[str, Any]] = {}
 
+# Client data worth keeping across orders in the same conversation (so a NEW order after a confirmed
+# one doesn't re-ask name/zone/address). Everything else in the draft (product lines, lead link) is
+# the in-progress order and gets cleared when an order is confirmed.
+_DRAFT_CLIENT_KEYS = ("ciudad", "nombre", "edad", "ubicacion")
+
+
+def _close_order_in_progress(wa: str) -> None:
+    """Cierra el pedido en curso tras CONFIRMARLO: olvida el lead y las líneas de producto, pero
+    conserva los datos del cliente (zona/nombre/domicilio). Así el PRÓXIMO pedido de esta charla se
+    crea NUEVO (POST) en vez de pisar el confirmado, y el agente no vuelve a pedir esos datos.
+    """
+    if not wa:
+        return
+    _LAST_LEAD_BY_WA.pop(wa, None)
+    draft = _DRAFT_BY_WA.get(wa)
+    if draft is not None:
+        _DRAFT_BY_WA[wa] = {k: draft[k] for k in _DRAFT_CLIENT_KEYS if k in draft}
+
 # Canonical zone -> product-city id (the `ciudad_producto_sucursal` values on each product). This
 # attribute is a `warehouses` lookup, so the id IS the warehouse id (a DIFFERENT id space from the
 # pipeline ids above - do not conflate them). A product is available in a zone if its list includes
@@ -175,6 +193,35 @@ def _ctx_conversation_id(config: Optional[RunnableConfig]) -> Optional[int | str
     """CRM conversation id injected via metadata (needed to report the recompra answer)."""
     metadata = (config or {}).get("metadata") or {}
     return metadata.get("conversation_id")
+
+
+def _resolve_user_id(config: Optional[RunnableConfig], ciudad: Optional[str]) -> Optional[int]:
+    """A1: distributor user_id for the order's zone, from the CRM's `asignacion.zonas` map.
+
+    The CRM publishes the up-to-date zone→distributor map on every event; we match by pipeline id
+    (robust to accents/wording) and fall back to the canonical city name. Returns None when there's no
+    map or no match → then we DON'T send user_id and let the CRM assign by zone. Resolved in code (not
+    by the LLM) so a weak model can't hallucinate an id. The CRM validates/corrects regardless.
+    """
+    metadata = (config or {}).get("metadata") or {}
+    asignacion = metadata.get("asignacion") or {}
+    zonas = asignacion.get("zonas") if isinstance(asignacion, dict) else None
+    if not isinstance(zonas, list) or not zonas:
+        return None
+    pipeline = _city_stages(ciudad)["pipeline"]
+    key = _resolve_city_key(ciudad)
+    for z in zonas:
+        if isinstance(z, dict) and _to_int(z.get("pipeline_id")) == pipeline:
+            uid = _to_int(z.get("user_id"))
+            if uid is not None:
+                return uid
+    if key:
+        for z in zonas:
+            if isinstance(z, dict) and _resolve_city_key(z.get("ciudad")) == key:
+                uid = _to_int(z.get("user_id"))
+                if uid is not None:
+                    return uid
+    return None
 
 
 def _normalizar(texto: Any) -> str:
@@ -600,6 +647,7 @@ def _build_lead_body(
     products: dict[str, dict[str, Any]],
     edad: Any = None,
     ubicacion: Optional[str] = None,
+    user_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """Build the FULL lead object for create/update."""
     stages = _city_stages(ciudad)
@@ -631,10 +679,7 @@ def _build_lead_body(
 
         "lead_source_id": _SOURCE_WHATSAPP,
         "lead_type_id": _LEAD_TYPE_VENTA,
-        # A1: NO mandar user_id (Asesor Asignado). El CRM asigna solo al distribuidor que reparte en
-        # la ciudad (lead_pipeline_id). Si lo mandáramos, pisaríamos esa asignación y el pedido quedaría
-        # a nombre del dueño del token (un admin). A2: la ciudad (lead_pipeline_id) SIEMPRE va — es lo
-        # que decide el distribuidor.
+        # A2: la ciudad (lead_pipeline_id) SIEMPRE va — es lo que determina quién reparte.
         "lead_pipeline_id": stages["pipeline"],
         "lead_pipeline_stage_id": stages.get(
             stage_key,
@@ -643,6 +688,12 @@ def _build_lead_body(
         "person": person,
         "entity_type": "leads",
     }
+
+    # A1: user_id del distribuidor de la zona, resuelto desde el mapa asignacion.zonas que publica el
+    # CRM (ver _resolve_user_id). Solo lo mandamos si lo pudimos resolver; si no, lo omitimos y el CRM
+    # asigna por zona. El CRM valida/corrige si no corresponde a la ciudad.
+    if user_id is not None:
+        body["user_id"] = user_id
 
     # Edad del cliente en el atributo custom del lead (`edad_lead`, tipo text, id 68).
     edad_int = _to_int(edad)
@@ -1076,7 +1127,7 @@ async def registrar_pedido(
             body = _build_lead_body(
                 person_id, wa, nombre, titulo_de_pedido, descripcion,
                 ciudad_del_cliente, stage_key, total, products_map, edad=edad_del_cliente,
-                ubicacion=ubicacion_final,
+                ubicacion=ubicacion_final, user_id=_resolve_user_id(config, ciudad_del_cliente),
             )
             lead_id = await _upsert_lead(client, target_lead, body)
             nuevo = target_lead is None
@@ -1087,6 +1138,13 @@ async def registrar_pedido(
             # Remember it so an immediate correction PUTs onto this same lead (see _LAST_LEAD_BY_WA).
             if wa:
                 _LAST_LEAD_BY_WA[wa] = lead_id
+
+            # Pedido CONFIRMADO (no corrección) → queda movido a la etapa "Pedidos confirmado" (stage_key
+            # confirmado). Cerramos el pedido en curso: el PRÓXIMO pedido de esta charla será NUEVO
+            # (POST), conservando los datos del cliente para preguntar solo la cantidad. Una CORRECCIÓN
+            # NO cierra: sigue editando el mismo pedido recién hecho.
+            if es_pedido_confirmado and not es_correccion:
+                _close_order_in_progress(wa)
 
             log.info(
                 "sensia_pedido_registered",
@@ -1515,7 +1573,7 @@ async def actualizar_pedido(
             body = _build_lead_body(
                 person_id, wa, draft.get("nombre"), None, "Pedido en curso (WhatsApp)",
                 draft.get("ciudad"), stage_key, total, products_map, edad=draft.get("edad"),
-                ubicacion=draft.get("ubicacion"),
+                ubicacion=draft.get("ubicacion"), user_id=_resolve_user_id(config, draft.get("ciudad")),
             )
             # El CRM de Sensia NO manda contact.lead_id (llega null), así que lead_ctx suele ser None.
             # Para NO crear un lead nuevo en cada llamada (armado en vivo), reutilizamos el lead que ya
