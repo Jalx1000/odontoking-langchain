@@ -631,7 +631,10 @@ def _build_lead_body(
 
         "lead_source_id": _SOURCE_WHATSAPP,
         "lead_type_id": _LEAD_TYPE_VENTA,
-        "user_id": _city_sales_rep(ciudad),
+        # A1: NO mandar user_id (Asesor Asignado). El CRM asigna solo al distribuidor que reparte en
+        # la ciudad (lead_pipeline_id). Si lo mandáramos, pisaríamos esa asignación y el pedido quedaría
+        # a nombre del dueño del token (un admin). A2: la ciudad (lead_pipeline_id) SIEMPRE va — es lo
+        # que decide el distribuidor.
         "lead_pipeline_id": stages["pipeline"],
         "lead_pipeline_stage_id": stages.get(
             stage_key,
@@ -1090,7 +1093,7 @@ async def registrar_pedido(
                 lead_id=lead_id,
                 lineas=len(products_map),
                 total=total,
-                user_id=_city_sales_rep(ciudad_del_cliente),
+                pipeline=_city_stages(ciudad_del_cliente)["pipeline"],  # el CRM asigna el distribuidor por aquí
                 confirmado=es_pedido_confirmado,
                 nuevo_lead=nuevo,
             )

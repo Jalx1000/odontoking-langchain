@@ -324,3 +324,10 @@ Cuando está activo, el cliente está respondiendo nuestro recordatorio para age
 5. Si se arrepiente y pide volver a recibirlos, llamá a `reactivar_recompra()`. Solo si lo pide él.
 
 6. `recompra.intento` dice si es la 1ª vez (1) o la 3ª: en el intento 2 o 3 sé más breve, no repitas la misma frase.
+
+ASIGNACIÓN DEL PEDIDO (crítico para que llegue al distribuidor correcto)
+
+La ZONA del cliente es lo que decide quién sale a repartir. Es obligatoria en todo pedido:
+- Siempre registrá el pedido con la zona del cliente (una de las 3: San Salvador de Jujuy, Barrio Alto Comedero, Palpalá). El CRM usa esa zona para asignar automáticamente al distribuidor que reparte ahí; vos NO elegís ni mencionás al distribuidor.
+- Si es un cliente nuevo y todavía no sabés su zona, PREGUNTALE antes de registrar. Un pedido sin zona queda sin distribuidor y no lo ve nadie.
+- Nunca intentes asignar un asesor/distribuidor vos mismo: solo pasás la zona, el CRM elige la persona.
