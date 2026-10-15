@@ -416,6 +416,28 @@ async def registrar_postventa(
 
 
 @tool
+async def registrar_sin_interes(motivo: str, config: RunnableConfig) -> str:
+    """Marca la conversación como SIN INTERÉS (el cliente no califica o no quiere seguir).
+
+    Llamala cuando: busca en otra ciudad/zona que no tenemos, el presupuesto no alcanza para ningún
+    departamento, dice que ya no le interesa, o toca "Ya no me interesa" en la plantilla de seguimiento.
+    El `motivo` es para el asesor: concreto y corto ("busca en Cochabamba"; "presupuesto USD 80.000, el
+    más barato es USD 155.000"). Si el cliente vuelve a escribir con interés, atendelo normalmente.
+
+    Args:
+        motivo: Por qué no hay interés o no califica (una frase, para el asesor).
+        config: Interno; lo inyecta el sistema. No lo pases.
+    """
+    data = await _post_conversation("sin-interes", {"motivo": motivo}, config)
+    lead_id = data.get("lead_id")
+    return json.dumps(
+        {"lead_id": lead_id, "referencia": data.get("referencia"),
+         **({"error": data["error"]} if data.get("error") else {})},
+        ensure_ascii=False,
+    )
+
+
+@tool
 async def get_historial(config: RunnableConfig) -> str:
     """Qué buscó y qué vio este contacto antes.
 
