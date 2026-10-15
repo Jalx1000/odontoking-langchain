@@ -492,10 +492,10 @@ async def guardar_telefono(
 
 @tool
 async def derivar_a_asesor(reason: str, codigo: Optional[str] = None) -> str:
-    """Deriva la conversación al asesor TITULAR del inmueble (`codigo`).
+    """Deriva la conversación a un asesor. El CRM asigna quién (el responsable del lead); el `codigo`
+    va solo como referencia. Nunca prometas un nombre de asesor al cliente.
 
-    Si el cliente pide un asesor sin haber elegido inmueble, llamala sin `codigo` (va al asesor de
-    guardia).
+    Si el cliente pide un asesor sin haber elegido inmueble, llamala sin `codigo`.
 
     Usala cuando el cliente pida hablar con una persona, pida rebaja/condiciones especiales, pregunte
     por documentación/gravámenes/riesgos legales, haya un reclamo, o cuando la consulta exceda lo que
@@ -507,7 +507,7 @@ async def derivar_a_asesor(reason: str, codigo: Optional[str] = None) -> str:
 
     Args:
         reason: Motivo en una frase, para que el asesor entienda el contexto sin leer todo el chat.
-        codigo: Código del inmueble cuyo titular debe atender (si aplica).
+        codigo: Código del inmueble de referencia (si aplica); no determina quién atiende.
     """
     # Pure signal: the actual POST /handoff is done by the caller AFTER the client notice is sent
     # (once derived the CRM 409s any further /messages).

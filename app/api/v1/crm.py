@@ -176,7 +176,9 @@ async def receive_crm_event(request: Request) -> dict:
         return {"status": "ignored"}
 
     text = (event.message.text or "").strip()
-    if event.message.type != "text" or not text:
+    # "button" = reply to an approved WhatsApp template (e.g. seguimiento_solicitud); the CRM sends the
+    # button label as `text` and it reopens the 24h window, so we process it like a normal text turn.
+    if event.message.type not in ("text", "button") or not text:
         logger.info("crm_unsupported_message", msg_type=event.message.type)
         return {"status": "ignored"}
 
