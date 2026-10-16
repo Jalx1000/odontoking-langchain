@@ -329,7 +329,9 @@ async def _set_person_attrs(
     if not (isinstance(numbers, list) and numbers):
         numbers = [{"value": wa_id, "label": "work"}] if wa_id else []
     body: dict[str, Any] = {
-        "name": current.get("name") or nombre_val or _PLACEHOLDER_NAME,
+        # El nombre que dio el cliente PISA el de perfil de WhatsApp ("Necromancer", ".", etc.).
+        # Solo si el cliente no dio nombre conservamos el que ya tenía la ficha.
+        "name": nombre_val or current.get("name") or _PLACEHOLDER_NAME,
         "contact_numbers": numbers,
         "entity_type": "persons",
     }
@@ -840,44 +842,31 @@ async def get_promos(ciudad: Optional[str] = None) -> str:
 
 @tool
 async def get_sucursales(ciudad: Optional[str] = None) -> str:
-    """Devuelve las sucursales de Kohlberg (warehouses del CRM) filtradas por ciudad.
+    """Sucursal de retiro por ciudad, desde el endpoint magro del CRM (datos REALES, sin metadata).
 
-    Consulta GET /api/v1/settings/warehouses y filtra por nombre == ciudad. Úsala en dos casos:
-    1) Tras confirmar el pedido, para indicar la sucursal donde el cliente recoge y cancela.
-    2) Cuando el cliente pide hablar con un asesor: pregunta primero la ciudad y comparte SOLO el
-       teléfono de esa ciudad (nunca el de otra, nunca inventes un número).
-
-    No se hace delivery ni entregas a domicilio: el cliente siempre recoge en sucursal.
+    GET /api/v1/kohlberg/sucursales?ciudad=… → {"sucursales": [{ciudad, direccion, horarios,
+    mapa_url, telefono}]}. Cada campo es string o null; el CRM NO inventa ni completa. Úsala tras
+    confirmar (punto de retiro, paso 7) y al derivar (teléfono de esa ciudad). SIN caché: cada
+    llamada trae lo vigente. Si `sucursales` viene vacío, `direccion` es null, o la llamada falla:
+    NO des dirección, un asesor coordina el retiro. Nunca uses /settings/warehouses ni memoria.
 
     Args:
-        ciudad: Ciudad del cliente (texto libre; se normaliza por dentro). Si se omite, devuelve todas.
-
-    Devuelve {"total_encontrados": <n>, "sucursales": [<warehouse>...]}.
+        ciudad: Ciudad del pedido (Tarija, Santa Cruz, Potosí, Oruro, La Paz, Cochabamba, Sucre).
+            No distingue mayúsculas/tildes/espacios. Si se omite, devuelve todas.
     """
     log = logger.bind(tool="get_sucursales", ciudad=(ciudad or "")[:40])
-    # Match on the canonical city name when we recognise it, else on the raw text (mirrors the n8n
-    # exact-name filter). Empty city → return every branch.
-    filtro = _normalizar(_resolve_city_key(ciudad) or ciudad)
+    # Resolvemos el alias a la ciudad canónica (cbba→cochabamba); el endpoint ya ignora
+    # mayúsculas/tildes/espacios. El filtrado por ciudad lo hace el CRM, no acá.
+    ciudad_param = (_resolve_city_key(ciudad) or (ciudad or "")).strip()
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            resp = await _request(
-                client, "GET", "/api/v1/settings/warehouses", params={"sort": "id"}
-            )
+            params = {"ciudad": ciudad_param} if ciudad_param else {}
+            resp = await _request(client, "GET", "/api/v1/kohlberg/sucursales", params=params)
             data = _data(resp)
-            if isinstance(data, dict):
-                data = data.get("data", [])
-            warehouses = [w for w in (data if isinstance(data, list) else []) if isinstance(w, dict)]
-        if filtro:
-            sucursales = [
-                w for w in warehouses if _normalizar(w.get("name") or w.get("nombre")) == filtro
-            ]
-        else:
-            sucursales = warehouses
-        log.info("kohlberg_get_sucursales_ok", encontrados=len(sucursales), total=len(warehouses))
-        return json.dumps(
-            {"filtro_input": ciudad or "", "total_encontrados": len(sucursales), "sucursales": sucursales},
-            ensure_ascii=False,
-        )
+            raw = data.get("sucursales") if isinstance(data, dict) else data
+            sucursales = [s for s in (raw if isinstance(raw, list) else []) if isinstance(s, dict)]
+        log.info("kohlberg_get_sucursales_ok", encontrados=len(sucursales))
+        return json.dumps({"sucursales": sucursales}, ensure_ascii=False)
     except httpx.HTTPStatusError as e:
         log.warning("kohlberg_get_sucursales_http_error", status=e.response.status_code)
         return json.dumps({"sucursales": [], "error": f"api_{e.response.status_code}"}, ensure_ascii=False)
@@ -1418,6 +1407,7 @@ async def actualizar_pedido(
     product_id: Optional[list[int]] = None,
     product_name: Optional[list[str]] = None,
     cantidad_product: Optional[list[int]] = None,
+    interes: Optional[str] = None,
     es_cancelado: bool = False,
 ) -> str:
     """Registra EN VIVO el pedido del cliente: llamala apenas capta CADA dato, sin esperar al final.
@@ -1438,6 +1428,9 @@ async def actualizar_pedido(
         product_id: ids (de get_promos) de TODOS los vinos elegidos hasta ahora, lista completa.
         product_name: nombres exactos (de get_promos), en el mismo orden que product_id.
         cantidad_product: cantidad de cada vino, en el mismo orden.
+        interes: qué busca el cliente en sus palabras (producto, cantidad, ocasión) — p. ej. "Stelar
+            para canastones navideños" o "cotización boda 180 personas". Pasalo apenas lo sepas, aunque
+            NO compre, para que el asesor sepa qué buscaba; queda en la descripción del pedido.
         es_cancelado: True si el cliente cancela el pedido.
     """
     lead_ctx, person_ctx = _ctx_ids(config)
@@ -1462,12 +1455,15 @@ async def actualizar_pedido(
             # Merge the newly-provided data into the draft.
             ciudad_val = (ciudad or "").strip()
             nombre_val = (nombre or "").strip()
+            interes_val = (interes or "").strip()
             if ciudad_val:
                 draft["ciudad"] = ciudad_val
             if nombre_val:
                 draft["nombre"] = nombre_val
             if edad is not None:
                 draft["edad"] = edad
+            if interes_val:
+                draft["interes"] = interes_val
             if product_id:  # full list each time (replaces)
                 draft["ids"] = list(product_id)
                 draft["names"] = list(product_name or [])
@@ -1484,8 +1480,14 @@ async def actualizar_pedido(
                 person_id = await _resolve_person(client, wa, draft.get("nombre"))
 
             stage_key = "cancelado" if es_cancelado else "no_atendido"
+            # Título: nombre del cliente → nombre de perfil → "Cliente" (nunca "Cliente" si hay perfil).
+            # El `nombre` que va a la persona sigue siendo el real (draft), sin el fallback de perfil.
+            etiqueta = draft.get("nombre") or _ctx_contact_name(config) or "Cliente"
+            titulo = f"Pedido Club del Vino - {etiqueta}"
+            # Descripción: el interés que captó el agente; si aún no lo sabe, el genérico.
+            descripcion = draft.get("interes") or "Pedido en curso (WhatsApp)"
             body = _build_lead_body(
-                person_id, wa, draft.get("nombre"), None, "Pedido en curso (WhatsApp)",
+                person_id, wa, draft.get("nombre"), titulo, descripcion,
                 draft.get("ciudad"), stage_key, total, products_map, edad=draft.get("edad"),
             )
             lead_id = await _upsert_lead(client, lead_ctx, body)
