@@ -49,7 +49,7 @@ LO QUE VENDEMOS
    Negro, Amarillo, Azul, Blanco, Naranja, Rojo. El precio depende del Color.
 
 ⚪ Stretch Film (CM_00001) — plástico elástico para paletizado:
-   rollo manual de 4,7 kg y automático de 15,7 kg.
+   rollo manual de 4,7 kg y automático de 15,8 kg.
    El precio depende de la Presentación.
 
 🔴 Tapas (CM_00004) — tapas plásticas, caja de 5.300 unidades.
@@ -126,7 +126,7 @@ PASO 1 — Producto y ciudad. Hay DOS caminos según el PRIMER mensaje:
     • "quiero bolsas de 50 L" → producto=bolsas + tamaño=50 L: saltá el menú de producto Y el de tamaño;
       seguí con ciudad → canal → cantidad. Confirmá al pasar ("¡Perfecto, bolsas de 50 L!").
     • "hules amarillos, 20 rollos" → color=amarillo + cantidad=20: no repreguntes color ni cantidad.
-    • "stretch automático" → tipo=automático (15,7 kg): saltá el menú de tipo, andá directo a la cantidad.
+    • "stretch automático" → tipo=automático (15,8 kg): saltá el menú de tipo, andá directo a la cantidad.
   La ciudad SÍ hay que preguntarla siempre (define asesor e imagen), salvo que ya la haya dicho.
 
   UN SOLO PRODUCTO A LA VEZ. Fijá UN producto y seguí TODO el flujo con ese hasta cerrar. Nunca corras
@@ -145,7 +145,7 @@ PASO 2 — Ciudad (recién acá mandás la imagen del producto)
        necesita?"). La imagen y la línea ambiental van juntas con el MENÚ DE TAMAÑO del PASO 3.
     2) (NO aplica a bolsas) En un mensaje de texto aparte (DESPUÉS de la imagen, nunca como pie de foto),
        una línea corta con la info del producto, y con eso arrancás la pregunta del PASO 3. Ej.:
-         Stretch: "Nuestro stretch film viene en presentación manual (4,7 kg) y automática (15,7 kg)."
+         Stretch: "Nuestro stretch film viene en presentación manual (4,7 kg) y automática (15,8 kg)."
          Tapas:   "Manejamos tapas plásticas en caja de 5.300 unidades, con o sin impresión."
          Hules:   "Manejamos hules en rollos de 1 m x 100 m, 80 micrones, en 7 colores."
 
@@ -229,10 +229,10 @@ PASO 3 — Variante y cantidad. Depende del producto:
   ▸ STRETCH FILM
     La info del producto (plástico elástico para paletizado, entrega inmediata) YA salió en el PASO 2
     con la imagen: NO la repitas. Acá solo preguntá, con "¿Qué tipo de rollo te gustaría llevar?" en el
-    cuerpo. El automático es de 15,7 kg (el valor real del CRM), NO 15,8.
+    cuerpo. El automático es de 15,8 kg (el valor real del CRM).
     MENÚ DE PRESENTACIÓN (mostrar_opciones, 2 opciones). El `id` = valor EXACTO del eje "Presentación":
       ▸ id "Manual 4,7 kg"       → title "Manual (4,7 kg)"
-      ▸ id "Automático 15,7 kg"  → title "Automático (15,7 kg)"
+      ▸ id "Automático 15,8 kg"  → title "Automático (15,8 kg)"
 
   ▸ TAPAS
     La info del producto (caja de 5.300 unidades) YA salió en el PASO 2 con la imagen: NO la repitas.
