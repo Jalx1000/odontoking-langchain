@@ -69,6 +69,12 @@ _CITY_SALES_REP: dict[str, int] = {
 }
 _DEFAULT_SALES_REP = _OWNER_USER_ID  # no/unrecognised zone -> default owner
 
+# Distribuidor por defecto SOLO al CREAR el lead del contacto (su primer mensaje → POST): Huascar.
+# Decisión del CRM (2026-10-21): el agente ya NO rutea por zona. Al actualizar un lead existente (PUT)
+# NO se manda user_id, para que conserve el distribuidor que ya tenga (p.ej. un cliente conocido que
+# el CRM reasignó a su distribuidor, o la asignación por "Distribuye en"). El id es fijo ("nunca cambiará").
+_HUASCAR_USER_ID = 1596
+
 # Last lead this agent registered per WhatsApp id, so a CORRECTION right after ("que sean 3", "me
 # equivoqué") PUTs onto that same lead instead of POSTing a duplicate (the CRM only echoes its own
 # auto-lead in contact.lead_id, not the leads we POST for separate orders). Per-process cache; the
@@ -193,35 +199,6 @@ def _ctx_conversation_id(config: Optional[RunnableConfig]) -> Optional[int | str
     """CRM conversation id injected via metadata (needed to report the recompra answer)."""
     metadata = (config or {}).get("metadata") or {}
     return metadata.get("conversation_id")
-
-
-def _resolve_user_id(config: Optional[RunnableConfig], ciudad: Optional[str]) -> Optional[int]:
-    """A1: distributor user_id for the order's zone, from the CRM's `asignacion.zonas` map.
-
-    The CRM publishes the up-to-date zone→distributor map on every event; we match by pipeline id
-    (robust to accents/wording) and fall back to the canonical city name. Returns None when there's no
-    map or no match → then we DON'T send user_id and let the CRM assign by zone. Resolved in code (not
-    by the LLM) so a weak model can't hallucinate an id. The CRM validates/corrects regardless.
-    """
-    metadata = (config or {}).get("metadata") or {}
-    asignacion = metadata.get("asignacion") or {}
-    zonas = asignacion.get("zonas") if isinstance(asignacion, dict) else None
-    if not isinstance(zonas, list) or not zonas:
-        return None
-    pipeline = _city_stages(ciudad)["pipeline"]
-    key = _resolve_city_key(ciudad)
-    for z in zonas:
-        if isinstance(z, dict) and _to_int(z.get("pipeline_id")) == pipeline:
-            uid = _to_int(z.get("user_id"))
-            if uid is not None:
-                return uid
-    if key:
-        for z in zonas:
-            if isinstance(z, dict) and _resolve_city_key(z.get("ciudad")) == key:
-                uid = _to_int(z.get("user_id"))
-                if uid is not None:
-                    return uid
-    return None
 
 
 def _normalizar(texto: Any) -> str:
@@ -689,9 +666,8 @@ def _build_lead_body(
         "entity_type": "leads",
     }
 
-    # A1: user_id del distribuidor de la zona, resuelto desde el mapa asignacion.zonas que publica el
-    # CRM (ver _resolve_user_id). Solo lo mandamos si lo pudimos resolver; si no, lo omitimos y el CRM
-    # asigna por zona. El CRM valida/corrige si no corresponde a la ciudad.
+    # Distribuidor por defecto: Huascar (_HUASCAR_USER_ID, fijo). El agente ya no rutea por zona; el
+    # CRM reasigna del lado suyo a los clientes conocidos y por "Distribuye en".
     if user_id is not None:
         body["user_id"] = user_id
 
@@ -1124,10 +1100,14 @@ async def registrar_pedido(
             # Ubicación: la que pase el LLM al confirmar, o como fallback la que se guardó en vivo en el
             # draft (actualizar_pedido) — así la dirección de texto no se pierde si no se re-manda acá.
             ubicacion_final = (ubicacion_del_cliente or "").strip() or _DRAFT_BY_WA.get(wa, {}).get("ubicacion")
+            # Owner Huascar SOLO al CREAR el lead (primer contacto → POST). En un PUT sobre un lead
+            # existente NO mandamos user_id: el lead conserva el distribuidor que ya tenga (p.ej. un
+            # cliente conocido reasignado por el CRM).
             body = _build_lead_body(
                 person_id, wa, nombre, titulo_de_pedido, descripcion,
                 ciudad_del_cliente, stage_key, total, products_map, edad=edad_del_cliente,
-                ubicacion=ubicacion_final, user_id=_resolve_user_id(config, ciudad_del_cliente),
+                ubicacion=ubicacion_final,
+                user_id=_HUASCAR_USER_ID if target_lead is None else None,
             )
             lead_id = await _upsert_lead(client, target_lead, body)
             nuevo = target_lead is None
@@ -1570,15 +1550,18 @@ async def actualizar_pedido(
                 person_id = await _resolve_person(client, wa, draft.get("nombre"))
 
             stage_key = "cancelado" if es_cancelado else "no_atendido"
-            body = _build_lead_body(
-                person_id, wa, draft.get("nombre"), None, "Pedido en curso (WhatsApp)",
-                draft.get("ciudad"), stage_key, total, products_map, edad=draft.get("edad"),
-                ubicacion=draft.get("ubicacion"), user_id=_resolve_user_id(config, draft.get("ciudad")),
-            )
             # El CRM de Sensia NO manda contact.lead_id (llega null), así que lead_ctx suele ser None.
             # Para NO crear un lead nuevo en cada llamada (armado en vivo), reutilizamos el lead que ya
             # creamos para esta conversación (_LAST_LEAD_BY_WA). Solo la PRIMERA llamada hace POST.
             target = lead_ctx or _LAST_LEAD_BY_WA.get(wa)
+            # Owner Huascar SOLO al CREAR (primer contacto → POST). En el PUT del armado en vivo NO va
+            # user_id, para no pisar el distribuidor que el lead ya tenga.
+            body = _build_lead_body(
+                person_id, wa, draft.get("nombre"), None, "Pedido en curso (WhatsApp)",
+                draft.get("ciudad"), stage_key, total, products_map, edad=draft.get("edad"),
+                ubicacion=draft.get("ubicacion"),
+                user_id=_HUASCAR_USER_ID if target is None else None,
+            )
             lead_id = await _upsert_lead(client, target, body)
             if lead_id and wa:
                 _LAST_LEAD_BY_WA[wa] = lead_id
