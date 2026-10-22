@@ -167,3 +167,8 @@ class CrmWebhookEvent(BaseModel):
     asignacion: Optional[dict] = None
     cliente: Optional[dict] = None
     pedidos_pendientes: list = []
+    # Productos/precios vigentes por zona (§5) y el pedido abierto de la conversación (§8, decide
+    # POST vs PUT por `lead.is_empty`). Raw por el mismo motivo que los de arriba. El agente los usa
+    # como fuente de verdad; si faltan, cae a get_promos / a su heurística de lead.
+    catalogo: Optional[dict] = None
+    lead: Optional[dict] = None

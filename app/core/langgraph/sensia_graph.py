@@ -102,6 +102,15 @@ def _as_text(value: Any) -> str:
     return str(value)
 
 
+def _format_precio(v: Any) -> str:
+    """Render an ARS price like '$7.500' (miles con punto, sin decimales). Blank → a confirmar."""
+    try:
+        n = int(round(float(v)))
+    except (TypeError, ValueError):
+        return "precio a confirmar"
+    return "$" + f"{n:,}".replace(",", ".")
+
+
 def _load_sensia_prompt(
     wa_id: str,
     *,
@@ -112,6 +121,7 @@ def _load_sensia_prompt(
     recompra: Optional[dict[str, Any]] = None,
     cliente: Optional[dict[str, Any]] = None,
     pedidos_pendientes: Optional[list] = None,
+    catalogo: Optional[dict[str, Any]] = None,
 ) -> str:
     """Arma el system prompt: cuerpo ESTÁTICO + bloque VOLÁTIL (fecha/hora + contacto) al final.
 
@@ -145,6 +155,35 @@ def _load_sensia_prompt(
         )
     else:
         volatile_lines.append("nombre_registrado: null  # pide el nombre del contacto si no lo dio")
+
+    # Catálogo por zona (§5): fuente de verdad de productos y precios. Se renderiza acá para que el
+    # agente ofrezca el producto/precio correcto sin depender de get_promos (que queda de respaldo).
+    if isinstance(catalogo, dict) and catalogo:
+        cat_lines = ["", "# Catálogo (fuente de verdad de productos y precios)"]
+        zonas_cob = catalogo.get("zonas_con_cobertura") or []
+        if zonas_cob:
+            cat_lines.append(
+                "Zonas con cobertura: " + ", ".join(str(z) for z in zonas_cob)
+                + ". NUNCA digas que no hay cobertura ni productos en una de estas zonas."
+            )
+        if catalogo.get("zona_del_cliente"):
+            cat_lines.append(f"Zona que el CRM ya conoce del cliente: {catalogo['zona_del_cliente']}")
+        por_zona = catalogo.get("por_zona")
+        if isinstance(por_zona, dict) and por_zona:
+            cat_lines.append(
+                "Productos por zona (ofrecé el precio y el product_id de la ZONA del cliente; no mezcles zonas):"
+            )
+            for zona, items in por_zona.items():
+                if not isinstance(items, list) or not items:
+                    continue
+                cat_lines.append(f"[{zona}]")
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    precio = it.get("precio_promocion") or it.get("precio")
+                    nombre = it.get("nombre") or it.get("name") or "Producto"
+                    cat_lines.append(f"- id {it.get('product_id')}: {nombre} — {_format_precio(precio)}")
+        volatile_lines += cat_lines
 
     # Recordatorio de recompra: solo cuando el CRM manda el bloque. Le damos al agente los datos para
     # confirmar el domicilio guardado (en vez de re-preguntarlo) y el nº de intento. La URL para
@@ -309,6 +348,7 @@ class SensiaAgent:
             recompra=metadata.get("recompra"),
             cliente=metadata.get("cliente"),
             pedidos_pendientes=metadata.get("pedidos_pendientes"),
+            catalogo=metadata.get("catalogo"),
         )
         # C4: acota el historial a un presupuesto de tokens (solo recorta charlas largas).
         # strategy="last" conserva lo más reciente; start_on="human" evita arrancar en un
@@ -412,6 +452,8 @@ class SensiaAgent:
         asignacion: Optional[dict[str, Any]] = None,
         cliente: Optional[dict[str, Any]] = None,
         pedidos_pendientes: Optional[list] = None,
+        catalogo: Optional[dict[str, Any]] = None,
+        lead: Optional[dict[str, Any]] = None,
         handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
         """Process one WhatsApp message and return Sofía's plain-text reply.
@@ -441,11 +483,16 @@ class SensiaAgent:
                 # Repurchase reminder block (only when a reminder is live). The prompt uses it to
                 # confirm the saved address; responder_recompra reads its URL from here.
                 "recompra": recompra,
-                # Zone→distributor map (A1): tools resolve user_id by city from here, in code.
+                # Assignment block: tools read asignacion.ciudades (stage/pipeline ids) from here, in
+                # code. El CRM asigna el distribuidor; el agente no manda user_id.
                 "asignacion": asignacion,
                 # Known-client + pending-orders blocks (A3/A4): surfaced in the prompt's volatile tail.
                 "cliente": cliente,
                 "pedidos_pendientes": pedidos_pendientes,
+                # Catálogo por zona (§5): fuente de verdad de productos/precios, se muestra en el prompt.
+                # Pedido abierto de la conversación (§8): tools deciden POST vs PUT por lead.is_empty.
+                "catalogo": catalogo,
+                "lead": lead,
             },
             # Cap del loop ReAct por turno: 15 super-steps ≈ 7 ciclos chat/tool, de sobra
             # para un turno de venta guiado; frena un runaway de tools antes de quemar tokens

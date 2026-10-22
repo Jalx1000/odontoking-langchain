@@ -199,6 +199,31 @@ def _ctx_conversation_id(config: Optional[RunnableConfig]) -> Optional[int | str
     return metadata.get("conversation_id")
 
 
+def _ctx_lead(config: Optional[RunnableConfig]) -> Optional[dict]:
+    """Bloque `lead` del evento (§8): el pedido abierto de la conversación, o None."""
+    metadata = (config or {}).get("metadata") or {}
+    lead = metadata.get("lead")
+    return lead if isinstance(lead, dict) else None
+
+
+def _event_lead_decision(config: Optional[RunnableConfig]) -> tuple[Optional[int], bool]:
+    """Decisión POST vs PUT desde el bloque `lead` del evento (§8). Devuelve (target_lead, hay_señal):
+      - bloque ausente / is_empty ambiguo → (None, False): sin señal, el caller usa su heurística.
+      - is_empty True  con id            → (id,   True): PUT sobre el lead abierto vacío.
+      - is_empty False                   → (None, True): POST, pedido nuevo (aunque el anterior siga abierto).
+    Hacer POST con un lead vacío abierto deja 2 pedidos para la misma venta (el bug que el doc evita)."""
+    lead = _ctx_lead(config)
+    if not lead:
+        return None, False
+    lead_id = _to_int(lead.get("id"))
+    is_empty = lead.get("is_empty")
+    if is_empty is True and lead_id is not None:
+        return lead_id, True
+    if is_empty is False:
+        return None, True
+    return None, False
+
+
 def _normalizar(texto: Any) -> str:
     """Lowercase + strip accents + trim (mirrors the n8n `normalizar`)."""
     s = unicodedata.normalize("NFD", str(texto or "").lower())
@@ -220,6 +245,56 @@ def _city_stages(ciudad: Optional[str]) -> dict[str, int]:
     """Pipeline + stage ids for a free-text city; falls back to 'sin ciudad' when unrecognised."""
     key = _resolve_city_key(ciudad)
     return _CITY_STAGES.get(key, _CITY_STAGES["sin ciudad"]) if key else _CITY_STAGES["sin ciudad"]
+
+
+# Mapea las claves de etapa del doc (asignacion.ciudades[].etapas) a las internas que usa el código.
+_STAGE_KEY_FROM_DOC = {
+    "prospectos": "no_atendido",
+    "pedidos-confirmado": "confirmado",
+    "pedido-entregado": "entregado",
+    "pedidos-cancelado": "cancelado",
+}
+
+
+def _ctx_ciudades(config: Optional[RunnableConfig]) -> list:
+    """`asignacion.ciudades` del evento (ids de pipeline/etapas por ciudad), inyectado vía metadata."""
+    metadata = (config or {}).get("metadata") or {}
+    asignacion = metadata.get("asignacion") or {}
+    ciudades = asignacion.get("ciudades") if isinstance(asignacion, dict) else None
+    return ciudades if isinstance(ciudades, list) else []
+
+
+def _city_stages_from_event(
+    config: Optional[RunnableConfig], ciudad: Optional[str]
+) -> Optional[dict[str, int]]:
+    """Etapas/pipeline de la ciudad desde `asignacion.ciudades` del evento (§8). None si no hay match
+    → el caller cae al mapa hardcodeado. No hardcodear ids: cambian entre instalaciones del CRM."""
+    key = _resolve_city_key(ciudad)
+    if not key:
+        return None
+    for c in _ctx_ciudades(config):
+        if not isinstance(c, dict) or _resolve_city_key(c.get("ciudad")) != key:
+            continue
+        pipeline = _to_int(c.get("pipeline_id"))
+        etapas = c.get("etapas")
+        if pipeline is None or not isinstance(etapas, dict):
+            return None
+        stages: dict[str, int] = {"pipeline": pipeline}
+        for doc_key, internal in _STAGE_KEY_FROM_DOC.items():
+            sid = _to_int(etapas.get(doc_key))
+            if sid is not None:
+                stages[internal] = sid
+        if "no_atendido" not in stages:  # sin la etapa base no es usable
+            return None
+        stages.setdefault("sin_interes", stages["no_atendido"])
+        stages.setdefault("otros", stages["no_atendido"])
+        return stages
+    return None
+
+
+def _resolve_stages(config: Optional[RunnableConfig], ciudad: Optional[str]) -> dict[str, int]:
+    """Etapas de la ciudad: del evento si vienen (§8), si no del mapa hardcodeado (respaldo)."""
+    return _city_stages_from_event(config, ciudad) or _city_stages(ciudad)
 
 
 def _city_sales_rep(ciudad: Optional[str]) -> int:
@@ -622,9 +697,11 @@ def _build_lead_body(
     products: dict[str, dict[str, Any]],
     edad: Any = None,
     ubicacion: Optional[str] = None,
+    stages: Optional[dict[str, int]] = None,
 ) -> dict[str, Any]:
-    """Build the FULL lead object for create/update."""
-    stages = _city_stages(ciudad)
+    """Build the FULL lead object for create/update. `stages` viene del evento (§8) si está; si no,
+    cae al mapa hardcodeado de la ciudad."""
+    stages = stages or _city_stages(ciudad)
     etiqueta = (nombre or "Cliente").strip()
 
     # Aseguramos que total sea un número decimal válido.
@@ -726,14 +803,15 @@ async def _move_lead(
     ciudad: Optional[str],
     stage_key: str,
     lead_value: Optional[float] = None,
+    stages: Optional[dict[str, int]] = None,
 ) -> None:
     """Move the lead to the given stage of the city's pipeline and, optionally, set its lead_value.
 
-    Uses the real per-city pipeline + stage ids. Never touches tags: a tag here means delivery type, so
-    tagging with a wrong id mislabels the order (e.g. as 'Delivery' when it's pickup-only). Krayin
-    accepts this partial PUT (same shape the IMPRIMIR agent uses in production).
+    `stages` viene del evento (§8) si está; si no, cae al mapa hardcodeado. Never touches tags: a tag
+    here means delivery type, so tagging with a wrong id mislabels the order (e.g. as 'Delivery' when
+    it's pickup-only). Krayin accepts this partial PUT (same shape the IMPRIMIR agent uses in prod).
     """
-    stages = _city_stages(ciudad)
+    stages = stages or _city_stages(ciudad)
     body: dict[str, Any] = {"lead_pipeline_id": stages["pipeline"]}
     stage_id = stages.get(stage_key)
     if stage_id is not None:
@@ -1011,7 +1089,8 @@ async def registrar_pedido(
                         client, fresh_lead, "Pedido cancelado",
                         [("Cliente", nombre), ("Ciudad", ciudad_del_cliente), ("Detalle", mensaje)],
                     )
-                    await _move_lead(client, fresh_lead, ciudad_del_cliente, "cancelado")
+                    await _move_lead(client, fresh_lead, ciudad_del_cliente, "cancelado",
+                                     stages=_resolve_stages(config, ciudad_del_cliente))
                 except Exception as e:  # noqa: BLE001
                     log.warning("registrar_pedido_cancel_note_failed", lead_id=fresh_lead, error=str(e))
                 log.info("sensia_pedido_cancelado", lead_id=fresh_lead)
@@ -1080,14 +1159,20 @@ async def registrar_pedido(
             # full corrected list (the client restated the whole order), never POST — that's what made
             # #1772/#1773 duplicates. Prefer the lead we remembered; fall back to contact.lead_id.
             wa = _ctx_wa_id(config)
+            ev_target, ev_signal = _event_lead_decision(config)
+            ev_lead_id = _to_int((_ctx_lead(config) or {}).get("id"))
             if es_correccion:
-                target_lead = _LAST_LEAD_BY_WA.get(wa) or lead_ctx
+                # Corrección = PUT sobre el pedido en curso: lo recordado, o el lead del evento, o lead_ctx.
+                target_lead = _LAST_LEAD_BY_WA.get(wa) or ev_lead_id or lead_ctx
                 log.info("registrar_pedido_correccion", target_lead=target_lead,
-                         remembered=_LAST_LEAD_BY_WA.get(wa), lead_ctx=lead_ctx)
+                         remembered=_LAST_LEAD_BY_WA.get(wa), ev_lead_id=ev_lead_id, lead_ctx=lead_ctx)
+            elif ev_signal:
+                # §8: el bloque `lead` del evento manda — is_empty:true → PUT sobre él; is_empty:false → POST.
+                target_lead = ev_target
+                log.info("registrar_pedido_event_lead", target_lead=target_lead, ev_lead_id=ev_lead_id)
             else:
-                # Converger al lead en progreso: el CRM de Sensia no manda contact.lead_id, así que
-                # actualizar_pedido armó el pedido en un lead recordado en _LAST_LEAD_BY_WA. Al confirmar
-                # PUT sobre ESE mismo lead en vez de crear otro (evita el registro múltiple del pedido).
+                # Sin señal del evento (CRM viejo/ausente): heurística previa. Converger al lead en
+                # progreso (fresh auto-lead o el recordado) para no duplicar el pedido.
                 target_lead = fresh_lead or _LAST_LEAD_BY_WA.get(wa)
             stage_key = "confirmado" if es_pedido_confirmado else "no_atendido"
             # Ubicación: la que pase el LLM al confirmar, o como fallback la que se guardó en vivo en el
@@ -1097,7 +1182,7 @@ async def registrar_pedido(
             body = _build_lead_body(
                 person_id, wa, nombre, titulo_de_pedido, descripcion,
                 ciudad_del_cliente, stage_key, total, products_map, edad=edad_del_cliente,
-                ubicacion=ubicacion_final,
+                ubicacion=ubicacion_final, stages=_resolve_stages(config, ciudad_del_cliente),
             )
             lead_id = await _upsert_lead(client, target_lead, body)
             nuevo = target_lead is None
@@ -1543,12 +1628,15 @@ async def actualizar_pedido(
             # El CRM de Sensia NO manda contact.lead_id (llega null), así que lead_ctx suele ser None.
             # Para NO crear un lead nuevo en cada llamada (armado en vivo), reutilizamos el lead que ya
             # creamos para esta conversación (_LAST_LEAD_BY_WA). Solo la PRIMERA llamada hace POST.
-            target = lead_ctx or _LAST_LEAD_BY_WA.get(wa)
+            # §8: si el evento trae el lead abierto vacío (is_empty:true) → PUT sobre él; si no, el lead
+            # ya recordado de esta conversación (o lead_ctx). La 1ª llamada sin lead previo hace POST.
+            ev_target, _ = _event_lead_decision(config)
+            target = ev_target or lead_ctx or _LAST_LEAD_BY_WA.get(wa)
             # No mandamos user_id: el CRM asigna el distribuidor (ver constante de asignación arriba).
             body = _build_lead_body(
                 person_id, wa, draft.get("nombre"), None, "Pedido en curso (WhatsApp)",
                 draft.get("ciudad"), stage_key, total, products_map, edad=draft.get("edad"),
-                ubicacion=draft.get("ubicacion"),
+                ubicacion=draft.get("ubicacion"), stages=_resolve_stages(config, draft.get("ciudad")),
             )
             lead_id = await _upsert_lead(client, target, body)
             if lead_id and wa:

@@ -163,6 +163,8 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
                     asignacion=patient_ctx.get("asignacion"),
                     cliente=patient_ctx.get("cliente"),
                     pedidos_pendientes=patient_ctx.get("pedidos_pendientes"),
+                    catalogo=patient_ctx.get("catalogo"),
+                    lead=patient_ctx.get("lead"),
                     handoff_callback=_on_handoff,
                 )
             )
@@ -311,6 +313,12 @@ async def receive_crm_event(request: Request) -> dict:
         patient_ctx["cliente"] = event.cliente
     if event.pedidos_pendientes:
         patient_ctx["pedidos_pendientes"] = event.pedidos_pendientes
+    # Catálogo por zona (§5, el agente lo muestra en vez de llamar get_promos) y el pedido abierto de
+    # la conversación (§8, decide POST vs PUT). Ambos opcionales; el agente cae a sus respaldos si faltan.
+    if event.catalogo is not None:
+        patient_ctx["catalogo"] = event.catalogo
+    if event.lead is not None:
+        patient_ctx["lead"] = event.lead
 
     logger.info(
         "crm_message_received",
