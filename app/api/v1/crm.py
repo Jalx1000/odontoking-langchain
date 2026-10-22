@@ -106,6 +106,18 @@ def _location_text(msg) -> str:
     return ""
 
 
+def _location_full_text(msg) -> str:
+    """Texto listo para `ubicacion_lead` desde un pin 📍 o un link de Maps (§9): prefiere el
+    `message.location.text` preformateado ('<lat>,<lng> | <ref>'); si no está, cae a solo 'lat,lng'
+    (_location_text). Devuelve '' si no hay ubicación en el mensaje."""
+    for loc in (getattr(msg, "location", None), (getattr(msg, "model_extra", None) or {}).get("location")):
+        if isinstance(loc, dict):
+            t = str(loc.get("text") or "").strip()
+            if t:
+                return t
+    return _location_text(msg)
+
+
 def _is_duplicate_message(msg_id: str) -> bool:
     """Return True if this msg_id was already processed within the dedup TTL window."""
     now = time.monotonic()
@@ -258,19 +270,20 @@ async def receive_crm_event(request: Request) -> dict:
     # Accept text AND interactive (button/list replies): the CRM puts the selected option's label in
     # `message.text` for interactive messages, so a city/option picker resolves to plain text.
     text = (event.message.text or "").strip()
-    # WhatsApp location pin: turn it into text the agent can act on. If the CRM included coordinates
-    # we pass "lat,lng" (the agent stores it in ubicacion_lead); if it didn't (today's case), we ask
-    # the client to type the address so the agent NEVER stays silent on a shared location.
-    if not text and event.message.type == "location":
-        coords = _location_text(event.message)
-        if coords:
-            text = f"Mi ubicación: {coords}"
-            logger.info("crm_location_coords", conversation_id=event.conversation_id, coords=coords)
-        else:
-            text = ("[El cliente compartió su ubicación por el mapa, pero no llegaron las coordenadas. "
-                    "Pedile amablemente que escriba su dirección en texto: barrio, calle, número y una "
-                    "referencia.]")
-            logger.info("crm_location_no_coords", conversation_id=event.conversation_id)
+    # Ubicación (§9): si el CRM parseó un pin 📍 o un link de Google Maps, viene `message.location`
+    # con un `text` preformateado "<lat>,<lng> | <ref>" — ESO es lo que va a ubicacion_lead. Puede
+    # llegar con type=location (pin) o type=text (link de Maps), así que miramos `location` SIEMPRE y,
+    # si está, pisamos el texto (en un link, message.text es la frase del cliente con la URL adentro).
+    loc_text = _location_full_text(event.message)
+    if loc_text:
+        text = f"Mi ubicación: {loc_text}"
+        logger.info("crm_location_text", conversation_id=event.conversation_id)
+    elif not text and event.message.type == "location":
+        # Pin sin coordenadas (caso viejo): pedimos la dirección por texto para no quedar mudos.
+        text = ("[El cliente compartió su ubicación por el mapa, pero no llegaron las coordenadas. "
+                "Pedile amablemente que escriba su dirección en texto: barrio, calle, número y una "
+                "referencia.]")
+        logger.info("crm_location_no_coords", conversation_id=event.conversation_id)
     if not text or event.message.type not in ("text", "interactive", "location"):
         logger.info("crm_unsupported_message", msg_type=event.message.type)
         return {"status": "ignored"}
