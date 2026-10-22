@@ -58,6 +58,9 @@ class CrmHistoryItem(BaseModel):
     role: str = "user"
     content: str = ""
     type: str = "text"
+    # Quién escribió el mensaje (§4): contact (cliente) | ia (agente) | human (asesor) | sistema.
+    # Un `human` vale como dicho por Sensia. Lo usa el agente cuando consume el history del evento.
+    sender: Optional[str] = None
 
     @field_validator("role", "content", "type", mode="before")
     @classmethod
@@ -146,6 +149,10 @@ class CrmWebhookEvent(BaseModel):
     # no-phone (the safe default that works everywhere).
     gateway: Optional[str] = None
     ai_enabled: bool = True
+    # Regla 1 (§4): flag autoritativo de si es el turno del agente. true = contestar; false = solo
+    # contexto (NO contestar, NO tools, NO registrar). Ya contempla agente apagado + asesor atendiendo.
+    # Optional: CRM viejo / otros tenants no lo mandan → el webhook cae al gate por handoff.open.
+    responder: Optional[bool] = None
     contact: CrmContact
     message: CrmMessage
     history: list[CrmHistoryItem] = []

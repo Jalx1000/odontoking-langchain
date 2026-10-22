@@ -226,15 +226,29 @@ async def receive_crm_event(request: Request) -> dict:
         logger.exception("crm_payload_parse_error", error=str(e))
         raise HTTPException(status_code=422, detail="unparseable message.received payload") from e
 
+    # El asesor escribió desde el CRM (message.sent): es CONTEXTO, nunca un turno del agente. No
+    # contestamos ni llamamos herramientas; el hilo se recupera por el history del evento. Otros
+    # eventos desconocidos se ignoran.
+    if event.event == "message.sent":
+        logger.info("crm_advisor_message_context", conversation_id=event.conversation_id)
+        return {"status": "ok"}
     if event.event != "message.received":
         return {"status": "ignored"}
 
-    # A human advisor is already handling this conversation - stay silent (derivacion-asesor.md §3).
-    if event.handoff and event.handoff.open:
+    # Regla 1 (§4): `responder` es el flag autoritativo de si es el turno del agente (ya contempla
+    # agente apagado + asesor atendiendo). Si el CRM lo manda, lo respetamos tal cual; si NO viene
+    # (CRM viejo / otro tenant), caemos al gate histórico por handoff.open.
+    if event.responder is not None:
+        should_answer = event.responder
+    else:
+        should_answer = not (event.handoff and event.handoff.open)
+    if not should_answer:
         logger.info(
-            "crm_conversation_handed_off_skip",
+            "crm_not_agent_turn_skip",
             conversation_id=event.conversation_id,
-            state=event.handoff.state,
+            responder=event.responder,
+            handoff_open=bool(event.handoff and event.handoff.open),
+            state=event.handoff.state if event.handoff else None,
         )
         return {"status": "ignored"}
 
