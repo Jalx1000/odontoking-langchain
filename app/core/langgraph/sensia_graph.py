@@ -157,6 +157,29 @@ def _load_sensia_prompt(
     else:
         volatile_lines.append("nombre_registrado: null  # pide el nombre del contacto si no lo dio")
 
+    # Zona ya confirmada: señal DETERMINÍSTICA para el modelo (no depende de que infiera del historial).
+    # Si el CRM ya conoce la zona del cliente (catalogo.zona_del_cliente o cliente.ciudad, y es una de las
+    # 3 con cobertura), la fijamos acá y prohibimos repreguntarla. Evita que, al pedir el domicilio, el
+    # modelo confunda la dirección con "eligió un barrio en vez de zona" y vuelva a preguntar la zona.
+    _ZONAS_COBERTURA = {"san salvador de jujuy", "barrio alto comedero", "palpala", "palpalá"}
+    _zona_conf = None
+    for _src in (
+        (catalogo or {}).get("zona_del_cliente") if isinstance(catalogo, dict) else None,
+        (cliente or {}).get("ciudad") if isinstance(cliente, dict) else None,
+    ):
+        if isinstance(_src, str) and _src.strip().lower() in _ZONAS_COBERTURA:
+            _zona_conf = _src.strip()
+            break
+    if _zona_conf:
+        volatile_lines += [
+            "",
+            f"# ZONA YA CONFIRMADA: {_zona_conf}",
+            "La zona del cliente YA está definida. NO vuelvas a preguntarla ni reofrezcas el listado de zonas. "
+            "Si el cliente escribe un barrio o dirección (p. ej. al pedirle el domicilio), eso es su DIRECCIÓN "
+            "DE ENTREGA para esta zona: guardala con actualizar_pedido(ubicacion=…) y seguí; jamás la trates "
+            "como una zona nueva.",
+        ]
+
     # Catálogo por zona (§5): fuente de verdad de productos y precios. Se renderiza acá para que el
     # agente ofrezca el producto/precio correcto sin depender de get_promos (que queda de respaldo).
     if isinstance(catalogo, dict) and catalogo:
