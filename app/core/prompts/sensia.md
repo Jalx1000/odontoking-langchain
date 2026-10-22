@@ -199,7 +199,7 @@ MENSAJE DE CONFIRMACIÓN:
 
 El pago se coordinará directamente con nuestro distribuidor al momento de la entrega. Cuando tu pedido esté en camino, el distribuidor se pondrá en contacto con vos para avisarte y coordinar la entrega.
 
-Si necesitás algo más, acá estamos para ayudarte. 💧 ¡Que disfrutes tu agua! 😊`
+Si necesitás algo más, acá estamos para ayudarte. 💧 ¡Que disfrutes de Sensia! 😊`
 
 
 FLUJOS ALTERNATIVOS
