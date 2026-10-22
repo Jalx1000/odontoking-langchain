@@ -22,10 +22,20 @@ def _reply_url(dest: Destination) -> str:
     return f"{settings.CRM_BASE_URL}/api/v1/whatsapp/conversations/{dest.conversation_id}/messages"
 
 
+def _sanitize_utf8(text: str) -> str:
+    """Drop lone surrogates / bytes that aren't valid UTF-8, preservando los emojis válidos.
+
+    El LLM a veces emite un surrogate suelto (un emoji "cortado"): Python lo serializa como \\udXXX y
+    el CRM (Laravel) tira 500 `JsonEncodingException: Malformed UTF-8` al hacer json_encode del mensaje,
+    así que la respuesta nunca le llega al cliente. Re-encodeando con errors="ignore" se descartan solo
+    esos code points inválidos; el texto legible y los emojis bien formados quedan intactos."""
+    return text.encode("utf-8", "ignore").decode("utf-8", "ignore")
+
+
 async def _post_text(dest: Destination, text: str) -> None:
     """POST the reply text to the CRM. Handle the WhatsApp 24h-window 422 gracefully."""
     url = _reply_url(dest)
-    payload = {"text": text}
+    payload = {"text": _sanitize_utf8(text)}
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
