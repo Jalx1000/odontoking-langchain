@@ -27,6 +27,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
+    HumanMessage,
     SystemMessage,
     ToolMessage,
     trim_messages,
@@ -244,6 +245,24 @@ def _load_sensia_prompt(
     return _PROMPT_TEMPLATE.rstrip() + "\n\n" + volatile
 
 
+def _history_to_messages(history: Optional[list]) -> list[BaseMessage]:
+    """Mapea el `history` del evento (§4) a mensajes LangChain, usando `sender` como guía:
+    contact → Human; ia/human/sistema → AI (un `human`/asesor vale como dicho por Sensia). Entradas
+    vacías se omiten. Es la fuente de verdad del contexto de la conversación (reemplaza al checkpointer)."""
+    msgs: list[BaseMessage] = []
+    for h in history or []:
+        if not isinstance(h, dict):
+            continue
+        content = str(h.get("content") or "").strip()
+        if not content:
+            continue
+        sender = str(h.get("sender") or "").lower()
+        role = str(h.get("role") or "").lower()
+        is_agent_side = sender in ("ia", "human", "sistema") or (not sender and role == "assistant")
+        msgs.append(AIMessage(content=content) if is_agent_side else HumanMessage(content=content))
+    return msgs
+
+
 def _serialize_message(m: BaseMessage) -> str:
     return json.dumps(m.model_dump(), ensure_ascii=False, default=str)
 
@@ -454,6 +473,7 @@ class SensiaAgent:
         pedidos_pendientes: Optional[list] = None,
         catalogo: Optional[dict[str, Any]] = None,
         lead: Optional[dict[str, Any]] = None,
+        history: Optional[list] = None,
         handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
         """Process one WhatsApp message and return Sofía's plain-text reply.
@@ -502,17 +522,40 @@ class SensiaAgent:
         }
 
         try:
-            state = await graph.aget_state(config)
-            existing_count = len(state.values.get("messages", [])) if state and state.values else 0
-
-            if state and state.next:
-                logger.info("sensia_resuming_graph", wa_id=wa_id)
-                response = await graph.ainvoke(Command(resume=messages[-1].content), config=config)
-            else:
+            # §4/§13: el `history` del evento es la FUENTE DE VERDAD del contexto. Si viene, reseteamos el
+            # checkpointer del hilo y sembramos el turno con ese historial + el mensaje actual. Así un turno
+            # que el cliente nunca recibió (p. ej. un 404 al contestar) no puede envenenar los siguientes, y
+            # el agente nunca "recuerda" algo que no se dijo en la conversación real. Si NO viene el history
+            # (CRM viejo/ausente), caemos al checkpointer acumulado de siempre.
+            event_msgs = _history_to_messages(history)
+            if event_msgs:
+                current_text = str(messages[-1].content) if messages else ""
+                # Dedup: a veces el CRM incluye el mensaje actual como último del history.
+                if (isinstance(event_msgs[-1], HumanMessage)
+                        and str(event_msgs[-1].content).strip() == current_text.strip()):
+                    event_msgs = event_msgs[:-1]
+                input_list: list[BaseMessage] = event_msgs + [HumanMessage(content=current_text)]
+                try:
+                    await self.clear_history(wa_id)  # el history del evento reemplaza al checkpointer propio
+                except Exception as clear_err:  # noqa: BLE001
+                    logger.warning("sensia_clear_before_seed_failed", wa_id=wa_id, error=str(clear_err))
+                existing_count = len(input_list)
+                logger.info("sensia_event_history_seed", wa_id=wa_id, history_msgs=len(input_list))
                 response = await graph.ainvoke(
-                    input={"messages": dump_messages(messages), "long_term_memory": ""},
+                    input={"messages": input_list, "long_term_memory": ""},
                     config=config,
                 )
+            else:
+                state = await graph.aget_state(config)
+                existing_count = len(state.values.get("messages", [])) if state and state.values else 0
+                if state and state.next:
+                    logger.info("sensia_resuming_graph", wa_id=wa_id)
+                    response = await graph.ainvoke(Command(resume=messages[-1].content), config=config)
+                else:
+                    response = await graph.ainvoke(
+                        input={"messages": dump_messages(messages), "long_term_memory": ""},
+                        config=config,
+                    )
 
             new_msgs = [
                 m for m in response.get("messages", [])[existing_count:] if isinstance(m, BaseMessage)
@@ -537,9 +580,9 @@ class SensiaAgent:
                             except Exception as e:  # noqa: BLE001
                                 logger.warning("sensia_handoff_callback_failed", wa_id=wa_id, error=str(e))
 
-            ai_messages = [
-                m for m in response.get("messages", []) if isinstance(m, AIMessage) and m.content
-            ]
+            # Solo los mensajes GENERADOS este turno (new_msgs): en el path de history sembramos
+            # AIMessages previos y no queremos devolver uno viejo como si fuera la respuesta de ahora.
+            ai_messages = [m for m in new_msgs if isinstance(m, AIMessage) and m.content]
             if not ai_messages:
                 return "Disculpa, ocurrió un error. ¿Puedes intentarlo de nuevo en un momento?"
 

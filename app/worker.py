@@ -172,6 +172,7 @@ async def _handle_sofocrm_message(payload: dict, agent, handoff_fn) -> None:
         pedidos_pendientes=ctx.get("pedidos_pendientes"),
         catalogo=ctx.get("catalogo"),
         lead=ctx.get("lead"),
+        history=ctx.get("history"),
         handoff_callback=_on_handoff,
     )
     await gateway.send_response(dest, response_text)

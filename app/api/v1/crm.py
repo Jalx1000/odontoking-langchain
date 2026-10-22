@@ -165,6 +165,7 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
                     pedidos_pendientes=patient_ctx.get("pedidos_pendientes"),
                     catalogo=patient_ctx.get("catalogo"),
                     lead=patient_ctx.get("lead"),
+                    history=patient_ctx.get("history"),
                     handoff_callback=_on_handoff,
                 )
             )
@@ -319,6 +320,10 @@ async def receive_crm_event(request: Request) -> dict:
         patient_ctx["catalogo"] = event.catalogo
     if event.lead is not None:
         patient_ctx["lead"] = event.lead
+    # Historial de la conversación (§4, fuente de verdad del contexto): últimos ~15 mensajes con su
+    # `sender`. El agente lo usa para reconstruir el hilo en vez de depender solo de su checkpointer.
+    if event.history:
+        patient_ctx["history"] = [h.model_dump() for h in event.history]
 
     logger.info(
         "crm_message_received",
