@@ -123,7 +123,7 @@ async def _handle_message(payload: dict, agent, tenant_slug: str) -> None:
     except Exception as e:
         logger.exception("worker_agent_error", tenant=tenant_slug, wa_id=wa_id, turn_id=turn_id, error=str(e))
         try:
-            await gateway.send_text(dest, "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.")
+            await gateway.send_text(dest, "Estamos recibiendo muchas consultas en este momento. En breve nos pondremos en contacto con usted para atender su solicitud. ¡Gracias por su paciencia! 🙌.")
         except Exception:
             pass
 

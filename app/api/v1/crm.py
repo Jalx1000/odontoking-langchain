@@ -208,7 +208,7 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
         except Exception as e:
             logger.exception("crm_agent_error", wa_id=wa_id, turn_id=turn_id, error=str(e))
             try:
-                await gateway.send_text(dest, "Disculpe, ocurrió un error. Por favor intente de nuevo en un momento 🙏.")
+                await gateway.send_text(dest, "Estamos recibiendo muchas consultas en este momento. En breve nos pondremos en contacto con usted para atender su solicitud. ¡Gracias por su paciencia! 🙌.")
             except Exception:
                 pass
 
