@@ -33,13 +33,29 @@ async def _post_text(dest: Destination, text: str) -> None:
     }
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(url, json=payload, headers=headers)
-        # 422 = outside the 24h WhatsApp window (free text rejected) or a validation error.
-        # Never retry free text in that case - log and drop.
-        if resp.status_code == 422:
-            logger.warning("crm_reply_rejected", wa_id=dest.wa_id, status=422, body=resp.text[:300])
+        # Errores TERMINALES del CRM: no hay que reintentar (reintentar en vano apila turnos del broker
+        # y puede envenenar la memoria del agente con un turno que el cliente nunca recibió). Loguear y
+        # cortar. Ver integracion-crm §13/§15:
+        #   422 = ventana de 24 h cerrada / validación   409 = conversación derivada o agente apagado
+        #   404 = la conversación o el endpoint no existe (p. ej. un cambio de servidor)
+        if resp.status_code in (404, 409, 422):
+            logger.warning(
+                "crm_reply_not_delivered",
+                wa_id=dest.wa_id,
+                conversation_id=dest.conversation_id,
+                status=resp.status_code,
+                body=resp.text[:300],
+            )
             return
+        # 5xx / 429 / red: transitorio → relanzar para que el broker reintente con espera.
         if not resp.is_success:
-            logger.error("crm_reply_error", wa_id=dest.wa_id, status=resp.status_code, body=resp.text[:300])
+            logger.error(
+                "crm_reply_error",
+                wa_id=dest.wa_id,
+                conversation_id=dest.conversation_id,
+                status=resp.status_code,
+                body=resp.text[:300],
+            )
         resp.raise_for_status()
         logger.info("crm_text_sent", wa_id=dest.wa_id, conversation_id=dest.conversation_id, length=len(text))
 

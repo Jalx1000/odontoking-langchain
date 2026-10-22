@@ -69,11 +69,9 @@ _CITY_SALES_REP: dict[str, int] = {
 }
 _DEFAULT_SALES_REP = _OWNER_USER_ID  # no/unrecognised zone -> default owner
 
-# Distribuidor por defecto SOLO al CREAR el lead del contacto (su primer mensaje → POST): Huascar.
-# Decisión del CRM (2026-10-21): el agente ya NO rutea por zona. Al actualizar un lead existente (PUT)
-# NO se manda user_id, para que conserve el distribuidor que ya tenga (p.ej. un cliente conocido que
-# el CRM reasignó a su distribuidor, o la asignación por "Distribuye en"). El id es fijo ("nunca cambiará").
-_HUASCAR_USER_ID = 1596
+# Asignación de distribuidor: la hace el CRM, SIEMPRE. El agente NUNCA manda user_id ni elige
+# distribuidor (doc integracion-crm §8: "Un user_id que mande el agente se ignora"). El CRM asigna
+# solo: cliente conocido → su distribuidor; nuevo/sin zona → lo reparte el equipo (Huascar por defecto).
 
 # Last lead this agent registered per WhatsApp id, so a CORRECTION right after ("que sean 3", "me
 # equivoqué") PUTs onto that same lead instead of POSTing a duplicate (the CRM only echoes its own
@@ -624,7 +622,6 @@ def _build_lead_body(
     products: dict[str, dict[str, Any]],
     edad: Any = None,
     ubicacion: Optional[str] = None,
-    user_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """Build the FULL lead object for create/update."""
     stages = _city_stages(ciudad)
@@ -666,10 +663,6 @@ def _build_lead_body(
         "entity_type": "leads",
     }
 
-    # Distribuidor por defecto: Huascar (_HUASCAR_USER_ID, fijo). El agente ya no rutea por zona; el
-    # CRM reasigna del lado suyo a los clientes conocidos y por "Distribuye en".
-    if user_id is not None:
-        body["user_id"] = user_id
 
     # Edad del cliente en el atributo custom del lead (`edad_lead`, tipo text, id 68).
     edad_int = _to_int(edad)
@@ -1100,14 +1093,11 @@ async def registrar_pedido(
             # Ubicación: la que pase el LLM al confirmar, o como fallback la que se guardó en vivo en el
             # draft (actualizar_pedido) — así la dirección de texto no se pierde si no se re-manda acá.
             ubicacion_final = (ubicacion_del_cliente or "").strip() or _DRAFT_BY_WA.get(wa, {}).get("ubicacion")
-            # Owner Huascar SOLO al CREAR el lead (primer contacto → POST). En un PUT sobre un lead
-            # existente NO mandamos user_id: el lead conserva el distribuidor que ya tenga (p.ej. un
-            # cliente conocido reasignado por el CRM).
+            # No mandamos user_id: el CRM asigna el distribuidor (ver constante de asignación arriba).
             body = _build_lead_body(
                 person_id, wa, nombre, titulo_de_pedido, descripcion,
                 ciudad_del_cliente, stage_key, total, products_map, edad=edad_del_cliente,
                 ubicacion=ubicacion_final,
-                user_id=_HUASCAR_USER_ID if target_lead is None else None,
             )
             lead_id = await _upsert_lead(client, target_lead, body)
             nuevo = target_lead is None
@@ -1554,13 +1544,11 @@ async def actualizar_pedido(
             # Para NO crear un lead nuevo en cada llamada (armado en vivo), reutilizamos el lead que ya
             # creamos para esta conversación (_LAST_LEAD_BY_WA). Solo la PRIMERA llamada hace POST.
             target = lead_ctx or _LAST_LEAD_BY_WA.get(wa)
-            # Owner Huascar SOLO al CREAR (primer contacto → POST). En el PUT del armado en vivo NO va
-            # user_id, para no pisar el distribuidor que el lead ya tenga.
+            # No mandamos user_id: el CRM asigna el distribuidor (ver constante de asignación arriba).
             body = _build_lead_body(
                 person_id, wa, draft.get("nombre"), None, "Pedido en curso (WhatsApp)",
                 draft.get("ciudad"), stage_key, total, products_map, edad=draft.get("edad"),
                 ubicacion=draft.get("ubicacion"),
-                user_id=_HUASCAR_USER_ID if target is None else None,
             )
             lead_id = await _upsert_lead(client, target, body)
             if lead_id and wa:
