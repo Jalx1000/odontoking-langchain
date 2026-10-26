@@ -110,14 +110,16 @@ _CLASSIC_TOOLS = [
 ]
 
 # WhatsApp native-forms mode: the LLM only detects intent and sends a form; the CRM books, cancels
-# and reschedules. The write tools (create/cancel/reschedule/save/verify) are intentionally NOT
+# and reschedules. The booking write tools (create/cancel/reschedule/save) are intentionally NOT
 # bound so the agent cannot touch citas "por otra vía" — only read tools remain (FAQ + answering
-# cita questions) plus enviar_formulario.
+# cita questions) plus enviar_formulario. verify_insurance IS bound for REACTIVE coverage checks:
+# it only reads/validates a policy (never writes a cita), per the prompt's "SEGURO Y MEMBRESÍA" rule.
 _FORMS_TOOLS = [
     enviar_formulario,
     get_citas,
     get_services,
     get_specialties,
+    verify_insurance,
     sync_transcript_to_crm,
 ]
 
@@ -222,9 +224,11 @@ def _load_odontoking_prompt(
         )
     else:
         context_lines.append("nombre_registrado: null  # pedir el nombre completo al paciente")
-    # Insurance context is classic-mode only: in WhatsApp-forms mode the CRM form handles the
-    # cédula/seguro and there is no verify_insurance tool, so these verify-insurance instructions
-    # would be contradictory noise. Keep them exactly as-is when forms are off.
+    # This insurance PRE-FILL context block is classic-mode only. In WhatsApp-forms mode the CRM
+    # form handles cédula/seguro and insurance is NOT a hard gate on booking; verify_insurance is
+    # still bound there but used REACTIVELY (the agent asks for the carnet fresh in-conversation,
+    # per the prompt's "SEGURO Y MEMBRESÍA" rule), so injecting this hard-gate pre-fill would be
+    # contradictory noise. Keep these instructions exactly as-is when forms are off.
     if not settings.WHATSAPP_FLOWS_ENABLED:
         if ci_paciente:
             context_lines.append(f"ci_paciente_registrada: {ci_paciente}")
