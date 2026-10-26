@@ -430,10 +430,14 @@ async def ensure_lead_registered(
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             all_leads = await _search_leads_by_person(client, int(person_id))
-            # Idempotent: if the person is already in the pipeline (any lead) do not create a
-            # second conversation lead. Safe against Meta/CRM webhook retries.
-            if all_leads:
-                lead_id = all_leads[-1]["id"]
+            # Reuse ONLY an existing CONVERSATION lead (Consulta stage). A cita lead (Agendado/
+            # Atendido/…), a Recepcionista lead or a closed one is NOT a conversation lead: reusing
+            # it would later overwrite its stage. If the person has no Consulta lead (e.g. after a
+            # "para mí" cita their lead moved to "Cita confirmada"), create a fresh one. Idempotent
+            # and safe against Meta/CRM webhook retries.
+            consulta_leads = [ld for ld in all_leads if _lead_stage_id(ld) == _LEAD_STAGE_CONSULTA]
+            if consulta_leads:
+                lead_id = consulta_leads[-1]["id"]
                 log.info("crm_lead_exists_skip_create", lead_id=lead_id)
                 return {"success": True, "lead_id": lead_id, "created": False}
 

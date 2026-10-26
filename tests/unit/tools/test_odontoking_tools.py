@@ -167,19 +167,21 @@ class TestGetDoctors:
             assert result["data"][0]["specialties"] == []
 
     @pytest.mark.asyncio
-    async def test_excludes_doctors_without_availability(self):
+    async def test_returns_all_active_doctors_regardless_of_availability(self):
+        """Every ACTIVE doctor is returned (even with no near-term slots) so a named doctor can be
+        resolved to its id for the booking-form `doctor` prefill; only inactive ones are dropped.
+        has_availability is preserved so callers can still tell.
+        """
         from app.core.langgraph.tools.odontoking import get_doctors
 
         raw = {
             "data": [
-                # kept: active, flagged available, non-empty availability list
                 {"id": 1, "name": "Dr. Disponible", "is_active": True, "has_availability": True, "availability": [{"date": "2026-06-18"}], "specialties": []},
-                # dropped: flag False + empty availability
                 {"id": 2, "name": "Dr. Sin Cupo", "is_active": True, "has_availability": False, "availability": [], "specialties": []},
-                # dropped: flag True but empty availability list (inconsistent backend data)
-                {"id": 3, "name": "Dr. Bandera Mentirosa", "is_active": True, "has_availability": True, "availability": [], "specialties": []},
-                # dropped: fields missing entirely
+                {"id": 3, "name": "Dr. Bandera", "is_active": True, "has_availability": True, "availability": [], "specialties": []},
                 {"id": 4, "name": "Dr. Sin Datos", "is_active": True, "specialties": []},
+                # dropped: inactive doctor
+                {"id": 5, "name": "Dr. Inactivo", "is_active": False, "has_availability": True, "availability": [{"date": "2026-06-18"}], "specialties": []},
             ]
         }
         resp = _make_response(200, raw)
@@ -190,7 +192,8 @@ class TestGetDoctors:
             cls.return_value = client
 
             result = json.loads(await get_doctors.ainvoke({}))
-            assert [d["id"] for d in result["data"]] == [1]
+            assert [d["id"] for d in result["data"]] == [1, 2, 3, 4]
+            assert result["data"][1]["has_availability"] is False
 
 
 class TestGetDoctorSchedule:

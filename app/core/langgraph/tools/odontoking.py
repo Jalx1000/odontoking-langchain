@@ -161,10 +161,12 @@ async def get_doctors() -> str:
                     ],
                 }
                 for d in data
-                # Skip doctors with no availability: the API flags them as
-                # has_availability=False with an empty availability list. Validate both so a
-                # doctor with no real slots is never offered to the patient.
-                if d.get("is_active") and d.get("has_availability") and (d.get("availability") or [])
+                # Return every ACTIVE doctor (keep has_availability in the payload so callers can
+                # still tell). We do NOT drop doctors without near-term slots: the booking form
+                # resolves a prefilled `doctor` id against its own full catalog (which runs past our
+                # window) and simply ignores it if there is no slot. Filtering here would make us
+                # unable to resolve the id of a valid doctor the patient named.
+                if d.get("is_active")
             ]
             logger.info("odontoking_doctors_fetched", count=len(filtered))
             return json.dumps({"data": filtered}, ensure_ascii=False)
