@@ -127,7 +127,9 @@ def test_retry_classifier():
 def test_llm_schema_exposes_flow_and_prefill_not_conversation_id():
     """conversation_id is injected server-side; the LLM-facing schema has flow + prefill params."""
     props = convert_to_openai_tool(enviar_formulario)["function"]["parameters"]["properties"]
-    assert set(props.keys()) == {"flow", "relation", "patient_name", "relationship", "specialty"}
+    assert set(props.keys()) == {
+        "flow", "relation", "patient_name", "relationship", "specialty", "doctor", "date", "time",
+    }
     assert "conversation_id" not in props
 
 
@@ -142,6 +144,9 @@ def test_enviar_formulario_prefill_sent_for_booking():
             "patient_name": "  María Pérez ",
             "relationship": "Hijo",
             "specialty": "   ",          # blank → dropped
+            "doctor": "Dr. Eloy",
+            "date": "2026-10-30",
+            "time": "13:00",
         }))
     assert json.loads(out)["success"] is True
     client = factory.return_value.__aenter__.return_value
@@ -151,6 +156,9 @@ def test_enviar_formulario_prefill_sent_for_booking():
         "relation": "self",
         "patient_name": "María Pérez",
         "relationship": "hijo",
+        "doctor": "Dr. Eloy",
+        "date": "2026-10-30",
+        "time": "13:00",
     }
 
 
