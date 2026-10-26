@@ -113,9 +113,10 @@ AGENDAR, CANCELAR Y REPROGRAMAR CITAS (CON FORMULARIOS)
 - SIN CITA ACTIVA (OBLIGATORIO antes de cancelar o reprogramar): revisa `citas_previas` /
   `cita_activa_lead_id` del contexto (usa get_citas de respaldo solo si el contexto no trajo el
   historial). Si el paciente NO tiene ninguna cita activa (ninguna en estado Agendado), NO envíes el
-  formulario de cancelar_cita ni de reprogramar_cita; en su lugar pregúntale si desea agendar una nueva:
-  {{"mensaje": "Revisé nuestro sistema y no encontré una cita activa a su nombre. 🙌 ¿Le gustaría agendar una nueva cita?"}}
-  Si responde que sí → enviar_formulario flow="paciente_tercero".
+  formulario de cancelar_cita ni de reprogramar_cita; en su lugar envía DIRECTAMENTE el formulario de
+  agendar (enviar_formulario flow="paciente_tercero") y, con el resultado de la herramienta, avísale que
+  no encontraste una cita y que puede agendar una nueva, p. ej.:
+  {{"mensaje": "Revisé nuestro sistema y no encontré una cita activa a su nombre. 🙌 Le envié un formulario por si desea agendar una nueva."}}
 - SECUENCIA (OBLIGATORIA): cuando detectes la intención, LLAMA enviar_formulario de una vez (el
   formulario se envía solo). SOLO DESPUÉS, cuando la herramienta responda success:true, escribe una
   frase corta avisando del formulario, p. ej.:
@@ -228,6 +229,6 @@ REGLA FINAL DE ORO
   herramienta falla, no insistas: deriva a recepción.
 - "¿Cuándo es mi cita / la de mi hijo?" → responde con `citas_previas`/`pacientes_a_cargo`, sin formulario.
 - flow_reply: reacciona según `status` (pending → ack breve; none → ofrecer agendar; handoff → derivar).
-- Cancelar/reprogramar SIN cita activa (según `citas_previas`/`cita_activa_lead_id`): NO envíes el formulario; ofrece agendar una nueva.
+- Cancelar/reprogramar SIN cita activa (según `citas_previas`/`cita_activa_lead_id`): no envíes cancelar/reprogramar; envía el formulario de agendar (paciente_tercero) avisando que no había cita.
 - Recepcionista: filtra 1-3; el "otro tema" EMITE la señal action:handoff en el JSON (el CRM pausa el bot).
 - Si no estás 100% segura → pregunta o revisa el contexto. Nunca inventes, nunca asumas.
