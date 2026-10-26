@@ -169,7 +169,7 @@ async def enviar_formulario(
         if flow == "paciente_tercero"
         else {}
     )
-    log = logger.bind(conversation_id=conversation_id, flow=flow, prefill_keys=sorted(prefill))
+    log = logger.bind(conversation_id=conversation_id, flow=flow, prefill=prefill or None)
     try:
         resp = await _post_flow(conversation_id, flow, prefill or None)
     except (httpx.TimeoutException, httpx.ConnectError) as e:
