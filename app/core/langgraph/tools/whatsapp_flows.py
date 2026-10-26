@@ -9,11 +9,15 @@ addressed through the same CRM base URL and authenticated with the same Sanctum 
 
     POST {CRM_BASE_URL}/api/v1/whatsapp/conversations/{conversation_id}/flows
     Authorization: Bearer <CRM_API_KEY>
-    {"flow": "paciente_tercero" | "cancelar_cita" | "reprogramar_cita"}
+    {"flow": "paciente_tercero" | "cancelar_cita" | "reprogramar_cita",
+     "prefill": {"relation", "patient_name", "relationship", "specialty"}}   # optional
 
-Responses: 200 = sent; 422 = conversation with no patient message in >24h (WhatsApp free-text
-window closed) → derive to reception. `conversation_id` is injected server-side (never provided by
-the LLM), so the model-facing schema exposes only `flow` — matching the function-calling spec.
+`prefill` is OPTIONAL and only used by the "paciente_tercero" (booking) form to pre‑populate what
+the patient already said in chat (who the cita is for + the specialty). The CRM normalizes it and
+IGNORES anything it doesn't recognize — missing/invalid values are safe and never break the form,
+so it degrades gracefully. Responses: 200 = sent; 422 = conversation with no patient message in
+>24h (WhatsApp free-text window closed) → derive to reception. `conversation_id` is injected
+server-side (never provided by the LLM).
 """
 
 from typing import Annotated, Optional
@@ -27,6 +31,37 @@ from app.core.logging import logger
 
 # The three published forms. Keep in sync with docs/agente-flows-instrucciones.md (CRM repo).
 _VALID_FLOWS = {"paciente_tercero", "cancelar_cita", "reprogramar_cita"}
+
+# Canonical `relation` values for the booking form. The CRM also accepts the aliases it listed
+# (para_mi, yo, other, otro) and ignores anything unknown, so this only tidies the obvious cases.
+_RELATION_ALIASES = {
+    "self": "self", "para_mi": "self", "yo": "self", "mi": "self",
+    "tercero": "tercero", "otra_persona": "tercero", "otro": "tercero", "other": "tercero",
+}
+
+
+def _build_prefill(
+    relation: Optional[str],
+    patient_name: Optional[str],
+    relationship: Optional[str],
+    specialty: Optional[str],
+) -> dict[str, str]:
+    """Assemble the booking-form prefill from greeting-derived hints, dropping empty values.
+
+    The CRM ignores values it doesn't recognize (the form still opens), so we only canonicalize the
+    obvious `relation` aliases and strip blanks — never guess.
+    """
+    prefill: dict[str, str] = {}
+    if relation and relation.strip():
+        key = relation.strip().lower()
+        prefill["relation"] = _RELATION_ALIASES.get(key, relation.strip())
+    if patient_name and patient_name.strip():
+        prefill["patient_name"] = patient_name.strip()
+    if relationship and relationship.strip():
+        prefill["relationship"] = relationship.strip().lower()
+    if specialty and specialty.strip():
+        prefill["specialty"] = specialty.strip()
+    return prefill
 
 
 def _is_retryable_flow_error(exc: BaseException) -> bool:
@@ -46,7 +81,9 @@ def _is_retryable_flow_error(exc: BaseException) -> bool:
     retry=retry_if_exception(_is_retryable_flow_error),
     reraise=True,
 )
-async def _post_flow(conversation_id: int, flow: str) -> httpx.Response:
+async def _post_flow(
+    conversation_id: int, flow: str, prefill: Optional[dict[str, str]] = None
+) -> httpx.Response:
     """POST the form request to the CRM conversations endpoint. Retries on transient errors."""
     url = f"{settings.CRM_BASE_URL}/api/v1/whatsapp/conversations/{conversation_id}/flows"
     headers = {
@@ -54,8 +91,11 @@ async def _post_flow(conversation_id: int, flow: str) -> httpx.Response:
         "Content-Type": "application/json",
         "Authorization": f"Bearer {settings.CRM_API_KEY}",
     }
+    body: dict[str, object] = {"flow": flow}
+    if prefill:
+        body["prefill"] = prefill
     async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(url, json={"flow": flow}, headers=headers)
+        resp = await client.post(url, json=body, headers=headers)
         # 422 is a valid business outcome (window closed), not a transient error → don't retry.
         if resp.status_code != 422:
             resp.raise_for_status()
@@ -65,6 +105,10 @@ async def _post_flow(conversation_id: int, flow: str) -> httpx.Response:
 @tool
 async def enviar_formulario(
     flow: str,
+    relation: Optional[str] = None,
+    patient_name: Optional[str] = None,
+    relationship: Optional[str] = None,
+    specialty: Optional[str] = None,
     conversation_id: Annotated[Optional[int], InjectedToolArg] = None,
 ) -> str:
     """Envía al paciente un formulario de WhatsApp para agendar, cancelar o reprogramar una cita.
@@ -72,9 +116,19 @@ async def enviar_formulario(
     Usar SIEMPRE en lugar de pedir esos datos por chat. El formulario recoge nombre, cédula,
     especialidad, doctor y horario; el CRM crea/cancela/mueve la cita y confirma al paciente.
 
+    Los parámetros de PRE‑LLENADO (relation/patient_name/relationship/specialty) son OPCIONALES y
+    solo aplican a flow="paciente_tercero". Pásalos SOLO con lo que el paciente ya dijo en el chat
+    (nunca inventes): el CRM ignora lo que no reconozca y el formulario abre igual.
+
     Args:
         flow: Uno de "paciente_tercero" (agendar, para el paciente o para otra persona),
             "cancelar_cita" (cancelar) o "reprogramar_cita" (cambiar día u hora).
+        relation: Para quién es la cita: "self" (para el propio paciente) o "tercero" (otra persona).
+        patient_name: Nombre del paciente de la cita (el titular o el tercero), si el paciente lo dio.
+        relationship: Parentesco cuando es un tercero: hijo | padre_madre | pareja | hermano |
+            familiar | otro.
+        specialty: Especialidad (id o nombre del CRM) o "general"/"No sé". Mapea tú la molestia o
+            servicio del paciente a una especialidad; si no puedes mapearla con certeza, omítela.
         conversation_id: Lo inyecta el sistema desde el evento entrante; tú no lo proporcionas.
     """
     if flow not in _VALID_FLOWS:
@@ -87,9 +141,15 @@ async def enviar_formulario(
         logger.warning("enviar_formulario_missing_conversation_id", flow=flow)
         return '{"success": false, "error": "missing_conversation_id", "handoff": true}'
 
-    log = logger.bind(conversation_id=conversation_id, flow=flow)
+    # Prefill only applies to the booking form; the CRM ignores it for cancelar/reprogramar.
+    prefill = (
+        _build_prefill(relation, patient_name, relationship, specialty)
+        if flow == "paciente_tercero"
+        else {}
+    )
+    log = logger.bind(conversation_id=conversation_id, flow=flow, prefill_keys=sorted(prefill))
     try:
-        resp = await _post_flow(conversation_id, flow)
+        resp = await _post_flow(conversation_id, flow, prefill or None)
     except (httpx.TimeoutException, httpx.ConnectError) as e:
         log.warning("enviar_formulario_transient", error=type(e).__name__)
         return '{"success": false, "error": "service_unavailable", "handoff": true}'
