@@ -143,8 +143,9 @@ async def enviar_formulario(
             familiar | otro.
         specialty: Especialidad (id o nombre del CRM) o "general"/"No sé". Mapea tú la molestia o
             servicio del paciente a una especialidad; si no puedes mapearla con certeza, omítela.
-        doctor: Nombre del doctor si el paciente lo pidió ("con el Dr. Eloy"). Identifícalo con
-            get_specialty_doctors/get_doctors y pasa su nombre real; si no lo reconoces, omítelo.
+        doctor: Doctor pedido ("con el Dr. Eloy"). PREFERIBLE su ID del CRM (resuélvelo con get_doctors,
+            p. ej. "21"); también acepta el nombre si coincide con un solo doctor. Si mandas doctor,
+            specialty es opcional (el form toma la del doctor). Omítelo si no lo identificas con certeza.
         date: Día pedido en formato AAAA-MM-DD (convierte "el viernes"/"mañana" con la fecha actual).
         time: Hora pedida en formato HH:MM (24h), p. ej. "13:00". Si el paciente no dio hora, omítela
             (el formulario sugiere el cupo disponible más próximo).

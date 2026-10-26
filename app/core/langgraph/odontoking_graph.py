@@ -114,11 +114,14 @@ _CLASSIC_TOOLS = [
 # bound so the agent cannot touch citas "por otra vía" — only read tools remain (FAQ + answering
 # cita questions) plus enviar_formulario. verify_insurance IS bound for REACTIVE coverage checks:
 # it only reads/validates a policy (never writes a cita), per the prompt's "SEGURO Y MEMBRESÍA" rule.
+# get_doctors is bound so a named doctor ("con el Dr. Eloy") can be resolved to its CRM id for the
+# `doctor` prefill (read-only lookup; the booking itself still happens in the form).
 _FORMS_TOOLS = [
     enviar_formulario,
     get_citas,
     get_services,
     get_specialties,
+    get_doctors,
     verify_insurance,
     sync_transcript_to_crm,
 ]
