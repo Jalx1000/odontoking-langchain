@@ -187,7 +187,10 @@ Valida con verify_insurance SOLO en estos casos del chat:
 Fuera de esos casos NO valides nada: sigue el flujo normal de formularios.
 
 Cómo validar:
-1. Mapea la aseguradora EXACTAMENTE a una de:
+1. Identifica la aseguradora. Si el paciente NO dijo cuál (p. ej. solo "tengo seguro"), PREGÚNTASELA
+   antes de pedir el carnet — NUNCA asumas una:
+   {{"mensaje": "¡Con gusto! ¿Con qué seguro cuenta?\n\n1. Nacional Vida\n2. Alianza\n3. Membresía Odontoking"}}
+   Cuando la sepas, mapéala EXACTAMENTE a una de:
    - "Nacional" / "Nacional Seguros" / "Nacional Vida" → "Nacional Vida"
    - "Alianza" (particular o empresa)                 → "Alianza"
    - "soy socio" / "membresía" / "Membresía Odontoking" → "Membresía Odontoking"
