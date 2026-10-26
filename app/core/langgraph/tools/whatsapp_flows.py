@@ -48,14 +48,15 @@ def _build_prefill(
     doctor: Optional[str],
     date: Optional[str],
     time: Optional[str],
-) -> dict[str, str]:
+) -> dict[str, object]:
     """Assemble the booking-form prefill from greeting-derived hints, dropping empty values.
 
     The CRM ignores values it doesn't recognize (the form still opens), so we only canonicalize the
     obvious `relation` aliases and strip blanks — never guess. `doctor`/`date`/`time` are PREFERENCES:
     the form confirms them against the doctor's real availability (see R9 in the CRM requirement doc).
+    A numeric `doctor` is sent as an int (the CRM expects a numeric id, e.g. 12); a name stays text.
     """
-    prefill: dict[str, str] = {}
+    prefill: dict[str, object] = {}
     if relation and relation.strip():
         key = relation.strip().lower()
         prefill["relation"] = _RELATION_ALIASES.get(key, relation.strip())
@@ -66,7 +67,8 @@ def _build_prefill(
     if specialty and specialty.strip():
         prefill["specialty"] = specialty.strip()
     if doctor and doctor.strip():
-        prefill["doctor"] = doctor.strip()
+        d = doctor.strip()
+        prefill["doctor"] = int(d) if d.isdigit() else d
     if date and date.strip():
         prefill["date"] = date.strip()
     if time and time.strip():
@@ -92,7 +94,7 @@ def _is_retryable_flow_error(exc: BaseException) -> bool:
     reraise=True,
 )
 async def _post_flow(
-    conversation_id: int, flow: str, prefill: Optional[dict[str, str]] = None
+    conversation_id: int, flow: str, prefill: Optional[dict[str, object]] = None
 ) -> httpx.Response:
     """POST the form request to the CRM conversations endpoint. Retries on transient errors."""
     url = f"{settings.CRM_BASE_URL}/api/v1/whatsapp/conversations/{conversation_id}/flows"
