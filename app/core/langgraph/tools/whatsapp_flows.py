@@ -45,11 +45,15 @@ def _build_prefill(
     patient_name: Optional[str],
     relationship: Optional[str],
     specialty: Optional[str],
+    doctor: Optional[str],
+    date: Optional[str],
+    time: Optional[str],
 ) -> dict[str, str]:
     """Assemble the booking-form prefill from greeting-derived hints, dropping empty values.
 
     The CRM ignores values it doesn't recognize (the form still opens), so we only canonicalize the
-    obvious `relation` aliases and strip blanks — never guess.
+    obvious `relation` aliases and strip blanks — never guess. `doctor`/`date`/`time` are PREFERENCES:
+    the form confirms them against the doctor's real availability (see R9 in the CRM requirement doc).
     """
     prefill: dict[str, str] = {}
     if relation and relation.strip():
@@ -61,6 +65,12 @@ def _build_prefill(
         prefill["relationship"] = relationship.strip().lower()
     if specialty and specialty.strip():
         prefill["specialty"] = specialty.strip()
+    if doctor and doctor.strip():
+        prefill["doctor"] = doctor.strip()
+    if date and date.strip():
+        prefill["date"] = date.strip()
+    if time and time.strip():
+        prefill["time"] = time.strip()
     return prefill
 
 
@@ -109,6 +119,9 @@ async def enviar_formulario(
     patient_name: Optional[str] = None,
     relationship: Optional[str] = None,
     specialty: Optional[str] = None,
+    doctor: Optional[str] = None,
+    date: Optional[str] = None,
+    time: Optional[str] = None,
     conversation_id: Annotated[Optional[int], InjectedToolArg] = None,
 ) -> str:
     """Envía al paciente un formulario de WhatsApp para agendar, cancelar o reprogramar una cita.
@@ -116,9 +129,10 @@ async def enviar_formulario(
     Usar SIEMPRE en lugar de pedir esos datos por chat. El formulario recoge nombre, cédula,
     especialidad, doctor y horario; el CRM crea/cancela/mueve la cita y confirma al paciente.
 
-    Los parámetros de PRE‑LLENADO (relation/patient_name/relationship/specialty) son OPCIONALES y
-    solo aplican a flow="paciente_tercero". Pásalos SOLO con lo que el paciente ya dijo en el chat
-    (nunca inventes): el CRM ignora lo que no reconozca y el formulario abre igual.
+    Los parámetros de PRE‑LLENADO son OPCIONALES y solo aplican a flow="paciente_tercero". Pásalos
+    SOLO con lo que el paciente ya dijo en el chat (nunca inventes): el CRM ignora lo que no reconozca
+    y el formulario abre igual. doctor/date/time son PREFERENCIAS: el formulario confirma el cupo
+    según la disponibilidad real del doctor.
 
     Args:
         flow: Uno de "paciente_tercero" (agendar, para el paciente o para otra persona),
@@ -129,6 +143,11 @@ async def enviar_formulario(
             familiar | otro.
         specialty: Especialidad (id o nombre del CRM) o "general"/"No sé". Mapea tú la molestia o
             servicio del paciente a una especialidad; si no puedes mapearla con certeza, omítela.
+        doctor: Nombre del doctor si el paciente lo pidió ("con el Dr. Eloy"). Identifícalo con
+            get_specialty_doctors/get_doctors y pasa su nombre real; si no lo reconoces, omítelo.
+        date: Día pedido en formato AAAA-MM-DD (convierte "el viernes"/"mañana" con la fecha actual).
+        time: Hora pedida en formato HH:MM (24h), p. ej. "13:00". Si el paciente no dio hora, omítela
+            (el formulario sugiere el cupo disponible más próximo).
         conversation_id: Lo inyecta el sistema desde el evento entrante; tú no lo proporcionas.
     """
     if flow not in _VALID_FLOWS:
@@ -143,7 +162,7 @@ async def enviar_formulario(
 
     # Prefill only applies to the booking form; the CRM ignores it for cancelar/reprogramar.
     prefill = (
-        _build_prefill(relation, patient_name, relationship, specialty)
+        _build_prefill(relation, patient_name, relationship, specialty, doctor, date, time)
         if flow == "paciente_tercero"
         else {}
     )

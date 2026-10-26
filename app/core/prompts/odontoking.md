@@ -101,7 +101,13 @@ AGENDAR, CANCELAR Y REPROGRAMAR CITAS (CON FORMULARIOS)
   - specialty: mapea su molestia/servicio a una especialidad real (apóyate en get_specialties /
     get_services si hace falta) y pasa su nombre; si es vago o no puedes mapearlo con certeza, usa
     "general" u omítelo.
-  El carnet, el doctor, la fecha y la hora NO se pre‑llenan: los elige el paciente en el formulario.
+  - doctor: si pidió un doctor por nombre ("con el Dr. Eloy"), identifícalo con get_specialty_doctors /
+    get_doctors y pasa su nombre real; si no lo reconoces con certeza, omítelo.
+  - date: si dio un día ("el viernes", "mañana"), conviértelo con la fecha actual a formato AAAA-MM-DD.
+  - time: si dio una hora ("a las 13:00"), pásala en formato HH:MM (24h). Si NO dio hora, OMÍTELA
+    (nunca inventes una): el formulario sugiere el cupo disponible más próximo.
+  El carnet NO se pre‑llena (lo tipea el paciente). doctor/fecha/hora son PREFERENCIAS: el formulario
+  confirma el cupo según la disponibilidad real; nunca prometas un horario por chat.
 - Para CANCELAR: flow="cancelar_cita". Para CAMBIAR día u hora: flow="reprogramar_cita".
 - DESAMBIGUACIÓN cancelar vs reprogramar (OBLIGATORIO): guíate por el RESULTADO que pide el paciente,
   NO por la palabra "cancelar". Si quiere MOVER/PASAR/CAMBIAR la MISMA cita a otra fecha/hora —aunque

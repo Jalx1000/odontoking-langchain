@@ -45,13 +45,30 @@ Hoy el agente envía `POST {CRM_BASE_URL}/api/v1/whatsapp/conversations/{convers
 - **Qué necesito:** confirmar que el pre‑llenado aplica **solo a `paciente_tercero`** (agendar).
 - **Para qué:** acotar el trabajo; `reprogramar_cita` / `cancelar_cita` no lo necesitan (el paciente elige una cita existente).
 
+### R7 — Prefill de DOCTOR
+- **Qué necesito:** agregar `doctor` como campo de prefill del Flow `paciente_tercero`, y decirnos cómo lo identifican (id del doctor en el CRM, o nombre). Ej.: "con el Dr. Eloy" → el form abre en ese doctor.
+- **Para qué:** que quien ya pide un doctor no tenga que volver a elegirlo.
+
+### R8 — Prefill de FECHA
+- **Qué necesito:** agregar `date` como campo de prefill (díganme el formato, p. ej. `YYYY-MM-DD`). El agente convierte "el viernes" / "mañana" a fecha concreta y la manda.
+- **Para qué:** que el form abra en el día pedido.
+
+### R9 — Prefill de HORA + sugerencia de cupo
+- **Qué necesito:**
+  - agregar `time` como campo de prefill (p. ej. `HH:MM`). Ej.: "a las 13:00" → se manda como preferencia.
+  - **Si NO viene `time`:** que el form **sugiera/preseleccione el cupo disponible más próximo** del doctor/fecha indicados.
+  - Si el paciente **no quiere** ese cupo: que pueda **elegir fecha y hora por separado** (flujo normal del form).
+  - **Degradación (como R4):** si el doctor no existe o la fecha/hora pedida no tiene cupo, el form abre igual mostrando lo disponible — nunca se rompe ni promete un horario inexistente.
+- **Para qué:** que "con el Dr. Eloy el viernes a las 13:00" se resuelva sin empezar de 0, y que la disponibilidad real siga siendo la fuente de verdad.
+
+> Nota de diseño: la **sugerencia del cupo más próximo** vive en el **form** (es quien tiene la agenda real). El agente solo manda doctor/fecha/hora como preferencia tomada del chat; nunca confirma un horario por su cuenta.
+
 ---
 
-## Qué hacemos nosotros al confirmar R1–R6
+## Qué hacemos nosotros al confirmar R1–R9
 
-Cambio pequeño del lado del agente (ya diseñado en `docs/mejoras-odontoking-seguro-y-prefill.md`, "Mejora 2"):
-- `enviar_formulario(flow, prefill=None)` → incluye `prefill` en el body solo cuando hay datos ciertos del chat.
-- Regla en el prompt: si en el saludo el paciente ya dijo para quién / qué necesita, se arma el `prefill` con esos campos (nunca inventados).
+Cambio del lado del agente (diseñado en `docs/mejoras-odontoking-seguro-y-prefill.md`, "Mejora 2"):
+- `enviar_formulario(flow, prefill=…)` → incluye en `prefill` solo datos ciertos del chat: relation, patient_name, relationship, specialty, y —tras R7–R9— doctor, date, time.
+- Regla en el prompt: mapear el doctor mencionado → doctor real (`get_specialty_doctors` / `get_doctors`), "viernes"/"mañana" → fecha, "13:00" → hora; nunca inventar, omitir lo dudoso.
 
-**No desplegamos el lado del agente hasta tener su confirmación de R1–R5**, para evitar inconsistencias.
-</content>
+**No desplegamos doctor/fecha/hora del lado del agente hasta tener su confirmación de R7–R9** (sobre todo el formato de `doctor` y `date`), para evitar inconsistencias. R1–R6 ya están aplicados y desplegados.
