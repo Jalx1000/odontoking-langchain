@@ -271,8 +271,17 @@ para mañana por favor"*. Contiene la palabra "cancelar", pero la intención rea
 - [x] `.format()` del prompt validado.
 - [ ] Test nuevo: "cancelar y moverla para mañana" → `reprogramar_cita` (no `cancelar_cita`). (pendiente)
 
-**Mejora 2 (pre‑llenado) — requiere CRM:** ⏸️ NO aplicado
-- [ ] Confirmar soporte de datos iniciales en los Flows (CRM/Meta).
-- [ ] Confirmar `prefill` en el endpoint `.../flows` (CRM).
-- [ ] Agente: `prefill` opcional en `enviar_formulario` + regla en el prompt.
-- [ ] Tests: `prefill` se envía solo con datos ciertos; backward‑compatible si el CRM lo ignora.
+**Mejora 2 (pre‑llenado) — lado agente APLICADO; R2 (publicar Flow) PENDIENTE del CRM:**
+- [x] CRM confirmó: endpoint acepta `prefill` y las claves desconocidas no dan 4xx (R1/R5).
+- [x] CRM confirmó valores: `relation` self|tercero (+alias), `patient_name` texto, `relationship`
+  hijo|padre_madre|pareja|hermano|familiar|otro, `specialty` id/nombre del CRM o general/No sé (R3,R4,R6).
+- [ ] CRM: **publicar** la nueva versión de `paciente_tercero` con campos ligados (R2) — PENDIENTE.
+- [x] Agente: `prefill` opcional (relation/patient_name/relationship/specialty) en `enviar_formulario`
+  + regla PRE‑LLENADO en el prompt (solo paciente_tercero; nunca inventa; omite lo dudoso).
+- [x] Tests: `prefill` se envía solo en paciente_tercero (canonicalizado, vacíos fuera); ignorado en
+  cancelar/reprogramar; schema LLM expone flow + params de prefill, no conversation_id.
+- [ ] Afinar mapeo servicio→especialidad (hoy: runtime con get_services/get_specialties + fallback
+  "general"); si el CRM nos pasa el catálogo de `specialty`, armamos tabla fija.
+
+> Nota: por R5, el lado del agente es inocuo hasta que el CRM publique el Flow (R2); al publicarlo,
+> el pre‑llenado empieza a verse sin más cambios de nuestro lado.

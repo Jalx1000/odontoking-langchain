@@ -7,7 +7,9 @@ Covers:
 4. Invalid flow value → error, no HTTP call.
 5. Transient failure (timeout) → service_unavailable + handoff.
 6. Retry classifier: 422 is NOT retryable; timeouts / 5xx are.
-7. The LLM-facing schema exposes ONLY `flow` (conversation_id is injected server-side).
+7. The LLM-facing schema exposes flow + prefill params (conversation_id is injected server-side).
+8. Prefill (relation/patient_name/relationship/specialty) is sent only for paciente_tercero,
+   canonicalized with empties dropped, and omitted for cancelar/reprogramar.
 """
 
 import asyncio
@@ -122,7 +124,47 @@ def test_retry_classifier():
     assert _is_retryable_flow_error(httpx.ReadTimeout("x")) is True
 
 
-def test_llm_schema_exposes_only_flow():
-    """conversation_id is injected server-side, so the LLM-facing schema has only `flow`."""
+def test_llm_schema_exposes_flow_and_prefill_not_conversation_id():
+    """conversation_id is injected server-side; the LLM-facing schema has flow + prefill params."""
     props = convert_to_openai_tool(enviar_formulario)["function"]["parameters"]["properties"]
-    assert list(props.keys()) == ["flow"]
+    assert set(props.keys()) == {"flow", "relation", "patient_name", "relationship", "specialty"}
+    assert "conversation_id" not in props
+
+
+def test_enviar_formulario_prefill_sent_for_booking():
+    """paciente_tercero with greeting hints → prefill (canonicalized, empties dropped) in the body."""
+    factory = _async_client(_resp(200))
+    with patch("app.core.langgraph.tools.whatsapp_flows.httpx.AsyncClient", factory):
+        out = _run(enviar_formulario.ainvoke({
+            "flow": "paciente_tercero",
+            "conversation_id": 42,
+            "relation": "para_mi",       # alias → canonical "self"
+            "patient_name": "  María Pérez ",
+            "relationship": "Hijo",
+            "specialty": "   ",          # blank → dropped
+        }))
+    assert json.loads(out)["success"] is True
+    client = factory.return_value.__aenter__.return_value
+    body = client.post.call_args.kwargs["json"]
+    assert body["flow"] == "paciente_tercero"
+    assert body["prefill"] == {
+        "relation": "self",
+        "patient_name": "María Pérez",
+        "relationship": "hijo",
+    }
+
+
+def test_enviar_formulario_prefill_ignored_for_non_booking():
+    """Prefill params are NOT sent for cancelar/reprogramar (the CRM ignores them anyway)."""
+    factory = _async_client(_resp(200))
+    with patch("app.core.langgraph.tools.whatsapp_flows.httpx.AsyncClient", factory):
+        _run(enviar_formulario.ainvoke({
+            "flow": "reprogramar_cita",
+            "conversation_id": 7,
+            "relation": "tercero",
+            "specialty": "ortodoncia",
+        }))
+    client = factory.return_value.__aenter__.return_value
+    body = client.post.call_args.kwargs["json"]
+    assert body == {"flow": "reprogramar_cita"}
+    assert "prefill" not in body
