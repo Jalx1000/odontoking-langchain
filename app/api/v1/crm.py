@@ -231,10 +231,13 @@ async def receive_crm_event(request: Request) -> dict:
         and bool(event.message.flow)
     )
 
+    # A quick-reply button (WhatsApp template reply, e.g. "Sí" to a reminder) arrives as type
+    # "button" (or "interactive") with the chosen label in message.text — treat it as plain text so
+    # the agent can act on it (e.g. confirm a reminder). Anything else without text is unsupported.
     text = (event.message.text or "").strip()
     if is_flow_reply:
         text = _format_flow_reply(event.message.flow or {})
-    elif event.message.type != "text" or not text:
+    elif event.message.type not in ("text", "button", "interactive") or not text:
         logger.info("crm_unsupported_message", msg_type=event.message.type)
         return {"status": "ignored"}
 
