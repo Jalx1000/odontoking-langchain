@@ -126,7 +126,7 @@ async def enviar_formulario(
     date: Optional[str] = None,
     time: Optional[str] = None,
     conversation_id: Annotated[Optional[int], InjectedToolArg] = None,
-    _sin_cita_activa: Annotated[bool, InjectedToolArg] = False,
+    sin_cita_activa: Annotated[bool, InjectedToolArg] = False,
 ) -> str:
     """Envía al paciente un formulario de WhatsApp para agendar, cancelar o reprogramar una cita.
 
@@ -154,6 +154,8 @@ async def enviar_formulario(
         time: Hora pedida en formato HH:MM (24h), p. ej. "13:00". Si el paciente no dio hora, omítela
             (el formulario sugiere el cupo disponible más próximo).
         conversation_id: Lo inyecta el sistema desde el evento entrante; tú no lo proporcionas.
+        sin_cita_activa: Lo inyecta el sistema (no lo proporcionas); marca que el paciente no tiene
+            cita activa para bloquear cancelar/reprogramar.
     """
     if flow not in _VALID_FLOWS:
         logger.warning("enviar_formulario_invalid_flow", flow=str(flow)[:40])
@@ -161,7 +163,7 @@ async def enviar_formulario(
 
     # Guard (injected by the graph): cancelar/reprogramar without an active cita must NOT send the
     # form — the patient has nothing to cancel/move. Signal the agent to offer booking a new one.
-    if _sin_cita_activa and flow in ("cancelar_cita", "reprogramar_cita"):
+    if sin_cita_activa and flow in ("cancelar_cita", "reprogramar_cita"):
         logger.info("enviar_formulario_sin_cita_activa", flow=flow)
         return ('{"success": false, "error": "sin_cita_activa", '
                 '"instruccion": "El paciente no tiene una cita activa. Avísale que no encontraste una '

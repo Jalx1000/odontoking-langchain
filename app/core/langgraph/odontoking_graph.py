@@ -552,7 +552,7 @@ class OdontokingAgent:
                 # Deterministic guard: block cancelar/reprogramar when there is no active cita, so a
                 # weak model can't send the wrong form; the tool returns a "offer booking" signal.
                 if not tiene_cita_activa and args.get("flow") in ("cancelar_cita", "reprogramar_cita"):
-                    args = {**args, "_sin_cita_activa": True}
+                    args = {**args, "sin_cita_activa": True}
             try:
                 result = await self.tools_by_name[tc["name"]].ainvoke(args)
             except GraphBubbleUp:

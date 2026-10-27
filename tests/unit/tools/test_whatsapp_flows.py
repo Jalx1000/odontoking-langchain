@@ -214,7 +214,7 @@ def test_enviar_formulario_sin_cita_activa_no_envia():
     """cancelar/reprogramar con _sin_cita_activa=True no postea y pide ofrecer agendar."""
     with patch("app.core.langgraph.tools.whatsapp_flows.httpx.AsyncClient") as client_cls:
         out = _run(enviar_formulario.ainvoke({
-            "flow": "reprogramar_cita", "conversation_id": 7, "_sin_cita_activa": True,
+            "flow": "reprogramar_cita", "conversation_id": 7, "sin_cita_activa": True,
         }))
     data = json.loads(out)
     assert data["success"] is False
