@@ -42,6 +42,13 @@ async def run_scenario(agent: OdontokingAgent, scenario: dict) -> dict:
                 seguro_paciente=ctx.get("seguro_paciente"),
                 nombre_registrado=ctx.get("nombre_registrado"),
                 nombre_whatsapp=ctx.get("nombre_whatsapp"),
+                # Forms-mode context (optional): lets scenarios exercise reminders (C1/C2),
+                # "no cita activa", and "¿cuándo es mi cita?" without hitting the CRM.
+                citas=ctx.get("citas"),
+                cita_activa=ctx.get("cita_activa"),
+                conversation_id=ctx.get("conversation_id"),
+                pacientes_a_cargo=ctx.get("pacientes_a_cargo"),
+                recordatorios=ctx.get("recordatorios"),
             )
         except Exception as e:
             logger.exception(
