@@ -259,6 +259,13 @@ async def receive_crm_event(request: Request) -> dict:
 
     pacientes_a_cargo = event.patient_context.pacientes_a_cargo if event.patient_context else None
     recordatorios = event.patient_context.recordatorios if event.patient_context else None
+    logger.info(
+        "crm_patient_context_loaded",
+        wa_id=phone,
+        has_patient_context=bool(event.patient_context),
+        recordatorios=len(recordatorios or []),
+        pacientes_a_cargo=len(pacientes_a_cargo or []),
+    )
 
     logger.info(
         "crm_message_received",
