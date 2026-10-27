@@ -75,6 +75,53 @@ async def run_scenario(agent: OdontokingAgent, scenario: dict) -> dict:
     }
 
 
+async def _seed_reminders() -> dict[int, int]:
+    """Re-seed the sandbox reminders and return {conversation_id: activity_id} (respuesta=null).
+
+    The eval reminder scenarios need a pending reminder each run; activity_ids change on every seed,
+    so we read them fresh from the CRM here instead of hardcoding. Best-effort: on failure returns
+    {} and the scenarios keep whatever activity_id they carry.
+    """
+    import httpx
+
+    from app.core.config import settings
+
+    url = f"{settings.CRM_BASE_URL}/api/v1/whatsapp/eval/seed"
+    headers = {"Accept": "application/json", "Authorization": f"Bearer {settings.CRM_API_KEY}"}
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        mapping: dict[int, int] = {}
+        for c in data.get("contactos", []):
+            cid = c.get("conversation_id")
+            rec = (c.get("recordatorios") or [])
+            pending = next((r for r in rec if r.get("respuesta") is None), None)
+            if cid is not None and pending and pending.get("activity_id"):
+                mapping[int(cid)] = int(pending["activity_id"])
+        logger.info("runner_reminders_seeded", mapping=mapping)
+        return mapping
+    except Exception as e:
+        logger.warning("runner_reminder_seed_failed", error=str(e))
+        return {}
+
+
+def _apply_seeded_reminders(scenario: dict, seeded: dict[int, int]) -> None:
+    """Inject the fresh activity_id into a scenario's recordatorios (matched by conversation_id)."""
+    ctx = scenario.get("patient_context", {})
+    recs = ctx.get("recordatorios")
+    if not recs or not seeded:
+        return
+    cid = ctx.get("conversation_id")
+    aid = seeded.get(int(cid)) if cid is not None else None
+    if aid is None:
+        return
+    for r in recs:
+        if isinstance(r, dict) and r.get("respuesta") is None:
+            r["activity_id"] = aid
+
+
 async def run_all_scenarios(scenarios: list[dict] | None = None) -> list[dict]:
     """Instantiate the agent, run all scenarios, and return results."""
     agent = OdontokingAgent()
@@ -82,6 +129,12 @@ async def run_all_scenarios(scenarios: list[dict] | None = None) -> list[dict]:
     results: list[dict] = []
 
     target_scenarios = scenarios or SCENARIOS
+
+    # Re-seed sandbox reminders once per run if any scenario needs one, and patch in fresh ids.
+    if any(s.get("patient_context", {}).get("recordatorios") for s in target_scenarios):
+        seeded = await _seed_reminders()
+        for s in target_scenarios:
+            _apply_seeded_reminders(s, seeded)
     for scenario in target_scenarios:
         logger.info("runner_scenario_start", scenario_id=scenario["id"])
         print(f"  Corriendo: {scenario['id']}")

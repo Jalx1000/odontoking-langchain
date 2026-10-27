@@ -266,15 +266,16 @@ FORMS_SCENARIOS: list[dict] = [
 
     # ───────────────────────── Recordatorios (C1 / C2) ─────────────────────────
     # El recordatorio vive en el CRM (respuesta null). Como los evals llaman get_response directo
-    # (sin webhook que empuje patient_context), inyectamos aquí el recordatorio sembrado.
-    # ⚠️ activity_id CAMBIA en cada `whatsapp:eval-seed` — actualizar tras re-sembrar (CRM guide §10).
+    # (sin webhook que empuje patient_context), inyectamos el recordatorio aquí. El runner re-siembra
+    # con POST /api/v1/whatsapp/eval/seed antes de la corrida y reemplaza `activity_id` por el fresco
+    # (matcheando por conversation_id); el 0 de abajo es solo placeholder.
     {
         "id": "forms_recordatorio_confirma",
         "wa_id": _SANDBOX_CONFIRMA["wa_id"],
         "patient_context": {
             "is_new_patient": False, "nombre_registrado": "Susana Mejía",
             "conversation_id": _SANDBOX_CONFIRMA["conversation_id"],
-            "recordatorios": [{"activity_id": 128397, "lead_id": None, "respuesta": None}],
+            "recordatorios": [{"activity_id": 0, "lead_id": None, "respuesta": None}],
         },
         "turns": ["Si"],
         "success_criteria": "Hay un recordatorio sin contestar (respuesta null): el 'Sí' responde a ESE recordatorio. "
@@ -288,7 +289,7 @@ FORMS_SCENARIOS: list[dict] = [
         "patient_context": {
             "is_new_patient": False, "nombre_registrado": "Pedro Gil",
             "conversation_id": _SANDBOX_NO_ASISTE["conversation_id"],
-            "recordatorios": [{"activity_id": 128399, "lead_id": None, "respuesta": None}],
+            "recordatorios": [{"activity_id": 0, "lead_id": None, "respuesta": None}],
         },
         "turns": ["No, no voy a poder ir"],
         "success_criteria": "Hay un recordatorio sin contestar: el 'No' responde a esa cita. El agente debe registrar "
