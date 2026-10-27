@@ -216,20 +216,21 @@ _REMINDER_YES_STARTS = ("si", "sí", "sip", "confirm", "ok", "oka", "dale", "cla
                         "de acuerdo")
 
 
-def _detect_reminder_reply(text: str, recordatorios: list[dict] | None) -> Optional[tuple[str, int]]:
+def _detect_reminder_reply(text: str, recordatorios: list[dict] | None) -> Optional[tuple[str, Optional[int]]]:
     """Detect a deterministic yes/no reply to a single pending reminder.
 
     If there is exactly ONE unanswered reminder and `text` clearly opens with a yes/no, return
-    (respuesta, activity_id); else None so the LLM handles it (ambiguous text or 0/2+ reminders).
+    (respuesta, activity_id). activity_id may be None: the CRM applies the response to the single
+    pending reminder when no id is given, so we don't hard-require it. Returns None when the text is
+    ambiguous or there are 0 / 2+ pending reminders (so the LLM handles it).
     """
     if not recordatorios:
         return None
     pending = [r for r in recordatorios if isinstance(r, dict) and r.get("respuesta") in (None, "", "null")]
     if len(pending) != 1:
         return None
-    activity_id = pending[0].get("activity_id")
-    if not activity_id:
-        return None
+    raw_id = pending[0].get("activity_id")
+    activity_id = int(raw_id) if raw_id else None  # 0/None → let the CRM resolve the single reminder
     # Normalize: lowercase, strip surrounding punctuation/space; look at the first word(s).
     norm = (text or "").strip().lower().strip("!¡.?¿, ")
     if not norm:
@@ -237,9 +238,9 @@ def _detect_reminder_reply(text: str, recordatorios: list[dict] | None) -> Optio
     first = norm.split()[0].strip(".,!?")
     # Negation wins ties (e.g. "no, gracias"): check NO first.
     if first in _REMINDER_NO_STARTS or norm.startswith(("no ", "no,", "ya no")):
-        return "no_asiste", int(activity_id)
+        return "no_asiste", activity_id
     if first in _REMINDER_YES_STARTS or norm.startswith(("si ", "si,", "sí ", "sí,", "confirm")):
-        return "confirma", int(activity_id)
+        return "confirma", activity_id
     return None
 
 
@@ -789,11 +790,15 @@ class OdontokingAgent:
             hit = _detect_reminder_reply(last_user_text, recordatorios)
             if hit is not None:
                 respuesta, activity_id = hit
-                result = await responder_recordatorio.ainvoke({
+                invoke_args: dict[str, Any] = {
                     "respuesta": respuesta,
-                    "activity_id": activity_id,
                     "conversation_id": conversation_id,
-                })
+                }
+                # Pass activity_id only when known; the CRM applies the reply to the single pending
+                # reminder when it is omitted (so a missing seeded id doesn't block registration).
+                if activity_id is not None:
+                    invoke_args["activity_id"] = activity_id
+                result = await responder_recordatorio.ainvoke(invoke_args)
                 ok = '"success": true' in result or '"success":true' in result
                 if ok and respuesta == "confirma":
                     return "¡Gracias por confirmar su cita! Le esperamos. 🙌"
