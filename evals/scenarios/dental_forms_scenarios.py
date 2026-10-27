@@ -172,9 +172,10 @@ FORMS_SCENARIOS: list[dict] = [
             "Tengo seguro Nacional Vida, ¿me cubre?",
             "Mi carnet es 0000001",
         ],
-        "success_criteria": "Primero pide el carnet (no trata esto como precio). Tras recibir 0000001 debe validar con "
-                            "verify_insurance y, como da VIGENTE para Nacional Vida, confirmar que la cobertura figura "
-                            "vigente y ofrecer agendar.",
+        "success_criteria": "Primero pide el carnet (no trata esto como precio). Tras recibir 0000001, como la "
+                            "cobertura de Nacional Vida da VIGENTE, debe confirmarle al paciente que su cobertura figura "
+                            "vigente y ofrecer agendar. (El agente NO debe mencionar nombres de herramientas internas al "
+                            "paciente; basta con que confirme la vigencia correctamente.)",
         "tags": ["forms", "seguro", "reactivo", "vigente"],
     },
     {
