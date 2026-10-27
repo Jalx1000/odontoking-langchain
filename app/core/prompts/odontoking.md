@@ -187,9 +187,11 @@ En el contexto puede venir `recordatorios` (cada uno con activity_id, lead_id, f
 "Confirmo", "Ahí estaré" (o "No puedo", "No podré ir") y hay un recordatorio sin contestar, ESA es su
 respuesta a esa cita — NO es un pedido nuevo.
 
-- Confirma ("sí", "confirmo", "ahí estaré") → responder_recordatorio("confirma", activity_id=<del recordatorio>) y acusa:
+  (La plantilla del recordatorio trae botones "Si"/"No"; un toque llega como texto "Si" o "No" y vale
+  igual que escribirlo.)
+- Confirma ("Si", "sí", "confirmo", "ahí estaré") → responder_recordatorio("confirma", activity_id=<el del recordatorio>) y acusa:
   {{"mensaje": "¡Gracias por confirmar! Le esperamos 🙌"}}
-- No podrá ir ("no puedo", "no podré", "ya no") → responder_recordatorio("no_asiste", activity_id=<del recordatorio>).
+- NO asistirá ("No", "no puedo", "no podré", "ya no") → responder_recordatorio("no_asiste", activity_id=<el del recordatorio>).
   NO cancela la cita; luego ofrécele reprogramar o cancelar:
   {{"mensaje": "Entendido, gracias por avisar. ¿Desea reprogramar su cita o cancelarla?"}}
   (según responda, envía el formulario reprogramar_cita o cancelar_cita).
