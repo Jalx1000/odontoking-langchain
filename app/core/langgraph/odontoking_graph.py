@@ -206,6 +206,36 @@ def _format_recordatorios(recordatorios: list[dict] | None) -> list[str]:
     return lines
 
 
+# Clear yes/no answers to a reminder. Kept tight on purpose: anything outside these falls through to
+# the LLM (which can disambiguate), so we never mis-register on an ambiguous message.
+_REMINDER_YES = {"si", "sí", "si.", "sí.", "confirmo", "confirmado", "confirma", "ok", "dale",
+                 "ahi estare", "ahí estaré", "asistire", "asistiré", "voy", "sip", "claro"}
+_REMINDER_NO = {"no", "no.", "no puedo", "no podre", "no podré", "no voy", "no asistire",
+                "no asistiré", "ya no", "ya no puedo", "no ire", "no iré"}
+
+
+def _detect_reminder_reply(text: str, recordatorios: list[dict] | None) -> Optional[tuple[str, int]]:
+    """Detect a deterministic yes/no reply to a single pending reminder.
+
+    If there is exactly ONE unanswered reminder and `text` is a clear yes/no, return
+    (respuesta, activity_id); else None so the LLM handles it (ambiguous text or 0/2+ reminders).
+    """
+    if not recordatorios:
+        return None
+    pending = [r for r in recordatorios if isinstance(r, dict) and r.get("respuesta") in (None, "", "null")]
+    if len(pending) != 1:
+        return None
+    activity_id = pending[0].get("activity_id")
+    if not activity_id:
+        return None
+    norm = (text or "").strip().lower().rstrip("!¡.? ")
+    if norm in _REMINDER_YES:
+        return "confirma", int(activity_id)
+    if norm in _REMINDER_NO:
+        return "no_asiste", int(activity_id)
+    return None
+
+
 def _load_odontoking_prompt(
     wa_id: str,
     *,
@@ -729,6 +759,29 @@ class OdontokingAgent:
             )
             if intake_reply is not None:
                 return intake_reply
+
+        # ── Reminder reply short-circuit (C1/C2) ──
+        # A "Sí"/"No" answering an appointment reminder is deterministic: if there is exactly ONE
+        # unanswered reminder and the text is a clear yes/no, register it directly instead of trusting
+        # the LLM (gpt-4o-mini tended to fall into the reception menu here). Ambiguous text or 0/2+
+        # reminders fall through to the LLM.
+        if settings.WHATSAPP_FLOWS_ENABLED and conversation_id:
+            hit = _detect_reminder_reply(last_user_text, recordatorios)
+            if hit is not None:
+                respuesta, activity_id = hit
+                result = await responder_recordatorio.ainvoke({
+                    "respuesta": respuesta,
+                    "activity_id": activity_id,
+                    "conversation_id": conversation_id,
+                })
+                ok = '"success": true' in result or '"success":true' in result
+                if ok and respuesta == "confirma":
+                    return "¡Gracias por confirmar su cita! Le esperamos. 🙌"
+                if ok and respuesta == "no_asiste":
+                    return ("Entendido, gracias por avisar que no podrá asistir. ¿Desea reprogramar su "
+                            "cita para otro día o prefiere cancelarla?")
+                # Tool failed (e.g. multiple_reminders / error): fall through to the LLM.
+                logger.info("reminder_reply_fallthrough", respuesta=respuesta, result=result[:120])
 
         # CONTRATO A: preload the patient's full cita history before invoking the LLM so it is in
         # the system prompt from the first token. Best-effort — never blocks the reply on failure.
