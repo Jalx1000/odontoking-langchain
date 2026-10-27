@@ -24,6 +24,7 @@ from langchain_core.messages import (
 )
 from langchain_core.runnables.config import RunnableConfig
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.errors import GraphBubbleUp, GraphInterrupt, GraphRecursionError
 from langgraph.graph import (
@@ -575,11 +576,16 @@ class OdontokingAgent:
                 if pool:
                     checkpointer = AsyncPostgresSaver(pool)
                     await checkpointer.setup()
+                    checkpointer_kind = "postgres"
                 else:
-                    checkpointer = None
+                    # No Postgres reachable (local dev / evals without the DB up): fall back to an
+                    # in-memory checkpointer so the graph still runs with per-process thread memory,
+                    # instead of raising "No checkpointer set" on every invocation.
+                    checkpointer = MemorySaver()
+                    checkpointer_kind = "memory"
 
                 self._graph = builder.compile(checkpointer=checkpointer, name="OdontokingAgent")
-                logger.info("odontoking_graph_created", has_checkpointer=checkpointer is not None)
+                logger.info("odontoking_graph_created", checkpointer=checkpointer_kind)
             except Exception as e:
                 logger.exception("odontoking_graph_creation_failed", error=str(e))
                 raise
