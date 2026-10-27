@@ -263,7 +263,11 @@ async def receive_crm_event(request: Request) -> dict:
         "crm_patient_context_loaded",
         wa_id=phone,
         has_patient_context=bool(event.patient_context),
-        recordatorios=len(recordatorios or []),
+        recordatorios=[
+            {"activity_id": r.get("activity_id"), "respuesta": r.get("respuesta")}
+            for r in (recordatorios or [])
+            if isinstance(r, dict)
+        ],
         pacientes_a_cargo=len(pacientes_a_cargo or []),
     )
 
