@@ -126,6 +126,7 @@ async def enviar_formulario(
     date: Optional[str] = None,
     time: Optional[str] = None,
     conversation_id: Annotated[Optional[int], InjectedToolArg] = None,
+    _sin_cita_activa: Annotated[bool, InjectedToolArg] = False,
 ) -> str:
     """Envía al paciente un formulario de WhatsApp para agendar, cancelar o reprogramar una cita.
 
@@ -157,6 +158,15 @@ async def enviar_formulario(
     if flow not in _VALID_FLOWS:
         logger.warning("enviar_formulario_invalid_flow", flow=str(flow)[:40])
         return '{"success": false, "error": "invalid_flow"}'
+
+    # Guard (injected by the graph): cancelar/reprogramar without an active cita must NOT send the
+    # form — the patient has nothing to cancel/move. Signal the agent to offer booking a new one.
+    if _sin_cita_activa and flow in ("cancelar_cita", "reprogramar_cita"):
+        logger.info("enviar_formulario_sin_cita_activa", flow=flow)
+        return ('{"success": false, "error": "sin_cita_activa", '
+                '"instruccion": "El paciente no tiene una cita activa. Avísale que no encontraste una '
+                'cita a su nombre y envía el formulario de agendar (flow=paciente_tercero) por si desea '
+                'una nueva."}')
 
     # conversation_id is injected from the inbound event (not from the LLM). Without it we cannot
     # reach the conversation → tell the agent to derive to reception instead of guessing.

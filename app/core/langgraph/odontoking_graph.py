@@ -207,18 +207,19 @@ def _format_recordatorios(recordatorios: list[dict] | None) -> list[str]:
     return lines
 
 
-# Clear yes/no answers to a reminder. Kept tight on purpose: anything outside these falls through to
-# the LLM (which can disambiguate), so we never mis-register on an ambiguous message.
-_REMINDER_YES = {"si", "sí", "si.", "sí.", "confirmo", "confirmado", "confirma", "ok", "dale",
-                 "ahi estare", "ahí estaré", "asistire", "asistiré", "voy", "sip", "claro"}
-_REMINDER_NO = {"no", "no.", "no puedo", "no podre", "no podré", "no voy", "no asistire",
-                "no asistiré", "ya no", "ya no puedo", "no ire", "no iré"}
+# Clear yes/no openers for a reminder reply. We match the START of the (normalized) message so
+# "No, no voy a poder ir" or "Sí, ahí estaré" are caught, while still staying conservative: a message
+# that doesn't clearly open with yes/no (or mixes both) falls through to the LLM.
+_REMINDER_NO_STARTS = ("no", "nop", "ya no")
+_REMINDER_YES_STARTS = ("si", "sí", "sip", "confirm", "ok", "oka", "dale", "claro", "asi es",
+                        "así es", "ahi estare", "ahí estaré", "ahi voy", "voy a ir", "por supuesto",
+                        "de acuerdo")
 
 
 def _detect_reminder_reply(text: str, recordatorios: list[dict] | None) -> Optional[tuple[str, int]]:
     """Detect a deterministic yes/no reply to a single pending reminder.
 
-    If there is exactly ONE unanswered reminder and `text` is a clear yes/no, return
+    If there is exactly ONE unanswered reminder and `text` clearly opens with a yes/no, return
     (respuesta, activity_id); else None so the LLM handles it (ambiguous text or 0/2+ reminders).
     """
     if not recordatorios:
@@ -229,11 +230,16 @@ def _detect_reminder_reply(text: str, recordatorios: list[dict] | None) -> Optio
     activity_id = pending[0].get("activity_id")
     if not activity_id:
         return None
-    norm = (text or "").strip().lower().rstrip("!¡.? ")
-    if norm in _REMINDER_YES:
-        return "confirma", int(activity_id)
-    if norm in _REMINDER_NO:
+    # Normalize: lowercase, strip surrounding punctuation/space; look at the first word(s).
+    norm = (text or "").strip().lower().strip("!¡.?¿, ")
+    if not norm:
+        return None
+    first = norm.split()[0].strip(".,!?")
+    # Negation wins ties (e.g. "no, gracias"): check NO first.
+    if first in _REMINDER_NO_STARTS or norm.startswith(("no ", "no,", "ya no")):
         return "no_asiste", int(activity_id)
+    if first in _REMINDER_YES_STARTS or norm.startswith(("si ", "si,", "sí ", "sí,", "confirm")):
+        return "confirma", int(activity_id)
     return None
 
 
@@ -533,12 +539,20 @@ class OdontokingAgent:
         tool_calls = state.messages[-1].tool_calls
         # conversation_id is injected into enviar_formulario here (never supplied by the LLM): it
         # comes from the inbound event via the graph config metadata.
-        conversation_id = ((config or {}).get("metadata") or {}).get("conversation_id")
+        meta = (config or {}).get("metadata") or {}
+        conversation_id = meta.get("conversation_id")
+        # Whether the patient currently has an active (Agendado) cita. Used to guard cancel/reschedule
+        # forms: sin cita activa, the form must not be sent (the CRM would answer status:none).
+        tiene_cita_activa = bool(meta.get("cita_activa")) or bool(meta.get("citas"))
 
         async def _execute(tc: dict) -> ToolMessage:
             args = tc["args"]
             if tc["name"] == "enviar_formulario" and conversation_id is not None:
                 args = {**args, "conversation_id": conversation_id}
+                # Deterministic guard: block cancelar/reprogramar when there is no active cita, so a
+                # weak model can't send the wrong form; the tool returns a "offer booking" signal.
+                if not tiene_cita_activa and args.get("flow") in ("cancelar_cita", "reprogramar_cita"):
+                    args = {**args, "_sin_cita_activa": True}
             try:
                 result = await self.tools_by_name[tc["name"]].ainvoke(args)
             except GraphBubbleUp:
