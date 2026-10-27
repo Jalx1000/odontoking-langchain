@@ -294,7 +294,9 @@ FORMS_SCENARIOS: list[dict] = [
         },
         "turns": ["No, no voy a poder ir"],
         "success_criteria": "Hay un recordatorio sin contestar: el 'No' responde a esa cita. El agente debe registrar "
-                            "no_asiste y LUEGO ofrecer reprogramar o cancelar con los formularios. No debe cancelar la cita por su cuenta.",
+                            "la no asistencia (es una acción interna/herramienta, no visible al paciente) y ofrecerle "
+                            "reprogramar o cancelar. Para APROBAR basta con que su mensaje reconozca el aviso y ofrezca "
+                            "reprogramar o cancelar; NO exijas que el paciente vea el registro ni que se cancele la cita.",
         "tags": ["forms", "recordatorio", "c2", "no_asiste"],
     },
     {
@@ -324,8 +326,9 @@ FORMS_SCENARIOS: list[dict] = [
                        "servicio": "General", "doctor": "Adriana Soria", "estado": "Agendado"}],
         },
         "turns": ["¿Cuándo es mi cita?"],
-        "success_criteria": "El agente debe responder con los datos de la cita (fecha 05/11, 09:30, Dra. Adriana Soria) "
-                            "leyéndolos del contexto, SIN enviar formulario y SIN volver a preguntar.",
+        "success_criteria": "El agente debe responder con los datos de la cita (fecha 05/11, 09:30, con Adriana Soria) "
+                            "leyéndolos del contexto, SIN enviar formulario y SIN volver a preguntar. No penalices el "
+                            "honorífico Dr./Dra.; lo que importa es la fecha, hora y doctor correctos.",
         "tags": ["forms", "leer_contexto", "get_citas"],
     },
     {
