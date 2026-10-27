@@ -4,15 +4,19 @@ import json
 import os
 from datetime import datetime
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
-
 from app.core.config import settings
 from app.core.logging import logger
 
-_console = Console()
+# rich is a dev/eval-only nicety; the production image does not ship it. Degrade to plain prints
+# when it is missing so evals can run anywhere (e.g. inside the Railway container via ssh).
+try:
+    from rich.console import Console
+
+    _console = Console()
+    _HAS_RICH = True
+except ModuleNotFoundError:
+    _console = None
+    _HAS_RICH = False
 
 _REPORTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
 
@@ -63,8 +67,46 @@ def compile_report(judged_results: list[dict]) -> dict:
     }
 
 
+def _print_plain_report(report: dict) -> None:
+    """Plain-text report (no rich). Used when rich is not installed."""
+    ran_at = report.get("ran_at", "")[:16].replace("T", " ")
+    print("\n=== OdontokingAgent — Reporte de Evaluación ===")
+    print(f"Modelo juez: {report['judge_model']}   Fecha: {ran_at}")
+    print(f"Escenarios: {report['total_scenarios']} total   Pasaron: {report['passed']}   "
+          f"Fallaron: {report['failed']}")
+    print(f"Tasa de éxito: {report['pass_rate']}   Nota promedio: {report['avg_score']}/10\n")
+    for s in report["scenarios"]:
+        score_val = s.get("score")
+        score_str = f"{score_val:.1f}" if score_val is not None else "N/A"
+        if s.get("error"):
+            estado, score_str = "ERROR", "—"
+        elif s.get("passed", False):
+            estado = "PASÓ"
+        else:
+            estado = "FALLÓ"
+        print(f"  {s['id']:45s} {score_str:>5s}  {estado}")
+    for s in report["scenarios"]:
+        if s.get("error"):
+            print(f"\nERROR: {s['id']}\n  {s['error']}")
+    for s in report["scenarios"]:
+        if not s.get("passed", False) and not s.get("error"):
+            score_val = s.get("score")
+            score_str = f"{score_val:.1f}" if score_val is not None else "N/A"
+            print(f"\nFALLÓ: {s['id']} (nota: {score_str})")
+            print(f"  Criterio: {s.get('criteria_reasoning', '—')}")
+            print(f"  Juez: {s.get('summary', '—')}")
+
+
 def print_console_report(report: dict) -> None:
-    """Print a rich-formatted evaluation report to stdout."""
+    """Print the evaluation report to stdout (rich if available, else plain text)."""
+    if not _HAS_RICH:
+        _print_plain_report(report)
+        return
+
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+
     ran_at = report.get("ran_at", "")[:16].replace("T", " ")
 
     header = Panel(
