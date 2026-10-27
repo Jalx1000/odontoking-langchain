@@ -66,7 +66,7 @@ from app.core.langgraph.tools.odontoking import (
     get_specialties,
     get_specialty_doctors,
 )
-from app.core.langgraph.tools.whatsapp_flows import enviar_formulario
+from app.core.langgraph.tools.whatsapp_flows import enviar_formulario, responder_recordatorio
 from app.core.langgraph.booking import advance_booking, start_reschedule
 from app.core.langgraph.intake import (
     advance_intake,
@@ -118,6 +118,7 @@ _CLASSIC_TOOLS = [
 # `doctor` prefill (read-only lookup; the booking itself still happens in the form).
 _FORMS_TOOLS = [
     enviar_formulario,
+    responder_recordatorio,  # registra la respuesta del paciente a un recordatorio de cita (C1/C2)
     get_citas,
     get_services,
     get_specialties,
@@ -183,6 +184,28 @@ def _format_pacientes_a_cargo(pacientes: list[dict] | None) -> list[str]:
     return lines
 
 
+def _format_recordatorios(recordatorios: list[dict] | None) -> list[str]:
+    """Render appointment reminders (C1/C2) so the agent can handle a reply to one.
+
+    A reminder with `respuesta` null is unanswered: a "Sí"/"No" from the patient answers THAT cita
+    → use responder_recordatorio with its activity_id.
+    """
+    if not recordatorios:
+        return []
+    lines = ["recordatorios:  # recordatorios de cita enviados (respuesta null = sin contestar)"]
+    for r in recordatorios:
+        if not isinstance(r, dict):
+            continue
+        aid = r.get("activity_id")
+        lid = r.get("lead_id")
+        fecha = r.get("fecha") or ""
+        hora = r.get("hora") or ""
+        doctor = r.get("doctor") or ""
+        resp = r.get("respuesta") or "sin responder"
+        lines.append(f"  - activity_id={aid} lead_id={lid} {fecha} {hora} {doctor} -> respuesta: {resp}")
+    return lines
+
+
 def _load_odontoking_prompt(
     wa_id: str,
     *,
@@ -195,6 +218,7 @@ def _load_odontoking_prompt(
     citas: list[dict] | None = None,
     cita_activa: int | None = None,
     pacientes_a_cargo: list[dict] | None = None,
+    recordatorios: list[dict] | None = None,
 ) -> str:
     """Render the odontoking system prompt with Bolivia local datetime and patient context."""
     now = datetime.now(_TZ_BOLIVIA)
@@ -264,6 +288,7 @@ def _load_odontoking_prompt(
     # People this contact schedules for (forms mode): lets the agent answer "¿la cita de mi hijo?"
     # without sending a form.
     context_lines.extend(_format_pacientes_a_cargo(pacientes_a_cargo))
+    context_lines.extend(_format_recordatorios(recordatorios))
 
     context = "\n".join(context_lines)
     return _PROMPT_TEMPLATE.format(current_datetime=current_datetime) + f"\n\n{context}"
@@ -444,6 +469,7 @@ class OdontokingAgent:
             citas=metadata.get("citas"),
             cita_activa=metadata.get("cita_activa"),
             pacientes_a_cargo=metadata.get("pacientes_a_cargo"),
+            recordatorios=metadata.get("recordatorios"),
         )
         # When the deterministic intake already collected steps 1-6, inject that data so the
         # LLM continues from step 7 and never re-asks.
@@ -676,6 +702,7 @@ class OdontokingAgent:
         cita_activa: int | None = None,
         conversation_id: int | None = None,
         pacientes_a_cargo: list[dict] | None = None,
+        recordatorios: list[dict] | None = None,
         handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
         """Process a WhatsApp message and return the agent's texto response.
@@ -725,6 +752,7 @@ class OdontokingAgent:
                 "cita_activa": cita_activa,
                 "conversation_id": conversation_id,
                 "pacientes_a_cargo": pacientes_a_cargo,
+                "recordatorios": recordatorios,
                 "intake_handoff": intake_handoff,
             },
             "recursion_limit": 50,

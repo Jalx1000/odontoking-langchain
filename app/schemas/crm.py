@@ -81,6 +81,9 @@ class CrmPatientContext(BaseModel):
 
     pacientes_a_cargo: list[dict] = []
     citas: list[dict] = []
+    # Appointment reminders sent to the patient (activity_id, lead_id, fecha, hora, doctor,
+    # respuesta). `respuesta` is null until the patient answers → drives C1/C2 (confirm / can't attend).
+    recordatorios: list[dict] = []
 
 
 class CrmWebhookEvent(BaseModel):

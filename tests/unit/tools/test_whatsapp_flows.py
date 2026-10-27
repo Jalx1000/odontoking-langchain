@@ -22,6 +22,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from app.core.langgraph.tools.whatsapp_flows import (
     _is_retryable_flow_error,
     enviar_formulario,
+    responder_recordatorio,
 )
 
 
@@ -193,3 +194,25 @@ def test_enviar_formulario_doctor_id_sent_as_int():
     prefill = client.post.call_args.kwargs["json"]["prefill"]
     assert prefill == {"doctor": 12, "date": "2026-10-28", "time": "13:00"}
     assert isinstance(prefill["doctor"], int)
+
+
+def test_responder_recordatorio_confirma():
+    """'confirma' → POST a .../appointments/respond con respuesta + activity_id."""
+    factory = _async_client(_resp(200))
+    with patch("app.core.langgraph.tools.whatsapp_flows.httpx.AsyncClient", factory):
+        out = _run(responder_recordatorio.ainvoke({
+            "respuesta": "confirma", "activity_id": 55, "conversation_id": 9,
+        }))
+    assert json.loads(out) == {"success": True, "respuesta": "confirma"}
+    client = factory.return_value.__aenter__.return_value
+    url = client.post.call_args.args[0]
+    assert url.endswith("/api/v1/whatsapp/conversations/9/appointments/respond")
+    assert client.post.call_args.kwargs["json"] == {"respuesta": "confirma", "activity_id": 55}
+
+
+def test_responder_recordatorio_invalid_respuesta():
+    """Una respuesta desconocida se rechaza local, sin tocar la red."""
+    with patch("app.core.langgraph.tools.whatsapp_flows.httpx.AsyncClient") as client_cls:
+        out = _run(responder_recordatorio.ainvoke({"respuesta": "quizas", "conversation_id": 1}))
+    assert json.loads(out)["error"] == "invalid_respuesta"
+    client_cls.assert_not_called()

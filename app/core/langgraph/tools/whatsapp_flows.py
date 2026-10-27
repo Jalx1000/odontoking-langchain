@@ -20,6 +20,7 @@ so it degrades gracefully. Responses: 200 = sent; 422 = conversation with no pat
 server-side (never provided by the LLM).
 """
 
+import json
 from typing import Annotated, Optional
 
 import httpx
@@ -190,3 +191,78 @@ async def enviar_formulario(
 
     log.info("enviar_formulario_sent", status=resp.status_code)
     return f'{{"success": true, "flow": "{flow}"}}'
+
+
+_VALID_RESPUESTAS = {"confirma", "no_asiste"}
+
+
+@tool
+async def responder_recordatorio(
+    respuesta: str,
+    activity_id: Optional[int] = None,
+    lead_id: Optional[int] = None,
+    conversation_id: Annotated[Optional[int], InjectedToolArg] = None,
+) -> str:
+    """Registra la respuesta del paciente a un recordatorio de cita.
+
+    Úsala SOLO cuando el paciente responde a un recordatorio (mira `recordatorios` en el contexto:
+    un recordatorio con respuesta null está sin contestar):
+    - "confirma": el paciente confirma que asistirá → la cita queda en "Cita confirmada".
+    - "no_asiste": el paciente avisa que NO podrá ir → NO cancela nada, solo deja aviso a recepción;
+      DESPUÉS ofrécele reprogramar o cancelar con el formulario correspondiente.
+
+    Pasa `activity_id` (o `lead_id`) del recordatorio sin contestar. Si lo omites y hay un solo
+    recordatorio pendiente, se aplica a ese; si hay varios, el CRM responde multiple_reminders y debes
+    llamar una vez por cada cita con su activity_id.
+
+    Args:
+        respuesta: "confirma" o "no_asiste".
+        activity_id: id de la actividad/cita del recordatorio (de `recordatorios` en el contexto).
+        lead_id: alternativa al activity_id.
+        conversation_id: lo inyecta el sistema desde el evento entrante; tú no lo proporcionas.
+    """
+    if respuesta not in _VALID_RESPUESTAS:
+        logger.warning("responder_recordatorio_invalid", respuesta=str(respuesta)[:40])
+        return '{"success": false, "error": "invalid_respuesta"}'
+    if not conversation_id:
+        logger.warning("responder_recordatorio_missing_conversation_id")
+        return '{"success": false, "error": "missing_conversation_id", "handoff": true}'
+
+    body: dict[str, object] = {"respuesta": respuesta}
+    if activity_id:
+        body["activity_id"] = activity_id
+    if lead_id:
+        body["lead_id"] = lead_id
+    url = f"{settings.CRM_BASE_URL}/api/v1/whatsapp/conversations/{conversation_id}/appointments/respond"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {settings.CRM_API_KEY}",
+    }
+    log = logger.bind(
+        conversation_id=conversation_id, respuesta=respuesta, activity_id=activity_id, lead_id=lead_id
+    )
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(url, json=body, headers=headers)
+    except (httpx.TimeoutException, httpx.ConnectError) as e:
+        log.warning("responder_recordatorio_transient", error=type(e).__name__)
+        return '{"success": false, "error": "service_unavailable", "handoff": true}'
+    except Exception as e:
+        log.exception("responder_recordatorio_failed", error=str(e))
+        return '{"success": false, "error": "unexpected", "handoff": true}'
+
+    # 422 = more than one unanswered reminder: the CRM returns the list so the agent calls once per
+    # cita with its activity_id. Not a transient error.
+    if resp.status_code == 422:
+        log.info("responder_recordatorio_ambiguous")
+        return json.dumps(
+            {"success": False, "error": "multiple_reminders", "detail": resp.text[:500]},
+            ensure_ascii=False,
+        )
+    if resp.status_code >= 400:
+        log.warning("responder_recordatorio_http_error", status=resp.status_code)
+        return '{"success": false, "error": "http_error", "handoff": true}'
+
+    log.info("responder_recordatorio_sent", status=resp.status_code)
+    return json.dumps({"success": True, "respuesta": respuesta}, ensure_ascii=False)

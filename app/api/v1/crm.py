@@ -121,6 +121,7 @@ def _make_process_fn(
     patient_ctx: dict,
     contact_lead_id: int | None = None,
     pacientes_a_cargo: list[dict] | None = None,
+    recordatorios: list[dict] | None = None,
 ):
     """Return a ProcessFn closure bound to the CRM destination + patient context."""
     gateway = get_gateway()
@@ -149,6 +150,7 @@ def _make_process_fn(
                     nombre_whatsapp=patient_ctx.get("nombre_whatsapp"),
                     conversation_id=dest.conversation_id,
                     pacientes_a_cargo=pacientes_a_cargo,
+                    recordatorios=recordatorios,
                     handoff_callback=_on_handoff,
                 )
             )
@@ -253,6 +255,7 @@ async def receive_crm_event(request: Request) -> dict:
         patient_ctx = await _register_patient(phone, event.contact.name)
 
     pacientes_a_cargo = event.patient_context.pacientes_a_cargo if event.patient_context else None
+    recordatorios = event.patient_context.recordatorios if event.patient_context else None
 
     logger.info(
         "crm_message_received",
@@ -263,7 +266,11 @@ async def receive_crm_event(request: Request) -> dict:
     )
 
     process_fn = _make_process_fn(
-        dest, patient_ctx, contact_lead_id=event.contact.lead_id, pacientes_a_cargo=pacientes_a_cargo
+        dest,
+        patient_ctx,
+        contact_lead_id=event.contact.lead_id,
+        pacientes_a_cargo=pacientes_a_cargo,
+        recordatorios=recordatorios,
     )
     # A flow_reply is a single discrete event (not free text) — process it immediately instead of
     # buffering/concatenating it with other messages.
