@@ -19,7 +19,7 @@ from app.core.cache import cache_service
 from app.core.langgraph.tools.insurance import verify_insurance
 from app.core.logging import logger
 
-VerifyFn = Callable[[str, str], Awaitable[dict]]
+VerifyFn = Callable[[str, str, str], Awaitable[dict]]
 
 _SEGURO_OPTIONS = ["Alianza", "Nacional Vida", "Membresía Odontoking", "No tengo seguro"]
 
@@ -339,8 +339,13 @@ def apply_answer(state: dict, slot: str, text: str) -> Optional[str]:
 
 # ── Insurance verification ────────────────────────────────────────────────────
 
-async def _default_verify(ci: str, seguro: str) -> dict:
-    raw = await verify_insurance.ainvoke({"ci_paciente": ci, "seguro_paciente": seguro})
+async def _default_verify(wa_id: str, ci: str, seguro: str) -> dict:
+    # verify_insurance REQUIRES wa_id — it resolves the CRM person_id from it. Omitting it
+    # raises a pydantic ValidationError (caught upstream as "not insured"), so every insured
+    # patient was wrongly blocked during the classic intake. Thread it through.
+    raw = await verify_insurance.ainvoke(
+        {"wa_id": wa_id, "ci_paciente": ci, "seguro_paciente": seguro}
+    )
     try:
         return json.loads(raw)
     except (json.JSONDecodeError, TypeError):
@@ -370,14 +375,19 @@ async def advance_intake(
     state: dict,
     user_text: Optional[str],
     *,
+    wa_id: str = "",
     verify_fn: VerifyFn = _default_verify,
 ) -> IntakeResult:
     """Run one intake turn: parse the pending answer, then ask the next question.
 
     - user_text is the latest patient message (None when intake is just starting).
+    - wa_id is the patient's WhatsApp id; it is required to verify insurance (verify_insurance
+      resolves the CRM person_id from it) and is stored on the state for the later booking phase.
     - Returns IntakeResult(state, reply, completed). When completed, reply is None and the
       caller hands off to the LLM (steps 7→12).
     """
+    if wa_id:
+        state["wa_id"] = wa_id
     pending = state.get("pending")
 
     if user_text is not None and pending:
@@ -388,7 +398,7 @@ async def advance_intake(
                 return IntakeResult(state, _INVALID["ci"], False)
             state["ci"] = ci
             try:
-                result = await verify_fn(ci, state["seguro"])
+                result = await verify_fn(wa_id or state.get("wa_id") or "", ci, state["seguro"])
             except Exception as e:
                 logger.exception("intake_verify_insurance_failed", error=str(e))
                 result = {"has_insurance": False, "retry": True}

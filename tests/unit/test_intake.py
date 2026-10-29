@@ -4,6 +4,8 @@ Covers the guarantee that the flow is ordered, never skips, parses answers deter
 and enforces the insurance barrier — without any network/LLM calls.
 """
 
+import json
+
 import pytest
 
 from app.core.langgraph.intake import (
@@ -23,11 +25,11 @@ def _starts_intake(text: str) -> bool:
     return not (is_faq_query(text) and not is_booking_intent(text))
 
 
-async def _vigente(ci, seguro):
+async def _vigente(wa_id, ci, seguro):
     return {"has_insurance": True, "status": "VIGENTE"}
 
 
-async def _vencido(ci, seguro):
+async def _vencido(wa_id, ci, seguro):
     return {"has_insurance": True, "status": "VENCIDO"}
 
 
@@ -290,3 +292,52 @@ class TestHandoffContext:
         assert "Javier Mogro" in ctx
         assert "Limpieza" in ctx
         assert "PASO 7" in ctx
+
+
+class TestDefaultVerifyPassesWaId:
+    """Regression: the DEFAULT verify path must send wa_id to verify_insurance.
+
+    verify_insurance requires wa_id (it resolves the CRM person_id from it). The intake used to
+    call it with only {ci_paciente, seguro_paciente}, so the tool raised a pydantic
+    ValidationError that was caught as "not insured" — blocking every insured patient. This test
+    exercises the real default verify_fn (not an injected fake) so the signature can't drift again.
+    """
+
+    @pytest.mark.asyncio
+    async def test_wa_id_reaches_verify_insurance(self, monkeypatch):
+        """advance_intake (default verify_fn) forwards wa_id + ci + seguro to the tool."""
+        captured: dict = {}
+
+        class _FakeTool:
+            async def ainvoke(self, args):
+                captured.update(args)
+                return json.dumps({"has_insurance": True, "status": "VIGENTE"})
+
+        # Patch the tool the module-level _default_verify actually calls.
+        monkeypatch.setattr("app.core.langgraph.intake.verify_insurance", _FakeTool())
+
+        state = new_state("Juan Perez")
+        state.update({
+            "edad": 30, "is_for_self": True, "es_antiguo": False,
+            "seguro": "Alianza", "pending": "ci",
+        })
+        r = await advance_intake(state, "10153980", wa_id="59170000123")
+
+        # The exact payload verify_insurance's schema requires — wa_id included (the bug).
+        assert captured.get("wa_id") == "59170000123"
+        assert captured.get("ci_paciente") == "10153980"
+        assert captured.get("seguro_paciente") == "Alianza"
+        # And a VIGENTE result lets the insured patient proceed instead of being blocked.
+        assert r.state["seguro_estado"] == "VIGENTE"
+
+    @pytest.mark.asyncio
+    async def test_default_payload_satisfies_real_tool_schema(self):
+        """The dict _default_verify builds validates against the real verify_insurance schema.
+
+        Guards the signature directly: before the fix this raised "wa_id Field required".
+        """
+        from app.core.langgraph.tools.insurance import verify_insurance
+
+        schema = verify_insurance.get_input_schema()
+        # Same keys _default_verify now sends — must validate with no missing required field.
+        schema.model_validate({"wa_id": "591700", "ci_paciente": "10153980", "seguro_paciente": "Alianza"})

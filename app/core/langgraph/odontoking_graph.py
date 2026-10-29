@@ -632,7 +632,7 @@ class OdontokingAgent:
             # nombre is left unset so the intake always asks for the real name; the WhatsApp
             # profile name is stored only to build the combined CRM name later.
             fresh = new_state(nombre_whatsapp=nombre_whatsapp)
-            result = await advance_intake(fresh, None)
+            result = await advance_intake(fresh, None, wa_id=wa_id)
             await intake_store.set(wa_id, result.state)
             reply = f"¡Hola! Gracias por escribir a Odontoking 🦷✨, Con gusto le ayudo a agendar su cita. {result.reply}" if result.reply else result.reply
             return reply, None
@@ -668,7 +668,7 @@ class OdontokingAgent:
             # Booking finished (or nothing pending) → post-booking chat goes to the LLM.
             return None, None
 
-        result = await advance_intake(state, text)
+        result = await advance_intake(state, text, wa_id=wa_id)
         await intake_store.set(wa_id, result.state)
         if not result.completed:
             return result.reply, None
