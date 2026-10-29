@@ -20,7 +20,7 @@ from app.core.langgraph.tools.crm import ensure_lead_registered, ensure_person_r
 from app.core.limiter import limiter
 from app.core.logging import logger
 from app.schemas import Message
-from app.schemas.crm import CrmWebhookEvent
+from app.schemas.crm import CrmHistoryItem, CrmWebhookEvent
 from app.services.gateway import Destination, get_gateway
 from app.services.message_buffer import message_buffer_service
 
@@ -67,6 +67,16 @@ def _is_duplicate_message(msg_id: str) -> bool:
         return True
     _seen_message_ids[msg_id] = now
     return False
+
+
+def _is_first_contact(history: list[CrmHistoryItem]) -> bool:
+    """True when the agent has not spoken yet in this conversation → greet before the form.
+
+    The CRM ECHOES the current incoming message into `history`, so `history` is never empty on the
+    first message — the earlier `not history` check was always False and the welcome never fired.
+    "First contact" is instead: no assistant turn exists yet in the history.
+    """
+    return not any((item.role or "").strip().lower() == "assistant" for item in history)
 
 
 async def _register_patient(phone: str, name: str | None) -> dict:
@@ -268,9 +278,9 @@ async def receive_crm_event(request: Request) -> dict:
     citas_activas = event.patient_context.citas_activas if event.patient_context else None
     # fuera_de_horario is computed CRM-side (Bolivia local time); prefer it over the LLM re-deriving.
     fuera_de_horario = event.clinica.fuera_de_horario if event.clinica else None
-    # First message of THIS conversation (empty CRM history) → greet before the form. This is the
-    # right signal, not is_new_patient (a returning CRM person still starts new conversations).
-    es_primer_contacto = not (event.history or [])
+    # First message of THIS conversation → greet before the form. This is the right signal, not
+    # is_new_patient (a returning CRM person still starts new conversations).
+    es_primer_contacto = _is_first_contact(event.history or [])
     logger.info(
         "crm_patient_context_loaded",
         wa_id=phone,

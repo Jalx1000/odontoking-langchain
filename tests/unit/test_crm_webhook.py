@@ -4,9 +4,9 @@ from typing import cast
 
 from fastapi import Request
 
-from app.api.v1.crm import _format_flow_reply, _verify_agent_token
+from app.api.v1.crm import _format_flow_reply, _is_first_contact, _verify_agent_token
 from app.core.config import settings
-from app.schemas.crm import CrmWebhookEvent
+from app.schemas.crm import CrmHistoryItem, CrmWebhookEvent
 
 # The example event from integracion-gateway-whatsapp.md §3.
 _DOC_EVENT = {
@@ -82,6 +82,37 @@ class TestCrmWebhookEvent:
         assert ev.message.flow["status"] == "pending"
         assert ev.patient_context is not None
         assert ev.patient_context.pacientes_a_cargo[0]["relacion"] == "hijo"
+
+
+class TestIsFirstContact:
+    """_is_first_contact drives the welcome greeting (es_primer_contacto)."""
+
+    def _hist(self, *roles: str) -> list[CrmHistoryItem]:
+        return [CrmHistoryItem(role=r, content="x") for r in roles]
+
+    def test_first_message_is_first_contact_even_though_crm_echoes_it(self):
+        """REGRESSION: the CRM echoes the current user message into history.
+
+        On the first message history is [user] (len 1), NOT empty, so the old `not history`
+        check was always False and the welcome never fired. No assistant turn yet → first contact.
+        """
+        assert _is_first_contact(self._hist("user")) is True
+
+    def test_two_buffered_user_messages_still_first_contact(self):
+        """Prod case 59176616013: two buffered user messages, no reply yet → first contact.
+
+        'Quiero agendar...' + 'En la tarde' arrive buffered, history is [user, user] with no
+        assistant reply yet → still a first contact (greet).
+        """
+        assert _is_first_contact(self._hist("user", "user")) is True
+
+    def test_not_first_contact_once_assistant_has_replied(self):
+        """An assistant turn in history means the agent already greeted → no second welcome."""
+        assert _is_first_contact(self._hist("user", "assistant", "user")) is False
+
+    def test_empty_history_is_first_contact(self):
+        """Defensive: if the CRM ever omits the echo, an empty history is still first contact."""
+        assert _is_first_contact([]) is True
 
 
 class TestFormatFlowReply:
