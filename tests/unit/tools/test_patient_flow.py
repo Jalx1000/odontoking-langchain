@@ -147,9 +147,9 @@ class TestPersonSearchByWaId:
         assert result["person_id"] == 99
         assert result["created"] is True
         client.post.assert_called_once()
-        # POST body must contain the wa_id-derived email
+        # The person is created without any email (synthetic emails were dropped).
         post_body = client.post.call_args[1]["json"]
-        assert "591700000002@whatsapp.sofopolis.net" in str(post_body)
+        assert post_body.get("emails", []) == []
 
     def test_person_created_with_profile_name_from_webhook(self):
         """New person's name comes from the WhatsApp profile (webhook contact name)."""
@@ -166,8 +166,8 @@ class TestPersonSearchByWaId:
         post_body = client.post.call_args[1]["json"]
         assert post_body["name"] == "María Quispe"
 
-    def test_person_created_with_generated_email_not_real_email(self):
-        """The CRM person email is always the wa_id-derived synthetic address, never a real email."""
+    def test_person_created_with_no_email(self):
+        """The CRM person is created with no email at all — never a real nor synthetic address."""
         from app.core.langgraph.tools.crm import ensure_person_registered
 
         with patch("httpx.AsyncClient") as cls:
@@ -179,9 +179,7 @@ class TestPersonSearchByWaId:
                 client, wa_id="591700000004", person_name="Test"
             ))
         post_body = client.post.call_args[1]["json"]
-        emails = post_body.get("emails", [])
-        assert len(emails) == 1
-        assert emails[0]["value"] == "591700000004@whatsapp.sofopolis.net"
+        assert post_body.get("emails", []) == []
 
     def test_blank_name_falls_back_to_default(self):
         """When profile name is empty, person is created with 'Paciente WhatsApp'."""
@@ -690,16 +688,18 @@ class TestConfirmedAppointmentModificationRules:
 class TestPersonPayloadHelper:
     """_person_email_from_wa_id and _person_payload correctness."""
 
-    def test_email_derived_from_wa_id(self):
+    def test_email_from_wa_id_returns_raw_wa_id(self):
+        """Synthetic emails were dropped — the helper now just normalizes the wa_id (no @domain)."""
         from app.core.langgraph.tools.crm import _person_email_from_wa_id
 
-        assert _person_email_from_wa_id("591700000001") == "591700000001@whatsapp.sofopolis.net"
+        assert _person_email_from_wa_id("591700000001") == "591700000001"
 
-    def test_person_payload_uses_whatsapp_email(self):
+    def test_person_payload_has_no_email(self):
+        """The CRM person is created without any email (emails list is empty)."""
         from app.core.langgraph.tools.crm import _person_payload
 
         payload = _person_payload("591700000001", "Test User", "591700000001")
-        assert payload["emails"][0]["value"] == "591700000001@whatsapp.sofopolis.net"
+        assert payload["emails"] == []
         assert payload["name"] == "Test User"
         assert payload["entity_type"] == "persons"
 

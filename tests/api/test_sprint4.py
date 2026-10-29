@@ -113,7 +113,10 @@ class TestSprint4Routing:
         args, _kwargs = patched_routing["publish"].call_args
         assert args[0] == tenant.slug
         assert args[1] == wa_id
-        assert args[2] == {"text": "Hola, necesito un turno", "message_id": "msg-id-1"}
+        payload = args[2]
+        assert payload["text"] == "Hola, necesito un turno"
+        assert payload["message_id"] == "msg-id-1"
+        assert "patient_ctx" in payload  # patient context is forwarded to the external agent
 
     def test_internal_tenant_uses_buffer(
         self,
@@ -150,7 +153,7 @@ class TestSprint4Routing:
         sample_whatsapp_text_payload: dict,
         wa_id: str,
     ):
-        """The dict passed to broker.publish must contain exactly text and message_id."""
+        """The dict passed to broker.publish must contain exactly text, message_id and patient_ctx."""
         tenant = _make_tenant(agent_endpoint_url="https://agent.example/webhook")
 
         with patch(
@@ -167,9 +170,10 @@ class TestSprint4Routing:
         payload = args[2]
 
         # Exact keys — no extras, no missing.
-        assert set(payload.keys()) == {"text", "message_id"}
+        assert set(payload.keys()) == {"text", "message_id", "patient_ctx"}
         assert isinstance(payload["text"], str) and payload["text"]
         assert isinstance(payload["message_id"], str) and payload["message_id"]
+        assert isinstance(payload["patient_ctx"], dict)
 
     def test_external_tenant_publish_failure_returns_200(
         self,
