@@ -33,9 +33,6 @@ from app.core.logging import logger
 # The three published forms. Keep in sync with docs/agente-flows-instrucciones.md (CRM repo).
 _VALID_FLOWS = {"paciente_tercero", "cancelar_cita", "reprogramar_cita"}
 
-# First-contact welcome, sent (by the tool) to the chat BEFORE the form so it arrives first.
-_SALUDO_BIENVENIDA = "¡Hola! 👋 Bienvenido(a) a Odontoking. Con gusto le ayudo. 😊"
-
 # Canonical `relation` values for the booking form. The CRM also accepts the aliases it listed
 # (para_mi, yo, other, otro) and ignores anything unknown, so this only tidies the obvious cases.
 _RELATION_ALIASES = {
@@ -145,23 +142,6 @@ async def _post_flow(
         return resp
 
 
-async def _post_message(conversation_id: int, text: str) -> None:
-    """POST a plain-text message to the conversation (sibling of /flows, same auth).
-
-    Used to send the welcome greeting BEFORE the form on first contact so it lands first in the
-    chat. Best-effort: the caller swallows errors so a greeting hiccup never blocks the form.
-    """
-    url = f"{settings.CRM_BASE_URL}/api/v1/whatsapp/conversations/{conversation_id}/messages"
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {settings.CRM_API_KEY}",
-    }
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(url, json={"text": text}, headers=headers)
-        resp.raise_for_status()
-
-
 @tool
 async def enviar_formulario(
     flow: str,
@@ -175,7 +155,6 @@ async def enviar_formulario(
     time_slot: Optional[str] = None,
     conversation_id: Annotated[Optional[int], InjectedToolArg] = None,
     sin_cita_activa: Annotated[bool, InjectedToolArg] = False,
-    saludar: Annotated[bool, InjectedToolArg] = False,
 ) -> str:
     """Envía al paciente un formulario de WhatsApp para agendar, cancelar o reprogramar una cita.
 
@@ -208,8 +187,6 @@ async def enviar_formulario(
         conversation_id: Lo inyecta el sistema desde el evento entrante; tú no lo proporcionas.
         sin_cita_activa: Lo inyecta el sistema (no lo proporcionas); marca que el paciente no tiene
             cita activa para bloquear cancelar/reprogramar.
-        saludar: Lo inyecta el sistema (no lo proporcionas); en el primer contacto manda el saludo de
-            bienvenida ANTES del formulario.
     """
     if flow not in _VALID_FLOWS:
         logger.warning("enviar_formulario_invalid_flow", flow=str(flow)[:40])
@@ -237,15 +214,8 @@ async def enviar_formulario(
         else {}
     )
     log = logger.bind(conversation_id=conversation_id, flow=flow, prefill=prefill or None)
-    # First contact: send the welcome greeting BEFORE the form so it arrives first in the chat.
-    # The form is a side-effect of this call and the agent's ack is sent afterwards, so without this
-    # the patient would see the form first and the "¡Hola!" after. Best-effort — never block the form.
-    if saludar:
-        try:
-            await _post_message(conversation_id, _SALUDO_BIENVENIDA)
-            log.info("enviar_formulario_saludo_previo")
-        except Exception as e:
-            log.warning("enviar_formulario_saludo_failed", error=type(e).__name__)
+    # The welcome greeting on first contact rides in the agent's reply text (prepended deterministically
+    # in get_response) and the CRM delivers that text before the form — so the tool doesn't send it.
     try:
         resp = await _post_flow(conversation_id, flow, prefill or None)
     except (httpx.TimeoutException, httpx.ConnectError) as e:

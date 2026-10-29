@@ -358,6 +358,30 @@ def _fmt_cita_detail(cita: dict) -> str:
     return " ".join(partes) if partes else "su cita"
 
 
+# Welcome shown at the START of the first reply of a conversation (CRM §: "la respuesta tiene que
+# empezar con ¡Hola!"). Prepended deterministically — gpt-4o-mini drops it when the message already
+# carries an intent, so we don't leave it to the model.
+_SALUDO_PRIMER_CONTACTO = "¡Hola! 👋 Bienvenido(a) a Odontoking."
+
+
+def _ya_saluda(mensaje: str) -> bool:
+    """True when the reply already opens with a welcome (so we don't greet twice, e.g. the menu)."""
+    t = _norm_cancel(mensaje)
+    return t.startswith("hola") or "bienvenid" in t[:40]
+
+
+def _prepend_saludo(mensaje: str, es_primer_contacto: bool) -> str:
+    """On the first message of a conversation, make the reply open with the welcome greeting.
+
+    Applies to ANY intent (agendar, cancelar, precio, …), per the CRM contract: the greeting rides
+    in the bot's reply text and the CRM delivers it before the form. No-op when it is not the first
+    contact or the reply already greets.
+    """
+    if not es_primer_contacto or not mensaje or _ya_saluda(mensaje):
+        return mensaje
+    return f"{_SALUDO_PRIMER_CONTACTO} {mensaje}"
+
+
 async def _resolve_doctor_in_prefill(args: dict) -> dict:
     """Resolve a named `doctor` prefill to its CRM id (and carry the doctor's specialty).
 
@@ -732,12 +756,7 @@ class OdontokingAgent:
         async def _execute(tc: dict) -> ToolMessage:
             args = tc["args"]
             if tc["name"] == "enviar_formulario" and conversation_id is not None:
-                # saludar: on the FIRST message of the conversation the tool sends the welcome
-                # greeting BEFORE the form, so it lands first in the chat (the form is a side-effect
-                # of this call). Gated on es_primer_contacto (empty conversation history), NOT on
-                # is_new_patient: a returning patient who already exists in the CRM still deserves the
-                # greeting at the start of a new conversation.
-                args = {**args, "conversation_id": conversation_id, "saludar": bool(meta.get("es_primer_contacto"))}
+                args = {**args, "conversation_id": conversation_id}
                 # Deterministically resolve the doctor NAME the model passed to its CRM id (and carry
                 # the doctor's specialty) so the booking form can pre-select both — the model is no
                 # longer the weak link for the prefill.
@@ -1128,7 +1147,6 @@ class OdontokingAgent:
                 "recordatorios": recordatorios,
                 "citas_activas": citas_activas,
                 "fuera_de_horario": fuera_de_horario,
-                "es_primer_contacto": es_primer_contacto,
                 "intake_handoff": intake_handoff,
             },
             "recursion_limit": 50,
@@ -1179,6 +1197,9 @@ class OdontokingAgent:
 
             # Extract the patient-facing text, tolerating malformed/multiple JSON objects.
             mensaje = _extract_mensaje(last_content)
+            # First message of the conversation → ensure the reply opens with the welcome greeting,
+            # whatever the intent (the CRM delivers this text before the form).
+            mensaje = _prepend_saludo(mensaje, es_primer_contacto)
 
             # CONTRATO B: if the LLM signalled a handoff, surface it to the caller (the CRM
             # executes the actual pause). The agent never pauses itself — it only emits.

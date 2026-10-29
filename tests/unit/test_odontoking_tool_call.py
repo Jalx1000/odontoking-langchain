@@ -58,35 +58,38 @@ async def test_tool_call_injects_conversation_id_for_enviar_formulario():
     state.messages[-1].tool_calls[0]["args"] = {"flow": "paciente_tercero"}
     await agent._tool_call(state, {"metadata": {"conversation_id": 123}})
 
-    # conversation_id (and the injected saludar flag) are added by the graph, never by the LLM.
+    # conversation_id is added by the graph, never by the LLM. The greeting is NOT a tool arg
+    # anymore (it rides in the reply text via _prepend_saludo), so `saludar` must not appear.
     fake_tool.ainvoke.assert_awaited_once()
     sent = fake_tool.ainvoke.await_args.args[0]
     assert sent["flow"] == "paciente_tercero"
     assert sent["conversation_id"] == 123
-    assert sent["saludar"] is False  # no es_primer_contacto in metadata → no greeting
+    assert "saludar" not in sent
 
 
-@pytest.mark.asyncio
-async def test_tool_call_saludar_gated_on_primer_contacto_not_new_patient():
-    """The greeting fires on the first message of the conversation, NOT on CRM-person newness.
+def test_prepend_saludo_first_contact_prepends_welcome():
+    """On the first message of a conversation the reply is prefixed with the welcome, any intent."""
+    from app.core.langgraph.odontoking_graph import _prepend_saludo
 
-    Regression: a returning CRM patient (is_new_patient=False) starting a new conversation
-    (es_primer_contacto=True) must still get the welcome greeting before the form.
-    """
-    agent = OdontokingAgent()
-    fake_tool = AsyncMock()
-    fake_tool.ainvoke = AsyncMock(return_value='{"success": true, "flow": "paciente_tercero"}')
-    agent.tools_by_name = {"enviar_formulario": fake_tool}
+    out = _prepend_saludo("Le envié un formulario para agendar su cita 🙌", es_primer_contacto=True)
+    assert out.startswith("¡Hola! 👋 Bienvenido(a) a Odontoking.")
+    assert "Le envié un formulario" in out
 
-    state = _state_with_tool_call("enviar_formulario")
-    state.messages[-1].tool_calls[0]["args"] = {"flow": "paciente_tercero"}
-    await agent._tool_call(
-        state,
-        {"metadata": {"conversation_id": 123, "is_new_patient": False, "es_primer_contacto": True}},
-    )
 
-    sent = fake_tool.ainvoke.await_args.args[0]
-    assert sent["saludar"] is True  # first message of the conversation → greet, despite existing person
+def test_prepend_saludo_not_first_contact_is_noop():
+    """When it is not the first contact, the reply is returned unchanged (no re-greeting)."""
+    from app.core.langgraph.odontoking_graph import _prepend_saludo
+
+    msg = "Le envié un formulario 🙌"
+    assert _prepend_saludo(msg, es_primer_contacto=False) == msg
+
+
+def test_prepend_saludo_skips_when_already_greeted():
+    """If the reply already opens with a welcome (e.g. the menu), it is not greeted twice."""
+    from app.core.langgraph.odontoking_graph import _prepend_saludo
+
+    menu = "¡Hola! 👋 Bienvenido(a) a Odontoking.\n\n1. Agendar..."
+    assert _prepend_saludo(menu, es_primer_contacto=True) == menu
 
 
 @pytest.mark.asyncio
