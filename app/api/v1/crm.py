@@ -124,6 +124,7 @@ def _make_process_fn(
     recordatorios: list[dict] | None = None,
     citas_activas: list[dict] | None = None,
     fuera_de_horario: bool | None = None,
+    es_primer_contacto: bool = False,
 ):
     """Return a ProcessFn closure bound to the CRM destination + patient context."""
     gateway = get_gateway()
@@ -155,6 +156,7 @@ def _make_process_fn(
                     recordatorios=recordatorios,
                     citas_activas=citas_activas,
                     fuera_de_horario=fuera_de_horario,
+                    es_primer_contacto=es_primer_contacto,
                     handoff_callback=_on_handoff,
                 )
             )
@@ -266,6 +268,9 @@ async def receive_crm_event(request: Request) -> dict:
     citas_activas = event.patient_context.citas_activas if event.patient_context else None
     # fuera_de_horario is computed CRM-side (Bolivia local time); prefer it over the LLM re-deriving.
     fuera_de_horario = event.clinica.fuera_de_horario if event.clinica else None
+    # First message of THIS conversation (empty CRM history) → greet before the form. This is the
+    # right signal, not is_new_patient (a returning CRM person still starts new conversations).
+    es_primer_contacto = not (event.history or [])
     logger.info(
         "crm_patient_context_loaded",
         wa_id=phone,
@@ -278,6 +283,7 @@ async def receive_crm_event(request: Request) -> dict:
         pacientes_a_cargo=len(pacientes_a_cargo or []),
         citas_activas=len(citas_activas or []),
         fuera_de_horario=fuera_de_horario,
+        es_primer_contacto=es_primer_contacto,
     )
 
     logger.info(
@@ -296,6 +302,7 @@ async def receive_crm_event(request: Request) -> dict:
         recordatorios=recordatorios,
         citas_activas=citas_activas,
         fuera_de_horario=fuera_de_horario,
+        es_primer_contacto=es_primer_contacto,
     )
     # A flow_reply is a single discrete event (not free text) — process it immediately instead of
     # buffering/concatenating it with other messages.

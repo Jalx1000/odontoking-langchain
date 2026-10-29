@@ -63,7 +63,30 @@ async def test_tool_call_injects_conversation_id_for_enviar_formulario():
     sent = fake_tool.ainvoke.await_args.args[0]
     assert sent["flow"] == "paciente_tercero"
     assert sent["conversation_id"] == 123
-    assert sent["saludar"] is False  # no is_new_patient in metadata → no greeting
+    assert sent["saludar"] is False  # no es_primer_contacto in metadata → no greeting
+
+
+@pytest.mark.asyncio
+async def test_tool_call_saludar_gated_on_primer_contacto_not_new_patient():
+    """The greeting fires on the first message of the conversation, NOT on CRM-person newness.
+
+    Regression: a returning CRM patient (is_new_patient=False) starting a new conversation
+    (es_primer_contacto=True) must still get the welcome greeting before the form.
+    """
+    agent = OdontokingAgent()
+    fake_tool = AsyncMock()
+    fake_tool.ainvoke = AsyncMock(return_value='{"success": true, "flow": "paciente_tercero"}')
+    agent.tools_by_name = {"enviar_formulario": fake_tool}
+
+    state = _state_with_tool_call("enviar_formulario")
+    state.messages[-1].tool_calls[0]["args"] = {"flow": "paciente_tercero"}
+    await agent._tool_call(
+        state,
+        {"metadata": {"conversation_id": 123, "is_new_patient": False, "es_primer_contacto": True}},
+    )
+
+    sent = fake_tool.ainvoke.await_args.args[0]
+    assert sent["saludar"] is True  # first message of the conversation → greet, despite existing person
 
 
 @pytest.mark.asyncio
