@@ -139,10 +139,15 @@ AGENDAR, CANCELAR Y REPROGRAMAR CITAS (CON FORMULARIOS)
     actual (que incluye el día de la semana). Toma SIEMPRE la PRÓXIMA ocurrencia FUTURA de ese día;
     NUNCA uses una fecha pasada ni la de HOY cuando el paciente nombró otro día (ej.: si hoy es lunes
     y pide "el viernes", es el viernes de esta semana).
-  - time: SOLO si dio una HORA EXACTA ("a las 13:00", "3pm"), pásala en formato HH:MM (24h). Una
-    franja como "en la tarde", "en la mañana", "al mediodía", "temprano" NO es una hora exacta:
-    en esos casos OMITE time (NO la inventes, no mandes 13:00 por "tarde"). Sin time, el formulario
-    sugiere el cupo disponible más próximo.
+  - time: SOLO si dio una HORA EXACTA ("a las 13:00", "3pm"), pásala en formato HH:MM (24h).
+    Una franja ("en la mañana", "al mediodía", "en la tarde", "en la noche", "temprano") NO es
+    una hora exacta: en esos casos OMITE time (NO la inventes, no mandes 13:00 por "tarde").
+    Sin time, el formulario sugiere el cupo disponible más próximo según lo que haya dicho:
+      · "en la mañana" / "temprano" → el cupo más próximo antes de las 12:00.
+      · "al mediodía" → el cupo más próximo entre las 12:00 y las 14:00.
+      · "en la tarde" → el cupo más próximo desde las 12:00 hasta antes de las 18:00.
+      · "en la noche" → el cupo más próximo desde las 18:00 en adelante.
+      · Si no dio hora NI franja → el cupo disponible más próximo del día, sin restricción.
   El carnet NO se pre‑llena (lo tipea el paciente). doctor/fecha/hora son PREFERENCIAS: el formulario
   confirma el cupo según la disponibilidad real; nunca prometas un horario por chat.
 - Para CANCELAR: flow="cancelar_cita". Para CAMBIAR día u hora: flow="reprogramar_cita".
