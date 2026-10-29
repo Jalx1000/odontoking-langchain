@@ -130,6 +130,7 @@ def test_llm_schema_exposes_flow_and_prefill_not_conversation_id():
     props = convert_to_openai_tool(enviar_formulario)["function"]["parameters"]["properties"]
     assert set(props.keys()) == {
         "flow", "relation", "patient_name", "relationship", "specialty", "doctor", "date", "time",
+        "time_slot",
     }
     assert "conversation_id" not in props
 
@@ -194,6 +195,49 @@ def test_enviar_formulario_doctor_id_sent_as_string():
     prefill = client.post.call_args.kwargs["json"]["prefill"]
     assert prefill == {"doctor": "12", "date": "2026-10-28", "time": "13:00"}
     assert isinstance(prefill["doctor"], str)
+
+
+def test_enviar_formulario_time_slot_franja():
+    """A franja (no exact time) is sent as time_slot, canonicalized (e.g. 'en la tarde' → 'tarde')."""
+    factory = _async_client(_resp(200))
+    with patch("app.core.langgraph.tools.whatsapp_flows.httpx.AsyncClient", factory):
+        _run(enviar_formulario.ainvoke({
+            "flow": "paciente_tercero",
+            "conversation_id": 3,
+            "time_slot": "en la tarde",
+        }))
+    client = factory.return_value.__aenter__.return_value
+    prefill = client.post.call_args.kwargs["json"]["prefill"]
+    assert prefill == {"time_slot": "tarde"}
+
+
+def test_enviar_formulario_exact_time_wins_over_slot():
+    """With an exact time, time_slot is dropped (the CRM already suggests the closest slot)."""
+    factory = _async_client(_resp(200))
+    with patch("app.core.langgraph.tools.whatsapp_flows.httpx.AsyncClient", factory):
+        _run(enviar_formulario.ainvoke({
+            "flow": "paciente_tercero",
+            "conversation_id": 3,
+            "time": "13:00",
+            "time_slot": "tarde",
+        }))
+    client = factory.return_value.__aenter__.return_value
+    prefill = client.post.call_args.kwargs["json"]["prefill"]
+    assert prefill == {"time": "13:00"}
+
+
+def test_enviar_formulario_unknown_time_slot_dropped():
+    """An unrecognized franja is dropped (CRM ignore-policy; form offers the nearest slot)."""
+    factory = _async_client(_resp(200))
+    with patch("app.core.langgraph.tools.whatsapp_flows.httpx.AsyncClient", factory):
+        _run(enviar_formulario.ainvoke({
+            "flow": "paciente_tercero",
+            "conversation_id": 3,
+            "time_slot": "cuando sea",
+        }))
+    client = factory.return_value.__aenter__.return_value
+    body = client.post.call_args.kwargs["json"]
+    assert "prefill" not in body or "time_slot" not in body.get("prefill", {})
 
 
 def test_enviar_formulario_saluda_antes_del_form():

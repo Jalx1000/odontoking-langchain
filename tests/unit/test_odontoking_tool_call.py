@@ -58,7 +58,12 @@ async def test_tool_call_injects_conversation_id_for_enviar_formulario():
     state.messages[-1].tool_calls[0]["args"] = {"flow": "paciente_tercero"}
     await agent._tool_call(state, {"metadata": {"conversation_id": 123}})
 
-    fake_tool.ainvoke.assert_awaited_once_with({"flow": "paciente_tercero", "conversation_id": 123})
+    # conversation_id (and the injected saludar flag) are added by the graph, never by the LLM.
+    fake_tool.ainvoke.assert_awaited_once()
+    sent = fake_tool.ainvoke.await_args.args[0]
+    assert sent["flow"] == "paciente_tercero"
+    assert sent["conversation_id"] == 123
+    assert sent["saludar"] is False  # no is_new_patient in metadata → no greeting
 
 
 @pytest.mark.asyncio

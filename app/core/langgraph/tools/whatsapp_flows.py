@@ -44,6 +44,28 @@ _RELATION_ALIASES = {
 }
 
 
+# Canonical time-of-day buckets the CRM form understands (R: time_slot). Without an exact `time`,
+# the form offers one free slot in the chosen franja. Keys below map common phrasings → canonical.
+_TIME_SLOTS = {"mañana", "mediodia", "tarde"}
+_TIME_SLOT_ALIASES = {
+    "manana": "mañana", "mañana": "mañana", "en la mañana": "mañana", "por la mañana": "mañana",
+    "temprano": "mañana", "am": "mañana",
+    "mediodia": "mediodia", "mediodía": "mediodia", "al mediodia": "mediodia", "al mediodía": "mediodia",
+    "medio dia": "mediodia",
+    "tarde": "tarde", "en la tarde": "tarde", "por la tarde": "tarde", "pm": "tarde",
+}
+
+
+def _canonical_time_slot(value: Optional[str]) -> Optional[str]:
+    """Map a free-text franja to a canonical CRM time_slot (mañana/mediodia/tarde), or None."""
+    if not value or not value.strip():
+        return None
+    key = value.strip().lower()
+    if key in _TIME_SLOTS:
+        return key
+    return _TIME_SLOT_ALIASES.get(key)
+
+
 def _build_prefill(
     relation: Optional[str],
     patient_name: Optional[str],
@@ -52,6 +74,7 @@ def _build_prefill(
     doctor: Optional[str],
     date: Optional[str],
     time: Optional[str],
+    time_slot: Optional[str] = None,
 ) -> dict[str, object]:
     """Assemble the booking-form prefill from greeting-derived hints, dropping empty values.
 
@@ -77,6 +100,10 @@ def _build_prefill(
         prefill["date"] = date.strip()
     if time and time.strip():
         prefill["time"] = time.strip()
+    # A franja (time_slot) is sent ONLY when there is no exact time: with `time` the CRM already
+    # suggests the closest slot to that hour, so the bucket would be redundant/conflicting.
+    elif (slot := _canonical_time_slot(time_slot)) is not None:
+        prefill["time_slot"] = slot
     return prefill
 
 
@@ -145,6 +172,7 @@ async def enviar_formulario(
     doctor: Optional[str] = None,
     date: Optional[str] = None,
     time: Optional[str] = None,
+    time_slot: Optional[str] = None,
     conversation_id: Annotated[Optional[int], InjectedToolArg] = None,
     sin_cita_activa: Annotated[bool, InjectedToolArg] = False,
     saludar: Annotated[bool, InjectedToolArg] = False,
@@ -172,8 +200,11 @@ async def enviar_formulario(
             p. ej. "21"); también acepta el nombre si coincide con un solo doctor. Si mandas doctor,
             specialty es opcional (el form toma la del doctor). Omítelo si no lo identificas con certeza.
         date: Día pedido en formato AAAA-MM-DD (convierte "el viernes"/"mañana" con la fecha actual).
-        time: Hora pedida en formato HH:MM (24h), p. ej. "13:00". Si el paciente no dio hora, omítela
-            (el formulario sugiere el cupo disponible más próximo).
+        time: Hora EXACTA pedida en formato HH:MM (24h), p. ej. "13:00". Solo si el paciente dio una
+            hora concreta; una franja ("en la tarde") NO es hora exacta → usa time_slot en su lugar.
+        time_slot: Franja del día cuando el paciente NO dio hora exacta: "mañana", "mediodia" o
+            "tarde" (ej. "en la tarde" → "tarde"). El formulario ofrece un cupo libre de esa franja.
+            Si el paciente no dio ni hora ni franja, omite ambos (el form sugiere el cupo más próximo).
         conversation_id: Lo inyecta el sistema desde el evento entrante; tú no lo proporcionas.
         sin_cita_activa: Lo inyecta el sistema (no lo proporcionas); marca que el paciente no tiene
             cita activa para bloquear cancelar/reprogramar.
@@ -201,7 +232,7 @@ async def enviar_formulario(
 
     # Prefill only applies to the booking form; the CRM ignores it for cancelar/reprogramar.
     prefill = (
-        _build_prefill(relation, patient_name, relationship, specialty, doctor, date, time)
+        _build_prefill(relation, patient_name, relationship, specialty, doctor, date, time, time_slot)
         if flow == "paciente_tercero"
         else {}
     )
