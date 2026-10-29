@@ -55,7 +55,8 @@ def _build_prefill(
     The CRM ignores values it doesn't recognize (the form still opens), so we only canonicalize the
     obvious `relation` aliases and strip blanks — never guess. `doctor`/`date`/`time` are PREFERENCES:
     the form confirms them against the doctor's real availability (see R9 in the CRM requirement doc).
-    A numeric `doctor` is sent as an int (the CRM expects a numeric id, e.g. 12); a name stays text.
+    `doctor` is sent as a STRING — the CRM accepts the id as a string ("21") or the doctor name; a
+    JSON number is not part of that contract, so an id like "21" must stay "21", not 21.
     """
     prefill: dict[str, object] = {}
     if relation and relation.strip():
@@ -68,8 +69,7 @@ def _build_prefill(
     if specialty and specialty.strip():
         prefill["specialty"] = specialty.strip()
     if doctor and doctor.strip():
-        d = doctor.strip()
-        prefill["doctor"] = int(d) if d.isdigit() else d
+        prefill["doctor"] = doctor.strip()
     if date and date.strip():
         prefill["date"] = date.strip()
     if time and time.strip():

@@ -139,8 +139,10 @@ AGENDAR, CANCELAR Y REPROGRAMAR CITAS (CON FORMULARIOS)
     actual (que incluye el día de la semana). Toma SIEMPRE la PRÓXIMA ocurrencia FUTURA de ese día;
     NUNCA uses una fecha pasada ni la de HOY cuando el paciente nombró otro día (ej.: si hoy es lunes
     y pide "el viernes", es el viernes de esta semana).
-  - time: si dio una hora ("a las 13:00"), pásala en formato HH:MM (24h). Si NO dio hora, OMÍTELA
-    (nunca inventes una): el formulario sugiere el cupo disponible más próximo.
+  - time: SOLO si dio una HORA EXACTA ("a las 13:00", "3pm"), pásala en formato HH:MM (24h). Una
+    franja como "en la tarde", "en la mañana", "al mediodía", "temprano" NO es una hora exacta:
+    en esos casos OMITE time (NO la inventes, no mandes 13:00 por "tarde"). Sin time, el formulario
+    sugiere el cupo disponible más próximo.
   El carnet NO se pre‑llena (lo tipea el paciente). doctor/fecha/hora son PREFERENCIAS: el formulario
   confirma el cupo según la disponibilidad real; nunca prometas un horario por chat.
 - Para CANCELAR: flow="cancelar_cita". Para CAMBIAR día u hora: flow="reprogramar_cita".

@@ -179,21 +179,21 @@ def test_enviar_formulario_prefill_ignored_for_non_booking():
     assert "prefill" not in body
 
 
-def test_enviar_formulario_doctor_id_sent_as_int():
-    """A numeric doctor is sent as an int (CRM expects a numeric id, e.g. 12); a name stays text."""
+def test_enviar_formulario_doctor_id_sent_as_string():
+    """The doctor id is sent as a STRING ("12"), per the CRM contract (not a JSON number)."""
     factory = _async_client(_resp(200))
     with patch("app.core.langgraph.tools.whatsapp_flows.httpx.AsyncClient", factory):
         _run(enviar_formulario.ainvoke({
             "flow": "paciente_tercero",
             "conversation_id": 3,
-            "doctor": "12",            # numeric id → int
+            "doctor": "12",            # numeric id → kept as the string "12"
             "date": "2026-10-28",
             "time": "13:00",
         }))
     client = factory.return_value.__aenter__.return_value
     prefill = client.post.call_args.kwargs["json"]["prefill"]
-    assert prefill == {"doctor": 12, "date": "2026-10-28", "time": "13:00"}
-    assert isinstance(prefill["doctor"], int)
+    assert prefill == {"doctor": "12", "date": "2026-10-28", "time": "13:00"}
+    assert isinstance(prefill["doctor"], str)
 
 
 def test_responder_recordatorio_confirma():
