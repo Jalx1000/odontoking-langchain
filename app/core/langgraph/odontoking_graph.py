@@ -18,6 +18,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
+    HumanMessage,
     SystemMessage,
     ToolMessage,
     convert_to_openai_messages,
@@ -57,7 +58,6 @@ from app.core.langgraph.tools.crm import (
     reschedule_appointment_tool,
     save_insurance,
     save_patient,
-    sync_transcript_to_crm,
 )
 from app.core.langgraph.tools.insurance import verify_insurance
 from app.core.langgraph.tools.odontoking import (
@@ -107,7 +107,6 @@ _CLASSIC_TOOLS = [
     cancel_appointment_tool,
     reschedule_appointment_tool,
     get_citas,
-    sync_transcript_to_crm,
 ]
 
 # WhatsApp native-forms mode: the LLM only detects intent and sends a form; the CRM books, cancels
@@ -125,7 +124,6 @@ _FORMS_TOOLS = [
     get_specialties,
     get_doctors,
     verify_insurance,
-    sync_transcript_to_crm,
 ]
 
 _ODONTOKING_TOOLS = _FORMS_TOOLS if settings.WHATSAPP_FLOWS_ENABLED else _CLASSIC_TOOLS
@@ -543,8 +541,10 @@ class OdontokingAgent:
         meta = (config or {}).get("metadata") or {}
         conversation_id = meta.get("conversation_id")
         # Whether the patient currently has an active (Agendado) cita. Used to guard cancel/reschedule
-        # forms: sin cita activa, the form must not be sent (the CRM would answer status:none).
-        tiene_cita_activa = bool(meta.get("cita_activa")) or bool(meta.get("citas"))
+        # forms: sin cita activa, the form must not be sent (the CRM would answer status:none). Only
+        # cita_activa counts — a patient whose citas are ALL cancelled/attended (cita_activa=None but
+        # citas non-empty) has nothing to cancel/move, so the guard must still fire for them.
+        tiene_cita_activa = bool(meta.get("cita_activa"))
 
         async def _execute(tc: dict) -> ToolMessage:
             args = tc["args"]
@@ -738,6 +738,14 @@ class OdontokingAgent:
         self._persist_tasks.add(task)
         task.add_done_callback(self._persist_tasks.discard)
 
+    def _schedule_persist(self, wa_id: str, messages: list[BaseMessage]) -> None:
+        """Fire-and-forget persist of messages to chat_histories_odonto (tracked for shutdown)."""
+        if not messages:
+            return
+        task = asyncio.create_task(_persist_messages_async(wa_id, messages))
+        self._persist_tasks.add(task)
+        task.add_done_callback(self._persist_tasks.discard)
+
     async def get_response(
         self,
         messages: list,
@@ -800,11 +808,20 @@ class OdontokingAgent:
                     invoke_args["activity_id"] = activity_id
                 result = await responder_recordatorio.ainvoke(invoke_args)
                 ok = '"success": true' in result or '"success":true' in result
+                reply_text: Optional[str] = None
                 if ok and respuesta == "confirma":
-                    return "¡Gracias por confirmar su cita! Le esperamos. 🙌"
-                if ok and respuesta == "no_asiste":
-                    return ("Entendido, gracias por avisar que no podrá asistir. ¿Desea reprogramar su "
-                            "cita para otro día o prefiere cancelarla?")
+                    reply_text = "¡Gracias por confirmar su cita! Le esperamos. 🙌"
+                elif ok and respuesta == "no_asiste":
+                    reply_text = ("Entendido, gracias por avisar que no podrá asistir. ¿Desea reprogramar su "
+                                  "cita para otro día o prefiere cancelarla?")
+                if reply_text is not None:
+                    # This turn short-circuits the graph, so persist it to chat_histories_odonto
+                    # (best-effort) — otherwise the transcript would miss the reminder exchange.
+                    self._schedule_persist(
+                        wa_id,
+                        [HumanMessage(content=last_user_text), AIMessage(content=reply_text)],
+                    )
+                    return reply_text
                 # Tool failed (e.g. multiple_reminders / error): fall through to the LLM.
                 logger.info("reminder_reply_fallthrough", respuesta=respuesta, result=result[:120])
 
@@ -866,10 +883,7 @@ class OdontokingAgent:
 
             # Persist new messages (human + AI + tool) to chat_histories_odonto
             new_msgs = [m for m in response.get("messages", [])[existing_count:] if isinstance(m, BaseMessage)]
-            if new_msgs:
-                task = asyncio.create_task(_persist_messages_async(wa_id, new_msgs))
-                self._persist_tasks.add(task)
-                task.add_done_callback(self._persist_tasks.discard)
+            self._schedule_persist(wa_id, new_msgs)
 
             # Extract mensaje from JSON response
             ai_messages = [m for m in response.get("messages", []) if isinstance(m, AIMessage) and m.content]

@@ -5,6 +5,7 @@ import json
 import random
 from datetime import datetime, timedelta
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 from langchain_core.tools import tool
@@ -54,12 +55,24 @@ _STAGE_LABELS = {
 # (Agendado / Cancelado / Atendida / …) is one cita. Model: 1 lead-cita = 1 cita.
 _NON_CITA_STAGES = {_LEAD_STAGE_CONSULTA}
 
+# Stages that ARE a real cita — these leads must never be hijacked for the reception handoff
+# (moving one to Recepcionista would drop that cita from the pipeline).
+_CITA_STAGES = {
+    _LEAD_STAGE_ATENDIDO,
+    _LEAD_STAGE_CANCELADO,
+    _LEAD_STAGE_AGENDADO,
+    _LEAD_STAGE_NO_ASISTIO,
+}
+
 _AGENT_USERS_WEEKDAY = [2, 3, 5, 7]
 _AGENT_USERS_SUNDAY = [7,8]
+_TZ_BOLIVIA = ZoneInfo("America/La_Paz")
 
 
 def _pick_agent_user() -> int:
-    pool = _AGENT_USERS_SUNDAY if datetime.now().weekday() == 6 else _AGENT_USERS_WEEKDAY
+    # Use Bolivia local time for the weekday so the Sunday pool matches the clinic's day, not the
+    # server's UTC day (which flips ~4h early).
+    pool = _AGENT_USERS_SUNDAY if datetime.now(_TZ_BOLIVIA).weekday() == 6 else _AGENT_USERS_WEEKDAY
     return random.choice(pool)
 
 
@@ -253,7 +266,9 @@ async def _collect_citas(client: httpx.AsyncClient, person_id: int) -> list[dict
     """
     all_leads = await _search_leads_by_person(client, int(person_id))
     cita_leads = [ld for ld in all_leads if _lead_stage_id(ld) not in _NON_CITA_STAGES]
-    citas = [await _summarize_cita(client, ld) for ld in cita_leads]
+    # Each _summarize_cita does its own GET /activities; fetch them concurrently so a patient with
+    # several citas doesn't add N sequential round-trips to every inbound message (preload path).
+    citas = list(await asyncio.gather(*(_summarize_cita(client, ld) for ld in cita_leads)))
     citas.sort(key=lambda c: (c.get("fecha") or "", c.get("hora") or ""))
     return citas
 
@@ -1026,10 +1041,13 @@ async def move_lead_to_reception(wa_id: str, lead_id: Optional[int] = None) -> d
                 if person and person.get("id"):
                     all_leads = await _search_leads_by_person(client, int(person["id"]))
                     conversation = [ld for ld in all_leads if _lead_stage_id(ld) == _LEAD_STAGE_CONSULTA]
-                    pool = conversation or all_leads
+                    # Prefer the conversation (Consulta) lead; else any NON-cita lead. Never fall
+                    # back to a cita-lead — moving it to Recepcionista would drop that cita.
+                    pool = conversation or [ld for ld in all_leads if _lead_stage_id(ld) not in _CITA_STAGES]
                     if pool:
                         lead_id = pool[-1].get("id")
             if not lead_id:
+                log.warning("move_lead_to_reception_no_safe_lead")
                 return {"success": False, "error": "no_lead_found"}
             await client.put(
                 f"{_BASE}/api/v1/leads/stage/edit/{lead_id}",
