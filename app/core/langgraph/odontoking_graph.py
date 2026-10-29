@@ -337,6 +337,59 @@ def _fmt_cita_detail(cita: dict) -> str:
     return " ".join(partes) if partes else "su cita"
 
 
+async def _resolve_doctor_in_prefill(args: dict) -> dict:
+    """Resolve a named `doctor` prefill to its CRM id (and carry the doctor's specialty).
+
+    The CRM paints the booking-form `doctor` prefill by id (R7), but a weak model often passes the
+    doctor NAME ("Eloy") instead of the id, so the form opens without it pre-selected. Here we
+    deterministically map whatever the model passed to the doctor's id via get_doctors — removing
+    the model as the weak link. When the doctor resolves and no specialty was provided, we also
+    carry the doctor's specialty so that field comes pre-filled too (the patient who only named a
+    doctor still gets the especialidad set). Best-effort: on any miss/ambiguity the value is kept.
+    """
+    doctor = args.get("doctor")
+    if doctor is None or (isinstance(doctor, str) and not doctor.strip()):
+        return args
+    try:
+        raw = await get_doctors.ainvoke({})
+        data = json.loads(raw)
+        doctors = data.get("data", []) if isinstance(data, dict) else []
+    except Exception as e:
+        logger.warning("prefill_doctor_resolve_failed", error=str(e))
+        return args
+    if not isinstance(doctors, list) or not doctors:
+        return args
+
+    token = _norm_cancel(str(doctor))
+    match = None
+    if str(doctor).strip().isdigit():
+        match = next((d for d in doctors if str(d.get("id")) == str(doctor).strip()), None)
+    if match is None and token:
+        hits = [
+            d for d in doctors
+            if (nm := _norm_cancel(d.get("name"))) and (token in nm or nm in token)
+        ]
+        if len(hits) == 1:
+            match = hits[0]
+    if match is None:
+        logger.info("prefill_doctor_unresolved", doctor=str(doctor)[:40])
+        return args
+
+    new_args = {**args, "doctor": str(match.get("id"))}
+    spec_val = new_args.get("specialty")
+    if not (isinstance(spec_val, str) and spec_val.strip()):
+        specs = match.get("specialties") or []
+        if specs and isinstance(specs[0], dict) and specs[0].get("name"):
+            new_args["specialty"] = specs[0]["name"]
+    logger.info(
+        "prefill_doctor_resolved",
+        doctor_in=str(doctor)[:40],
+        doctor_id=match.get("id"),
+        specialty=new_args.get("specialty"),
+    )
+    return new_args
+
+
 def _load_odontoking_prompt(
     wa_id: str,
     *,
@@ -645,6 +698,11 @@ class OdontokingAgent:
             args = tc["args"]
             if tc["name"] == "enviar_formulario" and conversation_id is not None:
                 args = {**args, "conversation_id": conversation_id}
+                # Deterministically resolve the doctor NAME the model passed to its CRM id (and carry
+                # the doctor's specialty) so the booking form can pre-select both — the model is no
+                # longer the weak link for the prefill.
+                if args.get("flow") == "paciente_tercero":
+                    args = await _resolve_doctor_in_prefill(args)
                 # Deterministic guard: block cancelar/reprogramar when there is no active cita, so a
                 # weak model can't send the wrong form; the tool returns a "offer booking" signal.
                 if not tiene_cita_activa and args.get("flow") in ("cancelar_cita", "reprogramar_cita"):
