@@ -122,6 +122,8 @@ def _make_process_fn(
     contact_lead_id: int | None = None,
     pacientes_a_cargo: list[dict] | None = None,
     recordatorios: list[dict] | None = None,
+    citas_activas: list[dict] | None = None,
+    fuera_de_horario: bool | None = None,
 ):
     """Return a ProcessFn closure bound to the CRM destination + patient context."""
     gateway = get_gateway()
@@ -151,6 +153,8 @@ def _make_process_fn(
                     conversation_id=dest.conversation_id,
                     pacientes_a_cargo=pacientes_a_cargo,
                     recordatorios=recordatorios,
+                    citas_activas=citas_activas,
+                    fuera_de_horario=fuera_de_horario,
                     handoff_callback=_on_handoff,
                 )
             )
@@ -259,6 +263,9 @@ async def receive_crm_event(request: Request) -> dict:
 
     pacientes_a_cargo = event.patient_context.pacientes_a_cargo if event.patient_context else None
     recordatorios = event.patient_context.recordatorios if event.patient_context else None
+    citas_activas = event.patient_context.citas_activas if event.patient_context else None
+    # fuera_de_horario is computed CRM-side (Bolivia local time); prefer it over the LLM re-deriving.
+    fuera_de_horario = event.clinica.fuera_de_horario if event.clinica else None
     logger.info(
         "crm_patient_context_loaded",
         wa_id=phone,
@@ -269,6 +276,8 @@ async def receive_crm_event(request: Request) -> dict:
             if isinstance(r, dict)
         ],
         pacientes_a_cargo=len(pacientes_a_cargo or []),
+        citas_activas=len(citas_activas or []),
+        fuera_de_horario=fuera_de_horario,
     )
 
     logger.info(
@@ -285,6 +294,8 @@ async def receive_crm_event(request: Request) -> dict:
         contact_lead_id=event.contact.lead_id,
         pacientes_a_cargo=pacientes_a_cargo,
         recordatorios=recordatorios,
+        citas_activas=citas_activas,
+        fuera_de_horario=fuera_de_horario,
     )
     # A flow_reply is a single discrete event (not free text) — process it immediately instead of
     # buffering/concatenating it with other messages.

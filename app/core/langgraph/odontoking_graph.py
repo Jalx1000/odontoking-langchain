@@ -186,6 +186,27 @@ def _format_pacientes_a_cargo(pacientes: list[dict] | None) -> list[str]:
     return lines
 
 
+def _format_citas_activas(citas_activas: list[dict] | None) -> list[str]:
+    """Render the CRM's active citas (contact + dependents) as context lines.
+
+    These are the citas the agent may cancelar/reprogramar. Rendered tolerantly: whatever of
+    lead_id/fecha/hora/doctor/paciente is present is shown.
+    """
+    if not citas_activas:
+        return []
+    lines = ["citas_activas:  # citas vigentes (incluye pacientes a cargo) — usar para cancelar/reprogramar"]
+    for c in citas_activas:
+        if not isinstance(c, dict):
+            continue
+        fecha = f"{c.get('fecha') or 's/fecha'} {c.get('hora') or ''}".strip()
+        paciente = c.get("paciente") or c.get("patient_name") or c.get("nombre") or ""
+        quien = f" | {paciente}" if paciente else ""
+        lines.append(
+            f"  - lead_id={c.get('lead_id')} | {fecha} | Dr. {c.get('doctor') or 's/doctor'}{quien}"
+        )
+    return lines
+
+
 def _format_recordatorios(recordatorios: list[dict] | None) -> list[str]:
     """Render appointment reminders (C1/C2) so the agent can handle a reply to one.
 
@@ -403,6 +424,8 @@ def _load_odontoking_prompt(
     cita_activa: int | None = None,
     pacientes_a_cargo: list[dict] | None = None,
     recordatorios: list[dict] | None = None,
+    citas_activas: list[dict] | None = None,
+    fuera_de_horario: bool | None = None,
 ) -> str:
     """Render the odontoking system prompt with Bolivia local datetime and patient context."""
     now = datetime.now(_TZ_BOLIVIA)
@@ -473,6 +496,14 @@ def _load_odontoking_prompt(
     # without sending a form.
     context_lines.extend(_format_pacientes_a_cargo(pacientes_a_cargo))
     context_lines.extend(_format_recordatorios(recordatorios))
+    # Active citas (CRM, incl. dependents) — authoritative for cancelar/reprogramar.
+    context_lines.extend(_format_citas_activas(citas_activas))
+    # Clinic-computed out-of-hours flag — the agent uses it directly for handoffs (no re-deriving).
+    if fuera_de_horario is not None:
+        estado = "true" if fuera_de_horario else "false"
+        context_lines.append(
+            f"fuera_de_horario_actual: {estado}  # calculado por el CRM (hora Bolivia); úsalo en los handoff"
+        )
 
     context = "\n".join(context_lines)
     return _PROMPT_TEMPLATE.format(current_datetime=current_datetime) + f"\n\n{context}"
@@ -654,6 +685,8 @@ class OdontokingAgent:
             cita_activa=metadata.get("cita_activa"),
             pacientes_a_cargo=metadata.get("pacientes_a_cargo"),
             recordatorios=metadata.get("recordatorios"),
+            citas_activas=metadata.get("citas_activas"),
+            fuera_de_horario=metadata.get("fuera_de_horario"),
         )
         # When the deterministic intake already collected steps 1-6, inject that data so the
         # LLM continues from step 7 and never re-asks.
@@ -692,7 +725,9 @@ class OdontokingAgent:
         # forms: sin cita activa, the form must not be sent (the CRM would answer status:none). Only
         # cita_activa counts — a patient whose citas are ALL cancelled/attended (cita_activa=None but
         # citas non-empty) has nothing to cancel/move, so the guard must still fire for them.
-        tiene_cita_activa = bool(meta.get("cita_activa"))
+        # citas_activas (CRM, incl. dependents) also counts: a parent canceling a child's cita must
+        # not be blocked just because the wa_id owner has none.
+        tiene_cita_activa = bool(meta.get("cita_activa")) or bool(meta.get("citas_activas"))
 
         async def _execute(tc: dict) -> ToolMessage:
             args = tc["args"]
@@ -907,6 +942,7 @@ class OdontokingAgent:
         text: str,
         citas: list[dict] | None,
         cita_activa: int | None,
+        citas_activas: list[dict] | None = None,
     ) -> Optional[str]:
         """Deterministic 2-turn direct cancel for a patient with exactly ONE active cita.
 
@@ -914,6 +950,10 @@ class OdontokingAgent:
         remember the pending lead_id. Turn 2 ("Sí" → cancel directly via the CRM; "No" → keep it).
         Returns the reply to send (and short-circuits the graph), or None to fall through to the LLM
         (e.g. 2+ citas, ambiguous text, or the CRM cancel failed).
+
+        `citas_activas` (from the CRM, §7.2) is the authoritative list of ACTIVE citas INCLUDING the
+        contact's dependents; when present it is preferred over the wa_id-only `citas` preload, so a
+        parent can cancel a child's cita. Its items are already active (no estado filter needed).
         """
         key = f"{_CANCEL_CONFIRM_PREFIX}{wa_id}"
         pending_raw = await cache_service.get(key)
@@ -948,7 +988,11 @@ class OdontokingAgent:
         # ── Turn 1: detect a cancel intent for a single active cita ──
         if not _wants_direct_cancel(text):
             return None
-        cita = _single_active_cita(citas, cita_activa)
+        # Prefer the CRM's citas_activas (already active, includes dependents); else filter `citas`.
+        if citas_activas is not None:
+            cita = citas_activas[0] if len(citas_activas) == 1 else None
+        else:
+            cita = _single_active_cita(citas, cita_activa)
         if cita is None:
             return None  # 0 or 2+ active citas → LLM/form handles it (incl. the sin_cita_activa guard)
         lead_id = cita.get("lead_id")
@@ -979,6 +1023,8 @@ class OdontokingAgent:
         conversation_id: int | None = None,
         pacientes_a_cargo: list[dict] | None = None,
         recordatorios: list[dict] | None = None,
+        citas_activas: list[dict] | None = None,
+        fuera_de_horario: bool | None = None,
         handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
         """Process a WhatsApp message and return the agent's texto response.
@@ -1052,7 +1098,9 @@ class OdontokingAgent:
         # cita's detail and cancel directly via the CRM on "Sí" — no form. Deterministic; falls
         # through to the LLM for 2+ citas, reschedule intent, or a CRM failure.
         if settings.WHATSAPP_FLOWS_ENABLED and conversation_id:
-            cancel_reply = await self._handle_direct_cancel(wa_id, last_user_text, citas, cita_activa)
+            cancel_reply = await self._handle_direct_cancel(
+                wa_id, last_user_text, citas, cita_activa, citas_activas
+            )
             if cancel_reply is not None:
                 return cancel_reply
 
@@ -1074,6 +1122,8 @@ class OdontokingAgent:
                 "conversation_id": conversation_id,
                 "pacientes_a_cargo": pacientes_a_cargo,
                 "recordatorios": recordatorios,
+                "citas_activas": citas_activas,
+                "fuera_de_horario": fuera_de_horario,
                 "intake_handoff": intake_handoff,
             },
             "recursion_limit": 50,

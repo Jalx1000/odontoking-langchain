@@ -142,3 +142,29 @@ class TestDirectCancelFlow:
         citas = [_cita(lead_id=999)]
         await agent._handle_direct_cancel(_WA, "cancelar", citas, 999)
         assert await agent._handle_direct_cancel(_WA, "sí", citas, 999) is None
+
+    async def test_citas_activas_dependent_preferred_over_wa_id_citas(self, monkeypatch):
+        """citas_activas (CRM, incl. dependents) is used even when the wa_id owner has no cita."""
+        await self._clear()
+        calls = {}
+
+        async def _fake_cancel(wa_id, lead_id=None):
+            calls["lead_id"] = lead_id
+            return {"success": True, "lead_id": lead_id}
+
+        monkeypatch.setattr(og, "cancel_appointment", _fake_cancel)
+        agent = og.OdontokingAgent()
+        # wa_id owner has NO citas; the single active cita (a child's) comes from citas_activas.
+        hijo = _cita(lead_id=321, doctor="Ana")
+        r1 = await agent._handle_direct_cancel(_WA, "quiero cancelar la cita", [], None, [hijo])
+        assert r1 is not None and "seguro" in r1.lower()
+        r2 = await agent._handle_direct_cancel(_WA, "sí", [], None, [hijo])
+        assert "cancelada" in r2.lower()
+        assert calls["lead_id"] == 321  # the dependent's cita, not the wa_id owner's latest
+
+    async def test_citas_activas_two_falls_through(self):
+        """With 2+ active citas (incl. dependents) there is no single target → fall through."""
+        await self._clear()
+        agent = og.OdontokingAgent()
+        dos = [_cita(lead_id=1), _cita(lead_id=2)]
+        assert await agent._handle_direct_cancel(_WA, "cancelar mi cita", [], None, dos) is None

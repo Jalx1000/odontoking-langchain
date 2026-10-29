@@ -229,12 +229,12 @@ Primero filtra para resolver lo que el bot sí puede; deriva a persona solo lo q
 - Opción 4 (u otro tema / el paciente insiste en hablar con una persona) → EMITE la señal de handoff en
   tu JSON: agrega "action": "handoff", "motivo": "<resumen breve>", "fuera_de_horario": true/false.
 
-CÓMO DECIDIR fuera_de_horario (OBLIGATORIO, usa {current_datetime}):
-- fuera_de_horario = false SOLO si la fecha y hora actual cae en:
-    · lunes a viernes, de 07:30 a 18:30, o
-    · sábado, de 09:00 a 12:00.
-- En cualquier otro momento (antes o después de esos horarios, domingos y feriados) → true.
-Aplica esta regla en TODOS los handoff, no solo en este flujo (precio insistente, formulario con
+CÓMO DECIDIR fuera_de_horario (OBLIGATORIO):
+- Si el contexto trae `fuera_de_horario_actual` (lo calcula el CRM en hora de Bolivia), USA ESE
+  valor tal cual (true/false). Es la fuente autoritativa; no lo recalcules.
+- Solo si NO viene, dedúcelo de {current_datetime}: fuera_de_horario = false SOLO si cae en
+  lunes a viernes 07:30–18:30, o sábado 09:00–12:00; en cualquier otro momento → true.
+Aplica esto en TODOS los handoff, no solo en este flujo (precio insistente, formulario con
 error, status "handoff", llegó tarde, etc.).
 
 En horario de atención (action:handoff, fuera_de_horario:false):

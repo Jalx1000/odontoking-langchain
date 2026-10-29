@@ -81,9 +81,24 @@ class CrmPatientContext(BaseModel):
 
     pacientes_a_cargo: list[dict] = []
     citas: list[dict] = []
+    # Active (Agendado) appointments of the contact AND their dependents (pacientes_a_cargo), sent
+    # by the CRM (§7.2). Used for cancelar/reprogramar so a parent can act on a child's cita.
+    citas_activas: list[dict] = []
     # Appointment reminders sent to the patient (activity_id, lead_id, fecha, hora, doctor,
     # respuesta). `respuesta` is null until the patient answers → drives C1/C2 (confirm / can't attend).
     recordatorios: list[dict] = []
+
+
+class CrmClinica(BaseModel):
+    """Clinic-local time context the CRM attaches to each event (§7.1).
+
+    `fuera_de_horario` is computed CRM-side from Bolivia local time, so the agent uses it directly
+    for handoffs instead of re-deriving it from the datetime. Extra fields (datetime, día) ignored.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    fuera_de_horario: Optional[bool] = None
 
 
 class CrmWebhookEvent(BaseModel):
@@ -101,3 +116,4 @@ class CrmWebhookEvent(BaseModel):
     window: Optional[CrmWindow] = None
     reply: Optional[CrmReply] = None
     patient_context: Optional[CrmPatientContext] = None
+    clinica: Optional[CrmClinica] = None
