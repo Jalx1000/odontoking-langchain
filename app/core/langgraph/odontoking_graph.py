@@ -4,6 +4,7 @@ import asyncio
 import json
 import os as _os
 import re
+import unicodedata
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import (
@@ -48,9 +49,11 @@ from psycopg.rows import (
 from psycopg_pool import AsyncConnectionPool
 from pydantic import SecretStr
 
+from app.core.cache import cache_service
 from app.core.config import settings
 from app.services.database import database_service
 from app.core.langgraph.tools.crm import (
+    cancel_appointment,
     cancel_appointment_tool,
     create_appointment,
     get_citas,
@@ -240,6 +243,98 @@ def _detect_reminder_reply(text: str, recordatorios: list[dict] | None) -> Optio
     if first in _REMINDER_YES_STARTS or norm.startswith(("si ", "si,", "sí ", "sí,", "confirm")):
         return "confirma", activity_id
     return None
+
+
+# ── Direct cancel short-circuit (una sola cita activa) ─────────────────────────
+# When the patient has exactly ONE active cita and clearly wants to cancel it (not reschedule),
+# we confirm with the cita's detail and, on an explicit "Sí", cancel it directly via the CRM —
+# skipping the WhatsApp form. Deterministic (not left to the LLM) and scoped to the forms-mode
+# live path. State is a tiny per-wa_id flag in cache_service so it survives the two WhatsApp turns.
+
+_CANCEL_CONFIRM_PREFIX = "cancel_confirm:"
+_CANCEL_CONFIRM_TTL = 600  # 10 min — the pending confirmation expires if the patient wanders off
+
+# Wants to cancel (eliminate), NOT reschedule. Mirrors postbooking._CANCEL_KEYWORDS but kept here
+# so the forms path doesn't depend on that module.
+_DIRECT_CANCEL_KEYWORDS = (
+    "cancelar", "cancela", "cancele", "cancélela", "cancelarla", "anular", "anula", "anúlela",
+    "ya no quiero la cita", "ya no quiero mi cita", "eliminar mi cita", "eliminar la cita",
+    "borrar mi cita", "no quiero la cita", "ya no puedo ir", "ya no podré ir",
+)
+# A reschedule intent must win over a bare "cancelar" ("cancélela y muévala al viernes"): those go
+# to the LLM/form, never to the direct-cancel path.
+_RESCHEDULE_HINTS = (
+    "reprogram", "reagend", "mover", "muev", "pasar", "pásela", "pasela", "otro dia", "otro día",
+    "otra hora", "otra fecha", "cambiar la fecha", "cambiar el dia", "cambiar el día", "cambiar la hora",
+    "para mañana", "para el", "al viernes", "al lunes", "al martes", "al miércoles", "al miercoles",
+    "al jueves", "al sábado", "al sabado", "al domingo",
+)
+_CANCEL_YES = {"si", "sí", "sip", "claro", "confirmo", "confirmar", "dale", "ok", "oka", "correcto",
+               "por supuesto", "de acuerdo", "asi es", "así es", "cancelala", "cancélala", "cancelar"}
+_CANCEL_NO = {"no", "nop", "no gracias", "mejor no", "dejala", "déjala", "dejalo", "déjalo",
+              "no cancelar", "no, gracias", "cancelar no"}
+
+
+def _norm_cancel(text: str) -> str:
+    """Lowercase + strip accents/outer punctuation for cancel-intent matching."""
+    t = unicodedata.normalize("NFD", (text or "").lower())
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn")
+    return t.strip().strip("!¡.?¿, ")
+
+
+def _wants_direct_cancel(text: str) -> bool:
+    """True when the message asks to cancel (eliminate) a cita and is NOT a reschedule."""
+    low = _norm_cancel(text)
+    if not low:
+        return False
+    if any(h in low for h in (_norm_cancel(h) for h in _RESCHEDULE_HINTS)):
+        return False
+    return any(k in low for k in (_norm_cancel(k) for k in _DIRECT_CANCEL_KEYWORDS))
+
+
+def _is_cancel_yes(text: str) -> bool:
+    norm = _norm_cancel(text)
+    if norm in _CANCEL_YES:
+        return True
+    return norm.startswith(("si ", "si,", "sí ", "sí,", "confirm"))
+
+
+def _is_cancel_no(text: str) -> bool:
+    norm = _norm_cancel(text)
+    if norm in _CANCEL_NO:
+        return True
+    return norm.startswith(("no ", "no,"))
+
+
+def _single_active_cita(citas: list[dict] | None, cita_activa: int | None) -> Optional[dict]:
+    """Return the single active (Agendado) cita dict when there is EXACTLY one, else None."""
+    if not citas:
+        return None
+    activas = [c for c in citas if isinstance(c, dict) and c.get("estado") == "Agendado"]
+    if len(activas) != 1:
+        return None
+    return activas[0]
+
+
+def _fmt_cita_detail(cita: dict) -> str:
+    """Human one-liner for a cita: 'el 18/06/2026 a las 14:00 con el/la Dr/a. X'."""
+    fecha = cita.get("fecha") or ""
+    hora = (cita.get("hora") or "")[:5]
+    doctor = cita.get("doctor") or ""
+    partes = []
+    if fecha:
+        # fecha comes as 'YYYY-MM-DD' from the CRM summary → render DD/MM/YYYY.
+        try:
+            y, m, d = fecha.split("-")
+            fecha = f"{d}/{m}/{y}"
+        except (ValueError, AttributeError):
+            pass
+        partes.append(f"el {fecha}")
+    if hora:
+        partes.append(f"a las {hora}")
+    if doctor:
+        partes.append(f"con el/la Dr/a. {doctor}")
+    return " ".join(partes) if partes else "su cita"
 
 
 def _load_odontoking_prompt(
@@ -746,6 +841,68 @@ class OdontokingAgent:
         self._persist_tasks.add(task)
         task.add_done_callback(self._persist_tasks.discard)
 
+    async def _handle_direct_cancel(
+        self,
+        wa_id: str,
+        text: str,
+        citas: list[dict] | None,
+        cita_activa: int | None,
+    ) -> Optional[str]:
+        """Deterministic 2-turn direct cancel for a patient with exactly ONE active cita.
+
+        Turn 1 (intent "cancelar", not reschedule): ask to confirm with the cita's detail and
+        remember the pending lead_id. Turn 2 ("Sí" → cancel directly via the CRM; "No" → keep it).
+        Returns the reply to send (and short-circuits the graph), or None to fall through to the LLM
+        (e.g. 2+ citas, ambiguous text, or the CRM cancel failed).
+        """
+        key = f"{_CANCEL_CONFIRM_PREFIX}{wa_id}"
+        pending_raw = await cache_service.get(key)
+
+        # ── Turn 2: a confirmation is pending ──
+        if pending_raw:
+            if _is_cancel_yes(text):
+                try:
+                    pending = json.loads(pending_raw)
+                except (json.JSONDecodeError, TypeError):
+                    pending = {}
+                lead_id = pending.get("lead_id")
+                await cache_service.delete(key)
+                result = await cancel_appointment(wa_id, lead_id=lead_id)
+                if result.get("success"):
+                    reply = ("Su cita ha sido cancelada ✅. Cuando guste agendar una nueva, escríbame "
+                             "y con gusto le ayudo 🦷.")
+                    logger.info("direct_cancel_done", wa_id=wa_id, lead_id=result.get("lead_id"))
+                    self._schedule_persist(wa_id, [HumanMessage(content=text), AIMessage(content=reply)])
+                    return reply
+                # CRM cancel failed → let the LLM offer the form fallback.
+                logger.warning("direct_cancel_crm_failed", wa_id=wa_id, result=result)
+                return None
+            if _is_cancel_no(text):
+                await cache_service.delete(key)
+                reply = "Perfecto, su cita se mantiene sin cambios. ¿Hay algo más en que pueda ayudarle? 😊"
+                self._schedule_persist(wa_id, [HumanMessage(content=text), AIMessage(content=reply)])
+                return reply
+            # Ambiguous reply while awaiting confirmation → re-ask once, keep the pending flag.
+            return ('Para confirmar la cancelación responda "Sí"; si desea conservar su cita responda "No". 🙏')
+
+        # ── Turn 1: detect a cancel intent for a single active cita ──
+        if not _wants_direct_cancel(text):
+            return None
+        cita = _single_active_cita(citas, cita_activa)
+        if cita is None:
+            return None  # 0 or 2+ active citas → LLM/form handles it (incl. the sin_cita_activa guard)
+        lead_id = cita.get("lead_id")
+        await cache_service.set(
+            key, json.dumps({"lead_id": lead_id}, ensure_ascii=False), ttl=_CANCEL_CONFIRM_TTL
+        )
+        reply = (
+            f"¿Está seguro de que desea cancelar su cita {_fmt_cita_detail(cita)}?\n\n"
+            'Responda "Sí" para cancelarla o "No" para conservarla.'
+        )
+        logger.info("direct_cancel_confirm_asked", wa_id=wa_id, lead_id=lead_id)
+        self._schedule_persist(wa_id, [HumanMessage(content=text), AIMessage(content=reply)])
+        return reply
+
     async def get_response(
         self,
         messages: list,
@@ -829,6 +986,15 @@ class OdontokingAgent:
         # the system prompt from the first token. Best-effort — never blocks the reply on failure.
         if citas is None:
             person_id, citas, cita_activa = await preload_patient_citas(wa_id)
+
+        # ── Direct cancel short-circuit (una sola cita activa) ──
+        # When the patient has exactly ONE active cita and asks to cancel it, confirm with the
+        # cita's detail and cancel directly via the CRM on "Sí" — no form. Deterministic; falls
+        # through to the LLM for 2+ citas, reschedule intent, or a CRM failure.
+        if settings.WHATSAPP_FLOWS_ENABLED and conversation_id:
+            cancel_reply = await self._handle_direct_cancel(wa_id, last_user_text, citas, cita_activa)
+            if cancel_reply is not None:
+                return cancel_reply
 
         graph = await self._get_graph()
         callbacks: list[BaseCallbackHandler] = [langfuse_callback_handler] if settings.LANGFUSE_TRACING_ENABLED else []
