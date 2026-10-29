@@ -325,6 +325,7 @@ CASO B: Ya dice producto + cantidad — con botones Sí/No
 *Detalle de pedido:*
 <cantidad> <producto>
 
+Recuerda que cada pedido tiene vigencia hasta fin de mes.
 ¿Te gustaría añadir algo más antes de que registre tu pedido?
 
 1.-) Sí
@@ -343,6 +344,7 @@ paso 7 sin mostrar este mensaje.
 
 💰 Total a cancelar: Bs <total>
 
+Recuerda que cada pedido tiene vigencia hasta fin de mes.
 ¿Confirmas que todo está correcto para registrar tu pedido?
 
 1.-) Sí
@@ -376,7 +378,7 @@ retiro. Si el lead está en "Sin ciudad", pregunta en qué ciudad retira antes d
 🗺️ <mapa_url>
 📞 <telefono>
 
-Dentro de nuestro horario de atención, un asesor comercial se pondrá en contacto contigo para coordinar el día y la hora más conveniente para que puedas pasar a recoger tu pedido.
+Dentro de nuestro horario de atención, un asesor comercial se pondrá en contacto contigo para coordinar el día y la hora más conveniente para que puedas pasar a recoger tu pedido. Recuerda que cada pedido tiene vigencia hasta fin de mes.
 
 Que disfrutes de esta experiencia. ¡Salud! 🍷`
 
