@@ -38,7 +38,6 @@ from app.core.logging import logger
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis  # pyright: ignore[reportMissingImports]
-    import aio_pika as _aio_pika  # pyright: ignore[reportMissingImports]
 
 try:
     from redis.asyncio import Redis

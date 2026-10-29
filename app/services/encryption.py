@@ -7,7 +7,6 @@ All WhatsApp access tokens, verify tokens, and CRM tokens are encrypted before
 INSERT and decrypted after SELECT. The DB never stores plaintext secrets.
 """
 
-import base64
 from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken

@@ -153,7 +153,7 @@ async def _db_get(slug: str) -> Optional[TenantConfig]:
         from app.services.database import database_service
         from app.models.tenant import Tenant
         with Session(database_service.engine) as session:
-            row = session.exec(select(Tenant).where(Tenant.slug == slug, Tenant.is_active == True)).first()
+            row = session.exec(select(Tenant).where(Tenant.slug == slug, Tenant.is_active == True)).first()  # noqa: E712
             if row:
                 return _tenant_from_db_row(row)
     except Exception as e:

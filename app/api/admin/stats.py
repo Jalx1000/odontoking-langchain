@@ -21,7 +21,7 @@ async def global_stats():
     since = today - timedelta(days=30)
 
     with Session(database_service.engine) as session:
-        tenants = session.exec(select(Tenant).where(Tenant.is_active == True)).all()
+        tenants = session.exec(select(Tenant).where(Tenant.is_active == True)).all()  # noqa: E712
 
         # Aggregate usage_logs per tenant
         rows = session.exec(

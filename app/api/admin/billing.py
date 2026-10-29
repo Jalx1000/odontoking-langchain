@@ -94,7 +94,7 @@ async def export_all_billing_csv(month: str):
     first, last = _parse_month(month)
 
     with Session(database_service.engine) as session:
-        tenants = session.exec(select(Tenant).where(Tenant.is_active == True)).all()
+        tenants = session.exec(select(Tenant).where(Tenant.is_active == True)).all()  # noqa: E712
         rows = []
         for t in tenants:
             agg = session.exec(
