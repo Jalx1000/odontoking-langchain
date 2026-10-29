@@ -196,6 +196,36 @@ def test_enviar_formulario_doctor_id_sent_as_string():
     assert isinstance(prefill["doctor"], str)
 
 
+def test_enviar_formulario_saluda_antes_del_form():
+    """saludar=True (primer contacto) → el saludo se postea a /messages ANTES del form a /flows."""
+    factory = _async_client(_resp(200))
+    with patch("app.core.langgraph.tools.whatsapp_flows.httpx.AsyncClient", factory):
+        _run(enviar_formulario.ainvoke({
+            "flow": "paciente_tercero",
+            "conversation_id": 7,
+            "saludar": True,
+        }))
+    client = factory.return_value.__aenter__.return_value
+    calls = client.post.call_args_list
+    assert len(calls) == 2  # saludo + formulario
+    # Primer POST: saludo de bienvenida a /messages.
+    assert calls[0].args[0].endswith("/conversations/7/messages")
+    assert "Bienvenido" in calls[0].kwargs["json"]["text"]
+    # Segundo POST: el formulario a /flows.
+    assert calls[1].args[0].endswith("/conversations/7/flows")
+    assert calls[1].kwargs["json"]["flow"] == "paciente_tercero"
+
+
+def test_enviar_formulario_sin_saludar_solo_postea_form():
+    """Sin saludar (default), solo se postea el formulario (un único POST)."""
+    factory = _async_client(_resp(200))
+    with patch("app.core.langgraph.tools.whatsapp_flows.httpx.AsyncClient", factory):
+        _run(enviar_formulario.ainvoke({"flow": "paciente_tercero", "conversation_id": 7}))
+    client = factory.return_value.__aenter__.return_value
+    assert len(client.post.call_args_list) == 1
+    assert client.post.call_args.args[0].endswith("/flows")
+
+
 def test_responder_recordatorio_confirma():
     """'confirma' → POST a .../appointments/respond con respuesta + activity_id."""
     factory = _async_client(_resp(200))

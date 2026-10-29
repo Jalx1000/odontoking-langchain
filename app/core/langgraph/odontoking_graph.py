@@ -697,7 +697,9 @@ class OdontokingAgent:
         async def _execute(tc: dict) -> ToolMessage:
             args = tc["args"]
             if tc["name"] == "enviar_formulario" and conversation_id is not None:
-                args = {**args, "conversation_id": conversation_id}
+                # saludar: on first contact (new patient) the tool sends the welcome greeting BEFORE
+                # the form, so it lands first in the chat (the form is a side-effect of this call).
+                args = {**args, "conversation_id": conversation_id, "saludar": bool(meta.get("is_new_patient"))}
                 # Deterministically resolve the doctor NAME the model passed to its CRM id (and carry
                 # the doctor's specialty) so the booking form can pre-select both — the model is no
                 # longer the weak link for the prefill.
