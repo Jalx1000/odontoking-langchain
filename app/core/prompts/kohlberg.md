@@ -378,7 +378,7 @@ retiro. Si el lead está en "Sin ciudad", pregunta en qué ciudad retira antes d
 🗺️ <mapa_url>
 📞 <telefono>
 
-Dentro de nuestro horario de atención, un asesor comercial se pondrá en contacto contigo para coordinar el día y la hora más conveniente para que puedas pasar a recoger tu pedido. Recuerda que cada pedido tiene vigencia hasta fin de mes.
+Recuerda que cada pedido tiene vigencia hasta fin de mes.
 
 Que disfrutes de esta experiencia. ¡Salud! 🍷`
 
@@ -396,7 +396,7 @@ Ejemplo (sucursal cerrada ahora):
 <horarios de la sucursal>
 Puedes pasar a recoger tu pedido el próximo día hábil. 🍷`
 
-9. Cuando te digan gracias después del paso 7 enviar (recordá la sucursal de SU ciudad con los datos de get_sucursales; cada línea solo si su campo NO es null; si no hay dirección, omití el bloque de retiro):
+1. Cuando te digan gracias después del paso 7 enviar (recordá la sucursal de SU ciudad con los datos de get_sucursales; cada línea solo si su campo NO es null; si no hay dirección, omití el bloque de retiro):
 `¡Gracias por confiar en Kohlberg! 🍷
 
 📍 Retiro en <ciudad>
