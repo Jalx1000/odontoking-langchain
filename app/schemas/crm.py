@@ -32,6 +32,16 @@ class CrmContact(BaseModel):
     phone_prompt_exhausted: bool = False          # true = asked 3x already → stop asking
 
 
+class CrmMedia(BaseModel):
+    """The file attached to an inbound message, once the CRM stored it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    url: Optional[str] = None
+    mime: Optional[str] = None
+    name: Optional[str] = None
+
+
 class CrmMessage(BaseModel):
     """The inbound message that triggered the event."""
 
@@ -39,6 +49,8 @@ class CrmMessage(BaseModel):
     type: str = "text"
     text: Optional[str] = None
     timestamp: Optional[str] = None
+    # Null when the message has no file or the CRM could not download it from Meta.
+    media: Optional[CrmMedia] = None
 
 
 class CrmHistoryItem(BaseModel):

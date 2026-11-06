@@ -266,6 +266,9 @@ class Settings:
         self.KOHLBERG_API_URL = (os.getenv("KOHLBERG_API_URL", "").rstrip("/") or self.CRM_BASE_URL)
         self.KOHLBERG_API_TOKEN = os.getenv("KOHLBERG_API_TOKEN", "") or self.CRM_API_KEY
         self.KOHLBERG_LLM_MODEL = os.getenv("KOHLBERG_LLM_MODEL", self.ODONTOKING_LLM_MODEL)
+        # Reads the photos clients send. Its own variable so it can change without touching the agent.
+        self.KOHLBERG_VISION_MODEL = os.getenv("KOHLBERG_VISION_MODEL", self.KOHLBERG_LLM_MODEL)
+        self.KOHLBERG_VISION_TIMEOUT = float(os.getenv("KOHLBERG_VISION_TIMEOUT", "20"))
         # TTL (seconds) for the in-process product-catalog cache in get_promos. Collapses the heaviest
         # CRM call to once per window across all conversations, easing the CRM's 429 throttle.
         self.KOHLBERG_PROMOS_CACHE_TTL = int(os.getenv("KOHLBERG_PROMOS_CACHE_TTL", "60"))

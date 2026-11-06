@@ -20,6 +20,7 @@ from app.core.limiter import limiter
 from app.core.logging import logger
 from app.schemas import Message
 from app.schemas.crm import CrmWebhookEvent
+from app.services.client_photos import expand_photos, photo_marker, strip_markers
 from app.services.gateway import Destination, get_gateway
 from app.services.message_buffer import message_buffer_service
 
@@ -80,6 +81,7 @@ def _make_process_fn(dest: Destination, patient_ctx: dict):
     gateway = get_gateway()
 
     async def _process(wa_id: str, text: str) -> None:
+        text = await expand_photos(text, wa_id)
         messages = [Message(role="user", content=text)]
         turn_id = sha256(f"sofo-crm:{wa_id}:{time.monotonic_ns()}:{text}".encode()).hexdigest()[:16]
         agent_task: asyncio.Task | None = None
@@ -177,11 +179,16 @@ async def receive_crm_event(request: Request) -> dict:
         return {"status": "ignored"}
 
     # Accept text AND interactive (button/list replies): the CRM now puts the selected option's label
-    # in `message.text` for interactive messages, so a city/option picker resolves to plain text. Any
-    # other type (image/audio/document/location) still carries no usable text and is ignored.
-    text = (event.message.text or "").strip()
-    if event.message.type not in ("text", "interactive") or not text:
-        logger.info("crm_unsupported_message", msg_type=event.message.type)
+    # in `message.text` for interactive messages, so a city/option picker resolves to plain text.
+    # An image is always a turn, with or without a caption: it goes through as a marker that is read
+    # right before the agent runs (services/client_photos.py). Any other type (audio/document/
+    # location) still carries no usable text and is ignored.
+    text = strip_markers((event.message.text or "").strip())
+    if event.message.type == "image":
+        marker = photo_marker(event.message.media.url if event.message.media else None)
+        text = f"{marker}\n{text}" if text else marker
+    elif event.message.type not in ("text", "interactive") or not text:
+        logger.info("crm_unsupported_message", msg_type=event.message.type, message_id=event.message.id)
         return {"status": "ignored"}
 
     msg_key = str(event.message.id or f"{event.conversation_id}:{event.message.timestamp}")
@@ -216,6 +223,8 @@ async def receive_crm_event(request: Request) -> dict:
         conversation_id=event.conversation_id,
         wa_id=convo_key,
         channel=event.gateway,
+        msg_type=event.message.type,
+        message_id=event.message.id,
         preview=text[:60],
     )
     # Diagnostic: shows whether the CRM is actually sending the phone-capture signal on this channel.
