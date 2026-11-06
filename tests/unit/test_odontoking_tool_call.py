@@ -11,7 +11,10 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.errors import GraphInterrupt
 
-from app.core.langgraph.odontoking_graph import OdontokingAgent
+from langgraph.graph import END, StateGraph
+from langgraph.types import Command
+
+from app.core.langgraph.odontoking_graph import OdontokingAgent, _extract_handoff, _extract_mensaje
 from app.schemas import GraphState
 
 
@@ -160,3 +163,91 @@ async def test_real_responder_recordatorio_reaches_the_crm_with_injected_id(monk
 
     assert posted[0][0].endswith("/conversations/4029/appointments/respond")
     assert "missing_conversation_id" not in command.update["messages"][0].content
+
+
+def _failing_tool(result: str) -> AsyncMock:
+    tool = AsyncMock()
+    tool.ainvoke = AsyncMock(return_value=result)
+    return tool
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fuera_de_horario", [False, True])
+async def test_failed_tool_hands_off_with_fixed_text(fuera_de_horario):
+    """The model does not get to word the reply: reception takes over, no problem is mentioned."""
+    agent = OdontokingAgent()
+    agent.tools_by_name = {
+        "responder_recordatorio": _failing_tool('{"success": false, "error": "http_error", "handoff": true}')
+    }
+
+    command = await agent._tool_call(
+        _state_with_tool_call("responder_recordatorio"),
+        {"metadata": {"conversation_id": 1, "fuera_de_horario": fuera_de_horario}},
+    )
+
+    assert command.goto == END
+    reply = command.update["messages"][-1]
+    assert _extract_handoff(reply.content) == {
+        "action": "handoff",
+        "motivo": "Una herramienta del agente falló",
+        "fuera_de_horario": fuera_de_horario,
+    }
+    texto = _extract_mensaje(reply.content).lower()
+    assert "recepcionista" in texto
+    for palabra in ("problema", "error", "falla", "demanda", "disculp"):
+        assert palabra not in texto
+
+
+@pytest.mark.asyncio
+async def test_a_tool_that_worked_goes_back_to_the_model():
+    agent = OdontokingAgent()
+    agent.tools_by_name = {"get_services": _failing_tool('{"success": true}')}
+
+    command = await agent._tool_call(_state_with_tool_call("get_services"), {"metadata": {}})
+
+    assert command.goto == "chat"
+
+
+@pytest.mark.asyncio
+async def test_retry_is_left_to_the_model():
+    """A temporary failure does not silence the bot: the patient can try again."""
+    agent = OdontokingAgent()
+    agent.tools_by_name = {"verify_insurance": _failing_tool('{"retry": true}')}
+
+    command = await agent._tool_call(_state_with_tool_call("verify_insurance"), {"metadata": {}})
+
+    assert command.goto == "chat"
+
+
+def test_forms_prompt_has_no_excuse_text():
+    with open("app/core/prompts/odontoking.md") as f:
+        template = f.read()
+    assert "alta demanda" not in template.split("sin mencionar errores")[1]
+    assert "mil disculpas" not in template
+
+
+@pytest.mark.asyncio
+async def test_failed_tool_ends_the_turn_in_a_compiled_graph():
+    """Through a real graph: the fixed reply is the last message and the model is not called again."""
+    agent = OdontokingAgent()
+    agent.tools_by_name = {
+        "responder_recordatorio": _failing_tool('{"success": false, "error": "http_error", "handoff": true}')
+    }
+    llm_calls = []
+
+    async def chat(state, config):
+        llm_calls.append(1)
+        ai = AIMessage(content="", tool_calls=[{"name": "responder_recordatorio", "args": {}, "id": "c1"}])
+        return Command(update={"messages": [ai]}, goto="tool_call")
+
+    builder = StateGraph(GraphState)
+    builder.add_node("chat", chat, destinations=("tool_call", END))
+    builder.add_node("tool_call", agent._tool_call, destinations=("chat", END))
+    builder.set_entry_point("chat")
+    graph = builder.compile()
+
+    result = await graph.ainvoke({"messages": []}, {"metadata": {"conversation_id": 1}})
+
+    assert len(llm_calls) == 1
+    assert "recepcionista" in result["messages"][-1].content
+    assert _extract_handoff(result["messages"][-1].content) is not None

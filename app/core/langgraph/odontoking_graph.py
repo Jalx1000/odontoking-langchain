@@ -137,6 +137,16 @@ _ODONTOKING_TOOLS = _FORMS_TOOLS if settings.WHATSAPP_FLOWS_ENABLED else _CLASSI
 _PROMPT_NAME = "odontoking.md" if settings.WHATSAPP_FLOWS_ENABLED else "odontoking-classic.md"
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", _PROMPT_NAME)
 _TZ_BOLIVIA = ZoneInfo("America/La_Paz")
+# Same words as the prompt's handoff: the patient is only told who will attend them.
+_HANDOFF_EN_HORARIO = (
+    "Entendido. Estoy avisando a una recepcionista para que le atienda personalmente. Recordarle que "
+    "nuestro horario de atención es de 07:30 a 18:30, Lunes a viernes, y de 09:00 a 12:00, Sábados. 🙌"
+)
+_HANDOFF_FUERA_DE_HORARIO = (
+    "Con gusto. 😊 En este momento nuestro equipo se encuentra fuera de horario de atención.\n\n"
+    "Dejé registrada su solicitud y una recepcionista se comunicará con usted en el próximo horario hábil:\n"
+    "- Lunes a viernes: 07:30 a 18:30\n- Sábados: 09:00 a 12:00"
+)
 _DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 _MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
              "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
@@ -605,6 +615,28 @@ def _extract_mensaje(content: str) -> str:
     return text
 
 
+def _tool_requests_handoff(content: Any) -> bool:
+    """True when a tool failed and said the conversation must go to reception."""
+    try:
+        result = json.loads(content)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(result, dict) and result.get("success") is False and result.get("handoff") is True
+
+
+def _tool_handoff_reply(fuera_de_horario: bool) -> str:
+    """The reply for a failed tool: fixed text, so the model cannot improvise an excuse to the patient."""
+    return json.dumps(
+        {
+            "mensaje": _HANDOFF_FUERA_DE_HORARIO if fuera_de_horario else _HANDOFF_EN_HORARIO,
+            "action": "handoff",
+            "motivo": "Una herramienta del agente falló",
+            "fuera_de_horario": fuera_de_horario,
+        },
+        ensure_ascii=False,
+    )
+
+
 def _extract_handoff(content: str) -> Optional[dict[str, Any]]:
     """Parse the LLM reply for a CONTRATO B handoff signal, or None.
 
@@ -799,6 +831,12 @@ class OdontokingAgent:
         else:
             outputs = list(await asyncio.gather(*[_execute(tc) for tc in tool_calls]))
 
+        failed = [o for o in outputs if _tool_requests_handoff(o.content)]
+        if failed:
+            logger.warning("agent_tool_handoff", tools=[o.name for o in failed], conversation_id=conversation_id)
+            reply = AIMessage(content=_tool_handoff_reply(bool(meta.get("fuera_de_horario"))))
+            return Command(update={"messages": [*outputs, reply]}, goto=END)
+
         return Command(update={"messages": outputs}, goto="chat")
 
     async def create_graph(self) -> Optional[CompiledStateGraph]:
@@ -810,7 +848,7 @@ class OdontokingAgent:
                 builder.add_node(
                     "tool_call",
                     self._tool_call,
-                    destinations=("chat",),
+                    destinations=("chat", END),
                     retry_policy=RetryPolicy(max_attempts=3),
                 )
                 builder.set_entry_point("chat")
