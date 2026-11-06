@@ -186,20 +186,23 @@ async def enviar_formulario(
             Si el paciente no dio ni hora ni franja, omite ambos (el form sugiere el cupo más próximo).
         conversation_id: Lo inyecta el sistema desde el evento entrante; tú no lo proporcionas.
         sin_cita_activa: Lo inyecta el sistema (no lo proporcionas); marca que el paciente no tiene
-            cita activa para bloquear cancelar/reprogramar.
+            cita activa para derivar a recepción en vez de cancelar/reprogramar.
     """
     if flow not in _VALID_FLOWS:
         logger.warning("enviar_formulario_invalid_flow", flow=str(flow)[:40])
         return '{"success": false, "error": "invalid_flow"}'
 
-    # Guard (injected by the graph): cancelar/reprogramar without an active cita must NOT send the
-    # form — the patient has nothing to cancel/move. Signal the agent to offer booking a new one.
+    # Guard (injected by the graph): citas_activas only covers this number and its linked patients, so
+    # an empty list does not prove the cita does not exist. Reception looks it up instead.
     if sin_cita_activa and flow in ("cancelar_cita", "reprogramar_cita"):
         logger.info("enviar_formulario_sin_cita_activa", flow=flow)
-        return ('{"success": false, "error": "sin_cita_activa", '
-                '"instruccion": "El paciente no tiene una cita activa. Avísale que no encontraste una '
-                'cita a su nombre y envía el formulario de agendar (flow=paciente_tercero) por si desea '
-                'una nueva."}')
+        accion = "cancelar" if flow == "cancelar_cita" else "reprogramar"
+        return json.dumps({
+            "success": False,
+            "error": "sin_cita_activa",
+            "handoff": True,
+            "motivo": f"Pide {accion} una cita que no aparece en este número; buscarla por paciente",
+        }, ensure_ascii=False)
 
     # conversation_id is injected from the inbound event (not from the LLM). Without it we cannot
     # reach the conversation → tell the agent to derive to reception instead of guessing.

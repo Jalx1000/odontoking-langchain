@@ -255,7 +255,7 @@ def test_responder_recordatorio_confirma():
 
 
 def test_enviar_formulario_sin_cita_activa_no_envia():
-    """cancelar/reprogramar con _sin_cita_activa=True no postea y pide ofrecer agendar."""
+    """cancelar/reprogramar con sin_cita_activa=True no postea y pide derivar a recepción."""
     with patch("app.core.langgraph.tools.whatsapp_flows.httpx.AsyncClient") as client_cls:
         out = _run(enviar_formulario.ainvoke({
             "flow": "reprogramar_cita", "conversation_id": 7, "sin_cita_activa": True,
@@ -263,7 +263,8 @@ def test_enviar_formulario_sin_cita_activa_no_envia():
     data = json.loads(out)
     assert data["success"] is False
     assert data["error"] == "sin_cita_activa"
-    assert "paciente_tercero" in data["instruccion"]
+    assert data["handoff"] is True
+    assert "reprogramar" in data["motivo"]
     client_cls.assert_not_called()
 
 

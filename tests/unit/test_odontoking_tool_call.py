@@ -6,7 +6,7 @@ graph, while still converting ordinary tool errors into an error ToolMessage.
 """
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
@@ -363,3 +363,46 @@ class TestFormClaim:
         assert not _form_sent_recently([_form_result(ok=False)])
         assert not _form_sent_recently([_form_result(), *[AIMessage(content="x")] * _FORM_LOOKBACK])
         assert not _form_sent_recently([])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flow, accion", [("reprogramar_cita", "reprogramar"), ("cancelar_cita", "cancelar")])
+async def test_appointment_not_found_goes_to_reception(monkeypatch, flow, accion):
+    """Conversación 370: the cita was under another number, so the bot must not say it does not exist."""
+    import app.core.langgraph.tools.whatsapp_flows as flows
+
+    agent = OdontokingAgent()
+    agent.tools_by_name = {"enviar_formulario": flows.enviar_formulario}
+    client = MagicMock()
+    monkeypatch.setattr(flows.httpx, "AsyncClient", client)
+
+    state = _state_with_tool_call("enviar_formulario")
+    state.messages[-1].tool_calls[0]["args"] = {"flow": flow}
+    command = await agent._tool_call(state, {"metadata": {"conversation_id": 370, "citas_activas": []}})
+
+    assert command.goto == END
+    reply = command.update["messages"][-1]
+    assert _extract_handoff(reply.content) == {
+        "action": "handoff",
+        "motivo": f"Pide {accion} una cita que no aparece en este número; buscarla por paciente",
+        "fuera_de_horario": False,
+    }
+    texto = _extract_mensaje(reply.content).lower()
+    assert "recepcionista" in texto
+    assert "no encontr" not in texto
+    client.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_appointment_found_still_sends_the_form():
+    """With an active cita nothing changes: the reschedule form goes out."""
+    agent = OdontokingAgent()
+    fake_tool = AsyncMock()
+    fake_tool.ainvoke = AsyncMock(return_value='{"success": true, "flow": "reprogramar_cita"}')
+    agent.tools_by_name = {"enviar_formulario": fake_tool}
+
+    state = _state_with_tool_call("enviar_formulario")
+    state.messages[-1].tool_calls[0]["args"] = {"flow": "reprogramar_cita"}
+    await agent._tool_call(state, {"metadata": {"conversation_id": 1, "citas_activas": [{"lead_id": 9}]}})
+
+    assert "sin_cita_activa" not in fake_tool.ainvoke.await_args.args[0]

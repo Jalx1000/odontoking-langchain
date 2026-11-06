@@ -711,13 +711,19 @@ def _tool_requests_handoff(content: Any) -> bool:
     return isinstance(result, dict) and result.get("success") is False and result.get("handoff") is True
 
 
-def _tool_handoff_reply(fuera_de_horario: bool) -> str:
+def _tool_handoff_motivo(content: Any) -> str:
+    """What reception reads: the reason the tool gave, or a generic failure."""
+    motivo = json.loads(content).get("motivo")
+    return motivo if isinstance(motivo, str) and motivo else "Una herramienta del agente falló"
+
+
+def _tool_handoff_reply(fuera_de_horario: bool, motivo: str = "Una herramienta del agente falló") -> str:
     """The reply for a failed tool: fixed text, so the model cannot improvise an excuse to the patient."""
     return json.dumps(
         {
             "mensaje": _HANDOFF_FUERA_DE_HORARIO if fuera_de_horario else _HANDOFF_EN_HORARIO,
             "action": "handoff",
-            "motivo": "Una herramienta del agente falló",
+            "motivo": motivo,
             "fuera_de_horario": fuera_de_horario,
         },
         ensure_ascii=False,
@@ -898,8 +904,8 @@ class OdontokingAgent:
                 # longer the weak link for the prefill.
                 if args.get("flow") == "paciente_tercero":
                     args = await _resolve_doctor_in_prefill(args)
-                # Deterministic guard: block cancelar/reprogramar when there is no active cita, so a
-                # weak model can't send the wrong form; the tool returns a "offer booking" signal.
+                # Deterministic guard: without an active cita the tool asks for a handoff, so a weak
+                # model can neither send the wrong form nor claim the cita does not exist.
                 if not tiene_cita_activa and args.get("flow") in ("cancelar_cita", "reprogramar_cita"):
                     args = {**args, "sin_cita_activa": True}
             try:
@@ -921,7 +927,8 @@ class OdontokingAgent:
         failed = [o for o in outputs if _tool_requests_handoff(o.content)]
         if failed:
             logger.warning("agent_tool_handoff", tools=[o.name for o in failed], conversation_id=conversation_id)
-            reply = AIMessage(content=_tool_handoff_reply(bool(meta.get("fuera_de_horario"))))
+            motivo = _tool_handoff_motivo(failed[0].content)
+            reply = AIMessage(content=_tool_handoff_reply(bool(meta.get("fuera_de_horario")), motivo))
             return Command(update={"messages": [*outputs, reply]}, goto=END)
 
         coverage = next((r for o in outputs if o.name == "verify_insurance" and (r := _coverage_reply(o.content))), None)

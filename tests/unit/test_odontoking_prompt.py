@@ -121,6 +121,12 @@ class TestAgentAuditRules:
         """Conversación 4116: "no encontré una cita" for a cita registered under another number."""
         assert "puede estar a otro nombre" in self._prompt()
 
+    def test_appointment_not_found_never_offers_a_new_form(self):
+        """Conversación 370: told "no encontré una cita" and got the booking form for someone else's cita."""
+        prompt = self._prompt()
+        assert "no encontré una cita activa" not in prompt
+        assert "NO digas que no existe ni envíes ningún formulario" in prompt
+
     def test_confirming_an_appointment_uses_its_lead_id(self):
         """Conversación 4020: "confirmo los 3" received the booking form."""
         assert 'responder_recordatorio("confirma", lead_id=' in self._prompt()
