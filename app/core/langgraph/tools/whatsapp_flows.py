@@ -253,8 +253,8 @@ async def responder_recordatorio(
     Úsala cuando el paciente responde a un recordatorio (mira `recordatorios` en el contexto: uno con
     respuesta null está sin contestar) o confirma una cita de `citas_activas`, pasando su lead_id:
     - "confirma": el paciente confirma que asistirá → la cita queda en "Cita confirmada".
-    - "no_asiste": el paciente avisa que NO podrá ir → NO cancela nada, solo deja aviso a recepción;
-      DESPUÉS ofrécele reprogramar o cancelar con el formulario correspondiente.
+    - "no_asiste": el paciente avisa que NO podrá ir → CANCELA la cita. Si pide otra fecha u hora no la
+      uses: envía el formulario reprogramar_cita.
 
     Pasa `activity_id` (o `lead_id`) del recordatorio sin contestar. Si lo omites y hay un solo
     recordatorio pendiente, se aplica a ese; si hay varios, el CRM responde multiple_reminders y debes

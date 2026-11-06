@@ -73,6 +73,12 @@ Enrutamiento por intención:
   paciente manda "Si" / "No" / "confirmo" / "ahí estaré" / "no puedo" / "no podré" (o parecido), ESO
   responde a ese recordatorio → NO es el menú ni recepcionista: usa responder_recordatorio (ver
   RESPUESTA A UN RECORDATORIO). Si hay varios recordatorios sin contestar, pregúntale a cuál cita se refiere.
+- CITAS: decide por lo que el paciente quiere lograr, no por sus palabras exactas. Revisa `citas_activas`:
+  · AGENDAR: quiere una cita nueva, sin tocar ninguna existente.
+  · REPROGRAMAR: quiere otra fecha, hora o doctor para una cita que ya tiene, aunque diga "cancelar" o "anular".
+  · CANCELAR: quiere eliminar una cita que ya tiene y no pide otra.
+  Si no está claro cuál de las tres es, pregunta UNA vez antes de enviar formulario, p. ej.:
+  {{"mensaje": "¿Desea cambiar su cita a otro día o prefiere cancelarla?"}}
 - "agendar", "quiero una cita", "sacar cita", "cita para mi hijo/esposa/mamá" → enviar_formulario flow="paciente_tercero"
 - "reprogramar", "cambiar/mover mi cita", "otro día", "otra hora", "cancelar y pasarla para <día>" → enviar_formulario flow="reprogramar_cita"
 - "cancelar", "anular", "ya no puedo ir" (SIN pedir otra fecha)                → enviar_formulario flow="cancelar_cita"
@@ -231,9 +237,12 @@ respuesta a esa cita — NO es un pedido nuevo.
 - Confirma ("Si", "sí", "confirmo", "ahí estaré") → responder_recordatorio("confirma", activity_id=<el del recordatorio>) y acusa:
   {{"mensaje": "¡Gracias por confirmar! Le esperamos 🙌"}}
 - NO asistirá ("No", "no puedo", "no podré", "ya no") → responder_recordatorio("no_asiste", activity_id=<el del recordatorio>).
-  NO cancela la cita; luego ofrécele reprogramar o cancelar:
-  {{"mensaje": "Entendido, gracias por avisar. ¿Desea reprogramar su cita o cancelarla?"}}
-  (según responda, envía el formulario reprogramar_cita o cancelar_cita).
+  ESTO CANCELA LA CITA. Luego:
+  {{"mensaje": "Entendido, cancelamos su cita. ¿Desea agendar una nueva para otro día? 😊"}}
+  (si acepta, envía el formulario paciente_tercero).
+- Si pide OTRA fecha u hora ("no puedo el sábado, ¿el lunes?") NO uses no_asiste: envía reprogramar_cita.
+- Si el "no" contesta otra cosa o no está claro ("No entiendo", "No sé dónde queda"), NO uses no_asiste:
+  responde lo que pregunta.
 - Pasa SIEMPRE el activity_id del recordatorio sin contestar; si hay uno solo puedes omitirlo. Si
   responder_recordatorio devuelve multiple_reminders, pregunta a cuál cita se refiere o llama una vez
   por cada activity_id.

@@ -276,7 +276,11 @@ def _format_recordatorios(recordatorios: list[dict] | None) -> list[str]:
 # Clear yes/no openers for a reminder reply. We match the START of the (normalized) message so
 # "No, no voy a poder ir" or "Sí, ahí estaré" are caught, while still staying conservative: a message
 # that doesn't clearly open with yes/no (or mixes both) falls through to the LLM.
-_REMINDER_NO_STARTS = ("no", "nop", "ya no")
+# "No" now cancels the cita, so only a bare no counts: "No entiendo" or "no puedo a esa hora, ¿a las 3?"
+# start the same way and must reach the LLM.
+_REMINDER_BARE_NO = {
+    "no", "nop", "ya no", "no puedo", "no podre", "no podre ir", "no puedo ir", "no voy", "no ire", "no asistire",
+}
 _REMINDER_YES_STARTS = ("si", "sí", "sip", "confirm", "ok", "oka", "dale", "claro", "asi es",
                         "así es", "ahi estare", "ahí estaré", "ahi voy", "voy a ir", "por supuesto",
                         "de acuerdo")
@@ -302,9 +306,10 @@ def _detect_reminder_reply(text: str, recordatorios: list[dict] | None) -> Optio
     if not norm:
         return None
     first = norm.split()[0].strip(".,!?")
-    # Negation wins ties (e.g. "no, gracias"): check NO first.
-    if first in _REMINDER_NO_STARTS or norm.startswith(("no ", "no,", "ya no")):
+    if _norm_cancel(text) in _REMINDER_BARE_NO:
         return "no_asiste", activity_id
+    if first == "no" or norm.startswith(("no ", "no,", "ya no", "nop")):
+        return None
     if first in _REMINDER_YES_STARTS or norm.startswith(("si ", "si,", "sí ", "sí,", "confirm")):
         return "confirma", activity_id
     return None
@@ -1280,8 +1285,7 @@ class OdontokingAgent:
                 if ok and respuesta == "confirma":
                     reply_text = "¡Gracias por confirmar su cita! Le esperamos. 🙌"
                 elif ok and respuesta == "no_asiste":
-                    reply_text = ("Entendido, gracias por avisar que no podrá asistir. ¿Desea reprogramar su "
-                                  "cita para otro día o prefiere cancelarla?")
+                    reply_text = "Entendido, cancelamos su cita. ¿Desea agendar una nueva para otro día? 😊"
                 if reply_text is not None:
                     # This turn short-circuits the graph, so persist it to chat_histories_odonto
                     # (best-effort) — otherwise the transcript would miss the reminder exchange.

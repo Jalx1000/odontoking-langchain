@@ -132,3 +132,14 @@ class TestAgentAuditRules:
     def test_address_names_the_city(self):
         """Conversación 4118: a patient from La Paz booked without knowing the clinic is in Santa Cruz."""
         assert "Taller Bavaria, Santa Cruz de la Sierra" in self._prompt()
+
+    def test_reminder_no_cancels_but_another_date_reschedules(self):
+        assert "ESTO CANCELA LA CITA" in self._prompt()
+        assert "NO uses no_asiste: envía reprogramar_cita" in self._prompt()
+
+    def test_booking_rescheduling_and_cancelling_follow_the_patient_goal(self):
+        prompt = self._prompt()
+        assert "decide por lo que el paciente quiere lograr" in prompt
+        assert 'aunque diga "cancelar" o "anular"' in prompt
+        assert "pregunta UNA vez antes de enviar formulario" in prompt
+

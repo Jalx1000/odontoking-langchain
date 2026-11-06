@@ -299,3 +299,24 @@ class TestPaymentReceiptHandoff:
             recordatorios=[{"activity_id": 9, "respuesta": None}],
         )
         reminder_tool.ainvoke.assert_not_called()
+
+
+class TestReminderNo:
+    """A reminder "No" cancels the cita: only a bare no may do it without the LLM."""
+
+    _REMINDER = [{"activity_id": 7, "respuesta": None}]
+
+    @pytest.mark.parametrize("text", ["No", "no", "NO.", "No puedo", "No podré ir"])
+    def test_bare_no_cancels(self, text):
+        assert og._detect_reminder_reply(text, self._REMINDER) == ("no_asiste", 7)
+
+    @pytest.mark.parametrize(
+        "text",
+        ["No entiendo", "No sé dónde queda", "no puedo a esa hora, ¿a las 3?", "No, mejor el lunes", "No tengo cita"],
+    )
+    def test_a_no_with_more_text_goes_to_the_llm(self, text):
+        assert og._detect_reminder_reply(text, self._REMINDER) is None
+
+    def test_yes_still_confirms(self):
+        assert og._detect_reminder_reply("Si", self._REMINDER) == ("confirma", 7)
+
