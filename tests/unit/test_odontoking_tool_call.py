@@ -149,8 +149,9 @@ async def test_real_responder_recordatorio_reaches_the_crm_with_injected_id(monk
 
             return _Resp()
 
-    monkeypatch.setattr(whatsapp_flows.httpx, "AsyncClient", _Client)
+    # httpx is shared: patch after building the agent, whose OpenAI client needs the real one.
     agent = OdontokingAgent()
+    monkeypatch.setattr(whatsapp_flows.httpx, "AsyncClient", _Client)
     agent.tools_by_name = {"responder_recordatorio": whatsapp_flows.responder_recordatorio}
 
     state = _state_with_tool_call("responder_recordatorio")
