@@ -105,3 +105,57 @@ async def test_tool_call_other_tools_not_given_conversation_id():
     await agent._tool_call(state, {"metadata": {"conversation_id": 123}})
 
     fake_tool.ainvoke.assert_awaited_once_with({"wa_id": "591700"})
+
+
+@pytest.mark.asyncio
+async def test_tool_call_injects_conversation_id_for_responder_recordatorio():
+    """A reminder answered in a sentence goes through the LLM and must reach the CRM."""
+    agent = OdontokingAgent()
+    fake_tool = AsyncMock()
+    fake_tool.ainvoke = AsyncMock(return_value='{"success": true}')
+    agent.tools_by_name = {"responder_recordatorio": fake_tool}
+
+    state = _state_with_tool_call("responder_recordatorio")
+    state.messages[-1].tool_calls[0]["args"] = {"respuesta": "no_asiste", "activity_id": 7}
+    await agent._tool_call(state, {"metadata": {"conversation_id": 123}})
+
+    fake_tool.ainvoke.assert_awaited_once_with({"respuesta": "no_asiste", "activity_id": 7, "conversation_id": 123})
+
+
+@pytest.mark.asyncio
+async def test_real_responder_recordatorio_reaches_the_crm_with_injected_id(monkeypatch):
+    """End to end through the real tool: the injected id builds the CRM URL."""
+    from app.core.langgraph.tools import whatsapp_flows
+
+    posted = []
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json, headers):
+            posted.append((url, json))
+
+            class _Resp:
+                status_code = 200
+                text = "{}"
+
+                def json(self):
+                    return {"success": True}
+
+            return _Resp()
+
+    monkeypatch.setattr(whatsapp_flows.httpx, "AsyncClient", _Client)
+    agent = OdontokingAgent()
+    agent.tools_by_name = {"responder_recordatorio": whatsapp_flows.responder_recordatorio}
+
+    state = _state_with_tool_call("responder_recordatorio")
+    state.messages[-1].tool_calls[0]["args"] = {"respuesta": "no_asiste", "activity_id": 7}
+    command = await agent._tool_call(state, {"metadata": {"conversation_id": 4029}})
+
+    assert posted[0][0].endswith("/conversations/4029/appointments/respond")
+    assert "missing_conversation_id" not in command.update["messages"][0].content

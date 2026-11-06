@@ -754,8 +754,8 @@ class OdontokingAgent:
 
     async def _tool_call(self, state: GraphState, config: Optional[RunnableConfig] = None) -> Command:
         tool_calls = state.messages[-1].tool_calls
-        # conversation_id is injected into enviar_formulario here (never supplied by the LLM): it
-        # comes from the inbound event via the graph config metadata.
+        # conversation_id is injected into the tools that need it here (never supplied by the LLM):
+        # it comes from the inbound event via the graph config metadata.
         meta = (config or {}).get("metadata") or {}
         conversation_id = meta.get("conversation_id")
         # Whether the patient currently has an active (Agendado) cita. Used to guard cancel/reschedule
@@ -768,6 +768,10 @@ class OdontokingAgent:
 
         async def _execute(tc: dict) -> ToolMessage:
             args = tc["args"]
+            # Without this, a reminder answered in a full sentence (not a bare Sí/No) fails and the
+            # model apologizes for "alta demanda".
+            if tc["name"] == "responder_recordatorio" and conversation_id is not None:
+                args = {**args, "conversation_id": conversation_id}
             if tc["name"] == "enviar_formulario" and conversation_id is not None:
                 args = {**args, "conversation_id": conversation_id}
                 # Deterministically resolve the doctor NAME the model passed to its CRM id (and carry
