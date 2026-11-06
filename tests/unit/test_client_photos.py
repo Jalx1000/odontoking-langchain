@@ -94,6 +94,14 @@ class TestExpandPhotos:
         assert "500" not in out
 
     @pytest.mark.asyncio
+    async def test_illegible_photo_keeps_no_invented_description(self):
+        """Seen with the real model: a plain gray image was described as a Santa Julia Malbec."""
+        download, vision, _ = _read_as("ilegible", "Botella de vino Santa Julia Malbec")
+        with download, vision:
+            out = await expand_photos(photo_marker(_PHOTO_URL), "591")
+        assert out == "[FOTO DEL CLIENTE. Categoría: ilegible.]"
+
+    @pytest.mark.asyncio
     async def test_missing_media_degrades_without_calling_vision(self):
         download, vision, llm = _read_as("producto")
         with download, vision:
