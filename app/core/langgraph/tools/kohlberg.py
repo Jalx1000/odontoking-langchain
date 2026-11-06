@@ -48,18 +48,24 @@ _OWNER_USER_ID = 1           # default lead owner
 # tagging with a wrong id mislabels the lead). "entregado" ("Pedidos entregados") is a concreted order
 # and is immutable. Key is the canonical city (see _CITY_ALIASES); unknown/absent city -> "sin ciudad".
 _CITY_STAGES: dict[str, dict[str, int]] = {
-    "tarija":     {"pipeline": 1,  "no_atendido": 1,  "confirmado": 2,  "sin_interes": 39, "entregado": 5,  "cancelado": 6,  "otros": 58},
-    "santa cruz": {"pipeline": 3,  "no_atendido": 11, "confirmado": 12, "sin_interes": 45, "entregado": 13, "cancelado": 14, "otros": 51},
-    "potosi":     {"pipeline": 4,  "no_atendido": 15, "confirmado": 16, "sin_interes": 50, "entregado": 17, "cancelado": 18, "otros": 57},
-    "oruro":      {"pipeline": 6,  "no_atendido": 23, "confirmado": 24, "sin_interes": 49, "entregado": 25, "cancelado": 26, "otros": 56},
-    "la paz":     {"pipeline": 7,  "no_atendido": 27, "confirmado": 28, "sin_interes": 48, "entregado": 29, "cancelado": 30, "otros": 55},
-    "cochabamba": {"pipeline": 8,  "no_atendido": 31, "confirmado": 32, "sin_interes": 47, "entregado": 33, "cancelado": 34, "otros": 54},
-    "sucre":      {"pipeline": 9,  "no_atendido": 35, "confirmado": 36, "sin_interes": 46, "entregado": 37, "cancelado": 38, "otros": 53},
-    "sin ciudad": {"pipeline": 10, "no_atendido": 40, "confirmado": 41, "sin_interes": 44, "entregado": 42, "cancelado": 43, "otros": 52},
+    "tarija":     {"pipeline": 1,  "no_atendido": 1,  "contactado": 66, "confirmado": 2,  "sin_interes": 39, "entregado": 5,  "cancelado": 6,  "otros": 58},
+    "santa cruz": {"pipeline": 3,  "no_atendido": 11, "contactado": 65, "confirmado": 12, "sin_interes": 45, "entregado": 13, "cancelado": 14, "otros": 51},
+    "potosi":     {"pipeline": 4,  "no_atendido": 15, "contactado": 64, "confirmado": 16, "sin_interes": 50, "entregado": 17, "cancelado": 18, "otros": 57},
+    "oruro":      {"pipeline": 6,  "no_atendido": 23, "contactado": 63, "confirmado": 24, "sin_interes": 49, "entregado": 25, "cancelado": 26, "otros": 56},
+    "la paz":     {"pipeline": 7,  "no_atendido": 27, "contactado": 62, "confirmado": 28, "sin_interes": 48, "entregado": 29, "cancelado": 30, "otros": 55},
+    "cochabamba": {"pipeline": 8,  "no_atendido": 31, "contactado": 61, "confirmado": 32, "sin_interes": 47, "entregado": 33, "cancelado": 34, "otros": 54},
+    "sucre":      {"pipeline": 9,  "no_atendido": 35, "contactado": 60, "confirmado": 36, "sin_interes": 46, "entregado": 37, "cancelado": 38, "otros": 53},
+    "sin ciudad": {"pipeline": 10, "no_atendido": 40, "contactado": 59, "confirmado": 41, "sin_interes": 44, "entregado": 42, "cancelado": 43, "otros": 52},
 }
 # Stage-id sets (across every city) for classifying a lead by its lead_pipeline_stage_id.
+# ACTIVE stages (the lead is the in-progress order → reusable): No atendido, Cliente contactado,
+# Cliente confirmado. TERMINAL stages (closed → a returning client opens a NEW pedido): Cliente sin
+# interés, Pedidos entregados, Pedidos cancelados, Otros Servicios.
 _STAGE_NO_ATENDIDO_IDS = {s["no_atendido"] for s in _CITY_STAGES.values()}
 _STAGE_ENTREGADO_IDS = {s["entregado"] for s in _CITY_STAGES.values()}
+_STAGE_CONFIRMADO_IDS = {s["confirmado"] for s in _CITY_STAGES.values()}
+_STAGE_ACTIVE_IDS = {s[k] for s in _CITY_STAGES.values() for k in ("no_atendido", "contactado", "confirmado")}
+_STAGE_TERMINAL_IDS = {s[k] for s in _CITY_STAGES.values() for k in ("sin_interes", "entregado", "cancelado", "otros")}
 
 # Canonical city -> sales rep user id (lead owner). The order lead is assigned to the city's rep.
 _CITY_SALES_REP: dict[str, int] = {
@@ -405,13 +411,49 @@ def _lead_has_products(lead: dict[str, Any]) -> bool:
     return bool(products) if isinstance(products, list) else False
 
 
-def _is_fresh_for_order(lead: dict[str, Any]) -> bool:
-    """A lead is enrichable only while it is the untouched auto-created lead AND has no order yet.
+def _lead_stage_code(lead: dict[str, Any]) -> str:
+    """Stage `code` of a lead (e.g. 'pedidos-entregados'), normalized lowercase ('' when unknown)."""
+    stage = lead.get("lead_pipeline_stage") or lead.get("stage") or {}
+    code = stage.get("code") if isinstance(stage, dict) else None
+    return (code or "").strip().lower()
 
-    Anything else - an advisor already advanced it, it was delivered ('Pedidos entregados'), or it
-    already carries a registered order - is left intact; a new order goes to a brand-new lead.
+
+# Codes/names (accent-stripped) for the fallback when a lead GET omits the numeric stage id.
+_TERMINAL_STAGE_CODES = {"cliente-sin-inters", "pedidos-entregados", "pedidos-cancelados", "otros-servicios"}
+_TERMINAL_STAGE_NAMES = {"cliente sin interes", "pedidos entregados", "pedidos cancelados", "otros servicios"}
+
+
+def _is_terminal(lead: dict[str, Any]) -> bool:
+    """True when the lead is in a CLOSED stage: Cliente sin interés, Pedidos entregados, Pedidos
+    cancelados or Otros Servicios. A returning client on a terminal lead must open a NEW pedido
+    instead of reusing/overwriting it. Classifies by stage id first, then by code/name as fallback.
     """
-    return _is_unattended(lead) and not _lead_has_products(lead)
+    sid = _lead_stage_id(lead)
+    if sid is not None:
+        return sid in _STAGE_TERMINAL_IDS
+    code = _lead_stage_code(lead)
+    if code:
+        return code in _TERMINAL_STAGE_CODES
+    return _normalizar(_lead_stage_name(lead)) in _TERMINAL_STAGE_NAMES
+
+
+def _is_confirmed(lead: dict[str, Any]) -> bool:
+    """True when the lead is in 'Cliente confirmado' (an order was already confirmed on it)."""
+    sid = _lead_stage_id(lead)
+    if sid is not None:
+        return sid in _STAGE_CONFIRMADO_IDS
+    code = _lead_stage_code(lead)
+    if code:
+        return code == "cliente-confirmado"
+    return _normalizar(_lead_stage_name(lead)) == "cliente confirmado"
+
+
+def _reset_draft_products(draft: dict[str, Any]) -> None:
+    """Clear the in-progress order's product lines (and the reseed flag), keeping the client's
+    city/name/age/interes so a NEW pedido for the same client doesn't inherit the previous wines."""
+    for k in ("ids", "names", "qtys"):
+        draft.pop(k, None)
+    draft["_seeded"] = True
 
 
 def _build_products_map(
@@ -901,6 +943,7 @@ async def registrar_pedido(
     pedido aparte, es_correccion=False (se crea uno nuevo).
     """
     lead_ctx, person_ctx = _ctx_ids(config)
+    wa = _ctx_wa_id(config)
 
     log = logger.bind(
         tool="registrar_pedido",
@@ -931,46 +974,48 @@ async def registrar_pedido(
     )
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            # Only the FRESH auto-created lead (No atendido, sin productos) is enrichable. A lead that
-            # already carries an order, was advanced by an advisor, or is DELIVERED ("Pedidos
-            # entregados") is immutable -> a new order opens a brand-new lead (pedidos separados).
-            fresh_lead: Optional[int] = None
-            if lead_ctx:
-                lead = await _get_lead(client, lead_ctx)
-                if lead is not None:
-                    log.info(
-                        "registrar_pedido_lead_fetched",
-                        stage_id=_lead_stage_id(lead),
-                        stage=_lead_stage_name(lead),
-                        has_products=_lead_has_products(lead),
-                        fresh=_is_fresh_for_order(lead),
-                    )
-                if lead is not None and _is_fresh_for_order(lead):
-                    fresh_lead = lead_ctx
-                elif lead is not None:
-                    log.info("registrar_pedido_lead_locked", stage=_lead_stage_name(lead),
-                             entregado=_is_delivered(lead))
+            # Resolve the lead that represents THIS pedido: the one we last built/touched for this
+            # wa_id (_LAST_LEAD_BY_WA), else the conversation's auto-created lead_ctx.
+            remembered = _LAST_LEAD_BY_WA.get(wa) or lead_ctx
+            cur_lead = await _get_lead(client, remembered) if remembered else None
+            if cur_lead is not None:
+                log.info(
+                    "registrar_pedido_lead_fetched",
+                    lead=remembered,
+                    stage_id=_lead_stage_id(cur_lead),
+                    stage=_lead_stage_name(cur_lead),
+                    has_products=_lead_has_products(cur_lead),
+                    terminal=_is_terminal(cur_lead),
+                    confirmado=_is_confirmed(cur_lead),
+                )
 
-            # Cancellation only applies to the fresh lead being built now; a concreted/delivered order
-            # cannot be cancelled from here.
+            # Cancellation acts on the CURRENT pedido in any editable stage. A DELIVERED order
+            # ("Pedidos entregados") is immutable and cannot be cancelled from here.
             if es_pedido_cancelado:
-                if fresh_lead is None:
+                if remembered is None or cur_lead is None:
                     log.info("registrar_pedido_cancel_no_editable_lead")
                     return json.dumps(
                         {"lead_id": lead_ctx, "cancelado": False, "note": "sin_pedido_editable"},
                         ensure_ascii=False,
                     )
+                if _is_delivered(cur_lead):
+                    log.info("registrar_pedido_cancel_delivered_immutable", lead_id=remembered)
+                    return json.dumps(
+                        {"lead_id": remembered, "cancelado": False, "note": "pedido_entregado_inmutable"},
+                        ensure_ascii=False,
+                    )
                 try:
                     await _add_lead_note(
-                        client, fresh_lead, "Pedido cancelado",
+                        client, remembered, "Pedido cancelado",
                         [("Cliente", nombre), ("Ciudad", ciudad_del_cliente), ("Detalle", mensaje)],
                     )
-                    await _move_lead(client, fresh_lead, ciudad_del_cliente, "cancelado")
+                    await _move_lead(client, remembered, ciudad_del_cliente, "cancelado")
                 except Exception as e:  # noqa: BLE001
-                    log.warning("registrar_pedido_cancel_note_failed", lead_id=fresh_lead, error=str(e))
-                log.info("kohlberg_pedido_cancelado", lead_id=fresh_lead)
+                    log.warning("registrar_pedido_cancel_note_failed", lead_id=remembered, error=str(e))
+                _reset_draft_products(_DRAFT_BY_WA.setdefault(wa, {}))
+                log.info("kohlberg_pedido_cancelado", lead_id=remembered)
                 return json.dumps(
-                    {"lead_id": fresh_lead, "solicitud": f"#{fresh_lead}", "cancelado": True},
+                    {"lead_id": remembered, "solicitud": f"#{remembered}", "cancelado": True},
                     ensure_ascii=False,
                 )
 
@@ -1021,24 +1066,26 @@ async def registrar_pedido(
             # ONE full-object write does everything: product lines (inline), lead_value, the city's
             # pipeline + stage (Confirmado on confirm, else No atendido) and the city's sales rep as
             # owner. Krayin only fills the product lines/value from the WHOLE object (a partial PUT or
-            # the /leads/product endpoint did not) - so reuse the fresh lead with a full PUT, or POST a
-            # new one for a separate order.
-            # HYBRID lead reuse (kills the phantom empty lead WITHOUT collapsing separate orders):
-            # reuse the CRM's fresh auto-created lead (No atendido + NO products) for the FIRST order
-            # so it becomes the real order instead of leaving an empty ghost + a second sale lead. Once
-            # that lead carries products / was advanced, _is_fresh_for_order is False, so a SECOND order
-            # in the same conversation POSTs a new lead (pedidos separados). Reusing only EMPTY leads
-            # also sidesteps the "PUT replaces products" trap — there's nothing previous to lose.
-            # A CORRECTION overrides the hybrid: PUT onto the last lead of this conversation with the
-            # full corrected list (the client restated the whole order), never POST — that's what made
-            # #1772/#1773 duplicates. Prefer the lead we remembered; fall back to contact.lead_id.
-            wa = _ctx_wa_id(config)
+            # the /leads/product endpoint did not) - so reuse the in-progress lead with a full PUT, or
+            # POST a new one for a separate order.
+            #
+            # Target lead:
+            #   - CORRECTION (es_correccion): PUT onto the current pedido (remembered) with the full
+            #     corrected list, unless that lead is already terminal (then open a new one). This is
+            #     what avoids the #1772/#1773 duplicates.
+            #   - FIRST confirm of the live-built draft: the remembered lead is still "No atendido"
+            #     (actualizar_pedido built it but never confirmed it) -> REUSE it, so the confirm lands
+            #     on that same lead instead of POSTing a phantom duplicate.
+            #   - OTHERWISE (already Confirmado / terminal / none): separate order -> POST a new lead
+            #     (pedidos separados).
             if es_correccion:
-                target_lead = _LAST_LEAD_BY_WA.get(wa) or lead_ctx
+                target_lead = remembered if (cur_lead is not None and not _is_terminal(cur_lead)) else None
                 log.info("registrar_pedido_correccion", target_lead=target_lead,
-                         remembered=_LAST_LEAD_BY_WA.get(wa), lead_ctx=lead_ctx)
+                         remembered=remembered, lead_ctx=lead_ctx)
+            elif cur_lead is not None and _is_unattended(cur_lead):
+                target_lead = remembered
             else:
-                target_lead = fresh_lead
+                target_lead = None
             stage_key = "confirmado" if es_pedido_confirmado else "no_atendido"
             body = _build_lead_body(
                 person_id, wa, nombre, titulo_de_pedido, descripcion,
@@ -1053,6 +1100,10 @@ async def registrar_pedido(
             # Remember it so an immediate correction PUTs onto this same lead (see _LAST_LEAD_BY_WA).
             if wa:
                 _LAST_LEAD_BY_WA[wa] = lead_id
+            # A confirmed order closes the live draft: the NEXT order in this conversation starts a new
+            # pedido (fresh lead), keeping the client's city/name/age in the draft.
+            if es_pedido_confirmado:
+                _reset_draft_products(_DRAFT_BY_WA.setdefault(wa, {}))
 
             log.info(
                 "kohlberg_pedido_registered",
@@ -1441,16 +1492,25 @@ async def actualizar_pedido(
 
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            # Cold draft on this replica: seed products from the existing lead so we don't clobber them.
-            if not draft.get("_seeded") and lead_ctx:
-                lead = await _get_lead(client, lead_ctx)
-                if lead is not None:
-                    prods = lead.get("products")
-                    if isinstance(prods, dict) and prods and "ids" not in draft:
-                        draft["ids"] = [_to_int(p.get("product_id")) for p in prods.values()]
-                        draft["names"] = [p.get("name") for p in prods.values()]
-                        draft["qtys"] = [_to_int(p.get("quantity")) or 1 for p in prods.values()]
-                draft["_seeded"] = True
+            # Resolve which lead this live update belongs to. The in-progress pedido is tracked per
+            # wa_id (_LAST_LEAD_BY_WA), falling back to the conversation's auto-created lead_ctx. If
+            # that lead is in a TERMINAL stage (sin interés / entregado / cancelado / otros) or was
+            # already CONFIRMED, the current order is closed -> this is a NEW pedido: start a fresh
+            # draft and POST a new lead instead of resurrecting/overwriting the closed one.
+            remembered = _LAST_LEAD_BY_WA.get(wa) or lead_ctx
+            target_lead: Optional[int] = remembered
+            cur_lead = await _get_lead(client, remembered) if remembered else None
+            if cur_lead is not None and (_is_terminal(cur_lead) or _is_confirmed(cur_lead)):
+                _reset_draft_products(draft)
+                target_lead = None
+            elif not draft.get("_seeded") and cur_lead is not None:
+                # Cold draft on an in-progress lead: seed its products so we don't clobber them.
+                prods = cur_lead.get("products")
+                if isinstance(prods, dict) and prods and "ids" not in draft:
+                    draft["ids"] = [_to_int(p.get("product_id")) for p in prods.values()]
+                    draft["names"] = [p.get("name") for p in prods.values()]
+                    draft["qtys"] = [_to_int(p.get("quantity")) or 1 for p in prods.values()]
+            draft["_seeded"] = True
 
             # Merge the newly-provided data into the draft.
             ciudad_val = (ciudad or "").strip()
@@ -1490,7 +1550,7 @@ async def actualizar_pedido(
                 person_id, wa, draft.get("nombre"), titulo, descripcion,
                 draft.get("ciudad"), stage_key, total, products_map, edad=draft.get("edad"),
             )
-            lead_id = await _upsert_lead(client, lead_ctx, body)
+            lead_id = await _upsert_lead(client, target_lead, body)
             if lead_id and wa:
                 _LAST_LEAD_BY_WA[wa] = lead_id
 
