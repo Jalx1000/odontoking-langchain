@@ -105,3 +105,30 @@ class TestCitasActivasContext:
         prompt = _load_odontoking_prompt("591700", mensajes_crm=[{"origen": "recepción", "texto": "ya le agendé"}])
         assert "mensajes_crm:" in prompt
         assert "- recepción: ya le agendé" in prompt
+
+
+class TestAgentAuditRules:
+    """Rules added after auditing the conversations of 06/11."""
+
+    def _prompt(self):
+        with open("app/core/prompts/odontoking.md") as f:
+            return f.read()
+
+    def test_existing_appointment_is_mentioned_before_offering_a_new_one(self):
+        assert "dísela ANTES de ofrecer" in self._prompt()
+
+    def test_appointment_under_another_name_goes_to_reception(self):
+        """Conversación 4116: "no encontré una cita" for a cita registered under another number."""
+        assert "puede estar a otro nombre" in self._prompt()
+
+    def test_confirming_an_appointment_uses_its_lead_id(self):
+        """Conversación 4020: "confirmo los 3" received the booking form."""
+        assert 'responder_recordatorio("confirma", lead_id=' in self._prompt()
+
+    def test_coverage_terms_are_not_improvised(self):
+        """Conversación 4013: "generalmente la membresía dura un año"."""
+        assert "ni \"lo normal\" o \"generalmente\"" in self._prompt()
+
+    def test_address_names_the_city(self):
+        """Conversación 4118: a patient from La Paz booked without knowing the clinic is in Santa Cruz."""
+        assert "Taller Bavaria, Santa Cruz de la Sierra" in self._prompt()

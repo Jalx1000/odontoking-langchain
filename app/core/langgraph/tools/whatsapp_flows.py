@@ -250,8 +250,8 @@ async def responder_recordatorio(
 ) -> str:
     """Registra la respuesta del paciente a un recordatorio de cita.
 
-    Úsala SOLO cuando el paciente responde a un recordatorio (mira `recordatorios` en el contexto:
-    un recordatorio con respuesta null está sin contestar):
+    Úsala cuando el paciente responde a un recordatorio (mira `recordatorios` en el contexto: uno con
+    respuesta null está sin contestar) o confirma una cita de `citas_activas`, pasando su lead_id:
     - "confirma": el paciente confirma que asistirá → la cita queda en "Cita confirmada".
     - "no_asiste": el paciente avisa que NO podrá ir → NO cancela nada, solo deja aviso a recepción;
       DESPUÉS ofrécele reprogramar o cancelar con el formulario correspondiente.
