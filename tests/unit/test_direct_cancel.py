@@ -4,7 +4,10 @@ Covers the pure intent/format helpers and the 2-turn flow on the OdontokingAgent
 confirm with the cita detail → on "Sí" cancel directly via the CRM (no form), on "No" keep it.
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
+from langchain_core.messages import HumanMessage
 
 from app.core.cache import cache_service
 from app.core.langgraph import odontoking_graph as og
@@ -39,6 +42,11 @@ class TestCancelIntent:
         assert not _wants_direct_cancel("quiero reprogramar mi cita")
 
     def test_non_cancel_text(self):
+        assert not _wants_direct_cancel(
+            "Buenas tardes un inconveniente por favor anular la cita puede ser martes a las 3:30 Me confirma por favor"
+        )
+        assert not _wants_direct_cancel("anular la cita, mejor el 12/11")
+        assert not _wants_direct_cancel("cancelar, podría a las 4")
         assert not _wants_direct_cancel("hola, ¿qué horarios tienen?")
         assert not _wants_direct_cancel("")
 
@@ -168,3 +176,89 @@ class TestDirectCancelFlow:
         agent = og.OdontokingAgent()
         dos = [_cita(lead_id=1), _cita(lead_id=2)]
         assert await agent._handle_direct_cancel(_WA, "cancelar mi cita", [], None, dos) is None
+
+    async def test_confirmation_survives_for_a_day(self, monkeypatch):
+        """Conversación 3516: the 'Sí' came 23 minutes later and the cancel had already expired."""
+        await self._clear()
+        ttls = []
+        real_set = cache_service.set
+
+        async def _spy_set(key, value, ttl=None):
+            ttls.append(ttl)
+            return await real_set(key, value, ttl=ttl)
+
+        monkeypatch.setattr(cache_service, "set", _spy_set)
+        agent = og.OdontokingAgent()
+        await agent._handle_direct_cancel(_WA, "cancelar mi cita", [_cita()], 501)
+        assert ttls == [86400]
+
+    async def test_second_ambiguous_reply_drops_the_confirmation(self):
+        """With a 24 h window the patient must not be stuck on the question."""
+        await self._clear()
+        agent = og.OdontokingAgent()
+        citas = [_cita()]
+        await agent._handle_direct_cancel(_WA, "cancelar mi cita", citas, 501)
+
+        reask = await agent._handle_direct_cancel(_WA, "¿cuánto cuesta una limpieza?", citas, 501)
+        assert reask is not None and "responda" in reask.lower()
+        assert await cache_service.get(f"{_CANCEL_CONFIRM_PREFIX}{_WA}") is not None
+
+        assert await agent._handle_direct_cancel(_WA, "¿y dónde están?", citas, 501) is None
+        assert await cache_service.get(f"{_CANCEL_CONFIRM_PREFIX}{_WA}") is None
+
+    async def test_new_slot_drops_the_confirmation(self):
+        """'Mejor el martes' while awaiting the yes/no is a reschedule, not an ambiguous reply."""
+        await self._clear()
+        agent = og.OdontokingAgent()
+        citas = [_cita()]
+        await agent._handle_direct_cancel(_WA, "cancelar mi cita", citas, 501)
+        assert await agent._handle_direct_cancel(_WA, "mejor el martes", citas, 501) is None
+        assert await cache_service.get(f"{_CANCEL_CONFIRM_PREFIX}{_WA}") is None
+
+    async def test_yes_after_the_cita_is_gone_does_not_cancel(self, monkeypatch):
+        """Reception may have cancelled it during the 24 h window."""
+        await self._clear()
+        called = {"n": 0}
+
+        async def _fake_cancel(wa_id, lead_id=None):
+            called["n"] += 1
+            return {"success": True}
+
+        monkeypatch.setattr(og, "cancel_appointment", _fake_cancel)
+        agent = og.OdontokingAgent()
+        await agent._handle_direct_cancel(_WA, "cancelar mi cita", [], None, [_cita(lead_id=55)])
+        reply = await agent._handle_direct_cancel(_WA, "sí", [], None, [])
+        assert "ya no figura" in reply
+        assert called["n"] == 0
+
+    async def test_yes_answers_the_cancel_not_the_pending_reminder(self, monkeypatch):
+        """Through get_response: a pending cancel wins over the reminder short-circuit."""
+        await self._clear()
+        canceled = {}
+
+        async def _fake_cancel(wa_id, lead_id=None):
+            canceled["lead_id"] = lead_id
+            return {"success": True, "lead_id": lead_id}
+
+        reminder_tool = AsyncMock()
+        reminder_tool.ainvoke = AsyncMock(return_value='{"success": true}')
+        monkeypatch.setattr(og, "cancel_appointment", _fake_cancel)
+        monkeypatch.setattr(og, "responder_recordatorio", reminder_tool)
+        monkeypatch.setattr(og.settings, "WHATSAPP_FLOWS_ENABLED", True)
+        agent = og.OdontokingAgent()
+        cita = _cita(lead_id=211)
+        recordatorios = [{"activity_id": 9, "lead_id": 211, "respuesta": None}]
+
+        await agent._handle_direct_cancel(_WA, "cancelar mi cita", [], None, [cita])
+        reply = await agent.get_response(
+            [HumanMessage(content="Si")],
+            _WA,
+            citas=[],
+            conversation_id=3516,
+            recordatorios=recordatorios,
+            citas_activas=[cita],
+        )
+
+        assert "cancelada" in reply.lower()
+        assert canceled == {"lead_id": 211}
+        reminder_tool.ainvoke.assert_not_awaited()

@@ -165,6 +165,38 @@ async def test_real_responder_recordatorio_reaches_the_crm_with_injected_id(monk
     assert "missing_conversation_id" not in command.update["messages"][0].content
 
 
+@pytest.mark.asyncio
+async def test_already_answered_reminder_is_not_a_handoff(monkeypatch):
+    """A 409 means the reminder was answered: no failure, so the bot stays in the conversation."""
+    from app.core.langgraph.tools import whatsapp_flows
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json, headers):
+            class _Resp:
+                status_code = 409
+                text = "{}"
+
+            return _Resp()
+
+    agent = OdontokingAgent()
+    monkeypatch.setattr(whatsapp_flows.httpx, "AsyncClient", _Client)
+    agent.tools_by_name = {"responder_recordatorio": whatsapp_flows.responder_recordatorio}
+
+    state = _state_with_tool_call("responder_recordatorio")
+    state.messages[-1].tool_calls[0]["args"] = {"respuesta": "confirma", "activity_id": 7}
+    command = await agent._tool_call(state, {"metadata": {"conversation_id": 3516}})
+
+    assert command.goto == "chat"
+    assert "already_answered" in command.update["messages"][0].content
+
+
 def _failing_tool(result: str) -> AsyncMock:
     tool = AsyncMock()
     tool.ainvoke = AsyncMock(return_value=result)

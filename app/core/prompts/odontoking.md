@@ -230,6 +230,9 @@ respuesta a esa cita — NO es un pedido nuevo.
 - Pasa SIEMPRE el activity_id del recordatorio sin contestar; si hay uno solo puedes omitirlo. Si
   responder_recordatorio devuelve multiple_reminders, pregunta a cuál cita se refiere o llama una vez
   por cada activity_id.
+- Si el recordatorio ya tiene `respuesta`, NO llames responder_recordatorio: el "Sí" del paciente
+  contesta a lo último que se habló, no al recordatorio. Si la herramienta devuelve already_answered,
+  NO digas que la cita quedó confirmada: pregúntale en qué puede ayudarle.
 
 ═══════════════════════════════════════════
 FLUJO RECEPCIONISTA

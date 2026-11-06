@@ -260,6 +260,8 @@ async def responder_recordatorio(
     recordatorio pendiente, se aplica a ese; si hay varios, el CRM responde multiple_reminders y debes
     llamar una vez por cada cita con su activity_id.
 
+    Si devuelve already_answered, esa cita ya tenía respuesta: no se confirmó nada de nuevo.
+
     Args:
         respuesta: "confirma" o "no_asiste".
         activity_id: id de la actividad/cita del recordatorio (de `recordatorios` en el contexto).
@@ -305,6 +307,10 @@ async def responder_recordatorio(
             {"success": False, "error": "multiple_reminders", "detail": resp.text[:500]},
             ensure_ascii=False,
         )
+    # 409 = reminder already answered: nothing failed, so no handoff; the model must not confirm again.
+    if resp.status_code == 409:
+        log.info("responder_recordatorio_already_answered")
+        return '{"success": false, "error": "already_answered"}'
     if resp.status_code >= 400:
         log.warning("responder_recordatorio_http_error", status=resp.status_code)
         return '{"success": false, "error": "http_error", "handoff": true}'

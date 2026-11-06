@@ -293,7 +293,7 @@ def _detect_reminder_reply(text: str, recordatorios: list[dict] | None) -> Optio
 # live path. State is a tiny per-wa_id flag in cache_service so it survives the two WhatsApp turns.
 
 _CANCEL_CONFIRM_PREFIX = "cancel_confirm:"
-_CANCEL_CONFIRM_TTL = 600  # 10 min — the pending confirmation expires if the patient wanders off
+_CANCEL_CONFIRM_TTL = 86400  # 24 h — patients answer hours later; the "Sí" must not reach the LLM as a loose yes
 
 # Wants to cancel (eliminate), NOT reschedule. Mirrors postbooking._CANCEL_KEYWORDS but kept here
 # so the forms path doesn't depend on that module.
@@ -308,7 +308,17 @@ _RESCHEDULE_HINTS = (
     "reprogram", "reagend", "mover", "muev", "pasar", "pásela", "pasela", "otro dia", "otro día",
     "otra hora", "otra fecha", "cambiar la fecha", "cambiar el dia", "cambiar el día", "cambiar la hora",
     "para mañana", "para el", "al viernes", "al lunes", "al martes", "al miércoles", "al miercoles",
-    "al jueves", "al sábado", "al sabado", "al domingo",
+    "al jueves", "al sábado", "al sabado", "al domingo", "puede ser",
+)
+# "anular la cita, puede ser martes a las 3:30": a date or time next to "cancelar" means the patient may
+# want another slot, and a cancellation can't be undone. Matched against _norm_cancel text (no accents).
+# "cancelar mi cita del martes" also lands here on purpose: the LLM/form path handles it safely.
+_RESCHEDULE_DATE_RE = re.compile(
+    r"\b(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b"
+    r"|\b\d{1,2}[/-]\d{1,2}\b"
+    r"|\b\d{1,2}:\d{2}\b"
+    r"|\ba las? \d{1,2}\b"
+    r"|\b\d{1,2}\s*(?:am|pm|hrs?)\b"
 )
 _CANCEL_YES = {"si", "sí", "sip", "claro", "confirmo", "confirmar", "dale", "ok", "oka", "correcto",
                "por supuesto", "de acuerdo", "asi es", "así es", "cancelala", "cancélala", "cancelar"}
@@ -323,12 +333,18 @@ def _norm_cancel(text: str) -> str:
     return t.strip().strip("!¡.?¿, ")
 
 
+def _wants_reschedule(text: str) -> bool:
+    """True when the message mentions another slot: a reschedule phrase, a date or a time."""
+    low = _norm_cancel(text)
+    if any(h in low for h in (_norm_cancel(h) for h in _RESCHEDULE_HINTS)):
+        return True
+    return _RESCHEDULE_DATE_RE.search(low) is not None
+
+
 def _wants_direct_cancel(text: str) -> bool:
     """True when the message asks to cancel (eliminate) a cita and is NOT a reschedule."""
     low = _norm_cancel(text)
-    if not low:
-        return False
-    if any(h in low for h in (_norm_cancel(h) for h in _RESCHEDULE_HINTS)):
+    if not low or _wants_reschedule(text):
         return False
     return any(k in low for k in (_norm_cancel(k) for k in _DIRECT_CANCEL_KEYWORDS))
 
@@ -1037,13 +1053,20 @@ class OdontokingAgent:
 
         # ── Turn 2: a confirmation is pending ──
         if pending_raw:
+            try:
+                pending = json.loads(pending_raw)
+            except (json.JSONDecodeError, TypeError):
+                pending = {}
             if _is_cancel_yes(text):
-                try:
-                    pending = json.loads(pending_raw)
-                except (json.JSONDecodeError, TypeError):
-                    pending = {}
                 lead_id = pending.get("lead_id")
                 await cache_service.delete(key)
+                # The confirmation can be up to a day old: the cita may be gone by now.
+                if citas_activas is not None and lead_id not in {c.get("lead_id") for c in citas_activas}:
+                    reply = ("Esa cita ya no figura como activa en nuestra agenda, así que no hay nada que "
+                             "cancelar. Si desea agendar una nueva, con gusto le ayudo 😊.")
+                    logger.info("direct_cancel_cita_gone", wa_id=wa_id, lead_id=lead_id)
+                    self._schedule_persist(wa_id, [HumanMessage(content=text), AIMessage(content=reply)])
+                    return reply
                 result = await cancel_appointment(wa_id, lead_id=lead_id)
                 if result.get("success"):
                     reply = ("Su cita ha sido cancelada ✅. Cuando guste agendar una nueva, escríbame "
@@ -1059,7 +1082,15 @@ class OdontokingAgent:
                 reply = "Perfecto, su cita se mantiene sin cambios. ¿Hay algo más en que pueda ayudarle? 😊"
                 self._schedule_persist(wa_id, [HumanMessage(content=text), AIMessage(content=reply)])
                 return reply
-            # Ambiguous reply while awaiting confirmation → re-ask once, keep the pending flag.
+            # With a 24 h window the patient may have moved on: a new slot, or a second ambiguous
+            # reply, drops the confirmation so they are never stuck on this question.
+            if pending.get("reasked") or _wants_reschedule(text):
+                await cache_service.delete(key)
+                logger.info("direct_cancel_confirm_dropped", wa_id=wa_id)
+                return None
+            await cache_service.set(
+                key, json.dumps({**pending, "reasked": True}, ensure_ascii=False), ttl=_CANCEL_CONFIRM_TTL
+            )
             return ('Para confirmar la cancelación responda "Sí"; si desea conservar su cita responda "No". 🙏')
 
         # ── Turn 1: detect a cancel intent for a single active cita ──
@@ -1136,7 +1167,10 @@ class OdontokingAgent:
         # unanswered reminder and the text is a clear yes/no, register it directly instead of trusting
         # the LLM (gpt-4o-mini tended to fall into the reception menu here). Ambiguous text or 0/2+
         # reminders fall through to the LLM.
-        if settings.WHATSAPP_FLOWS_ENABLED and conversation_id:
+        # A pending cancel confirmation owns the next "Sí": it must not confirm the reminder of the
+        # cita the patient is cancelling.
+        cancel_pending = await cache_service.get(f"{_CANCEL_CONFIRM_PREFIX}{wa_id}")
+        if settings.WHATSAPP_FLOWS_ENABLED and conversation_id and not cancel_pending:
             hit = _detect_reminder_reply(last_user_text, recordatorios)
             if hit is not None:
                 respuesta, activity_id = hit
