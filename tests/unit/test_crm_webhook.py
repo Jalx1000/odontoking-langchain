@@ -263,19 +263,49 @@ def _deliver(monkeypatch, message: dict) -> tuple[_Gateway, list[str]]:
 
 
 class TestWebhookAttachments:
-    """Attachments no longer vanish silently."""
+    """Attachments are read, and never vanish silently."""
 
-    def test_image_without_caption_gets_a_notice(self, monkeypatch):
-        gateway, processed = _deliver(monkeypatch, {"id": 1, "type": "image", "text": None})
+    _MEDIA = {"url": "https://crm.test/whatsapp/media/a.jpg", "mime": "image/jpeg"}
+
+    def _reader(self, monkeypatch, result):
+        async def read(_type, _media):
+            return result
+
+        monkeypatch.setattr(crm, "read_attachment", read)
+
+    def test_attachment_content_reaches_the_agent(self, monkeypatch):
+        self._reader(monkeypatch, "[Imagen...]: carnet")
+        gateway, processed = _deliver(monkeypatch, {"id": 1, "type": "image", "media": self._MEDIA})
+        assert gateway.sent == []
+        assert processed == ["[Imagen...]: carnet"]
+
+    def test_caption_goes_with_the_content(self, monkeypatch):
+        self._reader(monkeypatch, "[Imagen...]: carnet")
+        _, processed = _deliver(monkeypatch, {"id": 2, "type": "image", "text": "mi seguro", "media": self._MEDIA})
+        assert processed == ["mi seguro\n[Imagen...]: carnet"]
+
+    def test_unreadable_attachment_gets_a_notice(self, monkeypatch):
+        self._reader(monkeypatch, "")
+        gateway, processed = _deliver(monkeypatch, {"id": 3, "type": "image", "media": self._MEDIA})
         assert gateway.sent == [crm._MEDIA_REPLIES["image"]]
         assert processed == []
 
-    def test_caption_reaches_the_agent(self, monkeypatch):
-        gateway, processed = _deliver(monkeypatch, {"id": 2, "type": "image", "text": "este es mi carnet"})
+    def test_unreadable_attachment_keeps_its_caption(self, monkeypatch):
+        self._reader(monkeypatch, "")
+        gateway, processed = _deliver(monkeypatch, {"id": 4, "type": "image", "text": "este", "media": self._MEDIA})
         assert gateway.sent == []
-        assert processed == ["este es mi carnet"]
+        assert processed == ["este"]
+
+    def test_not_stored_by_the_crm_gets_a_notice(self, monkeypatch):
+        gateway, processed = _deliver(monkeypatch, {"id": 5, "type": "audio", "text": None})
+        assert gateway.sent == [crm._MEDIA_REPLIES["audio"]]
+        assert processed == []
+
+    def test_video_is_not_read(self, monkeypatch):
+        gateway, _ = _deliver(monkeypatch, {"id": 6, "type": "video", "media": self._MEDIA})
+        assert gateway.sent == [crm._MEDIA_REPLIES["video"]]
 
     def test_sticker_stays_ignored(self, monkeypatch):
-        gateway, processed = _deliver(monkeypatch, {"id": 3, "type": "sticker", "text": None})
+        gateway, processed = _deliver(monkeypatch, {"id": 7, "type": "sticker", "text": None})
         assert gateway.sent == []
         assert processed == []

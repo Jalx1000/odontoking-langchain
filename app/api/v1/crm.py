@@ -22,6 +22,7 @@ from app.core.logging import logger
 from app.schemas import Message
 from app.schemas.crm import CrmHistoryItem, CrmWebhookEvent
 from app.services.gateway import Destination, get_gateway
+from app.services.media_reader import read_attachment
 from app.services.message_buffer import message_buffer_service
 
 router = APIRouter()
@@ -37,14 +38,15 @@ _WAITING_MSG = (
     "La consulta está tardando un poco más de lo normal. "
     "Sigo revisando y le responderé en este mismo chat en un momento 🙏."
 )
-# Attachments the agent cannot read yet: the CRM does not download Cloud API media, so there is
-# nothing to look at or transcribe. Stickers are left out on purpose: they are not a question.
+# Fallback when an attachment could not be read. Stickers are left out on purpose: they are not a
+# question. Videos are not read at all.
 _MEDIA_REPLIES = {
-    "audio": "Disculpe, por ahora no puedo escuchar audios. ¿Podría escribirme su consulta en un mensaje? 🙏",
-    "image": "Disculpe, por ahora no puedo ver imágenes. ¿Podría contarme por escrito qué necesita? 🙏",
+    "audio": "Disculpe, no pude escuchar su audio. ¿Podría escribirme su consulta en un mensaje? 🙏",
+    "image": "Disculpe, no pude ver su imagen. ¿Podría contarme por escrito qué necesita? 🙏",
     "video": "Disculpe, por ahora no puedo ver videos. ¿Podría contarme por escrito qué necesita? 🙏",
-    "document": "Disculpe, por ahora no puedo abrir archivos. ¿Podría contarme por escrito qué necesita? 🙏",
+    "document": "Disculpe, no pude abrir su archivo. ¿Podría contarme por escrito qué necesita? 🙏",
 }
+_READABLE_MEDIA = {"audio", "image", "document"}
 # A patient often sends several photos in a row: one notice covers all of them.
 _MEDIA_REPLY_TTL = 600.0
 _media_replied_at: dict[int, float] = {}
@@ -93,6 +95,35 @@ def _should_send_media_reply(conversation_id: int) -> bool:
         return False
     _media_replied_at[conversation_id] = now
     return True
+
+
+async def _send_media_notice(dest: Destination, msg_type: str) -> None:
+    """Tell the patient an attachment could not be read (once per burst); never raises."""
+    if not _should_send_media_reply(dest.conversation_id):
+        return
+    try:
+        await get_gateway().send_text(dest, _MEDIA_REPLIES[msg_type])
+    except Exception:
+        logger.exception("crm_media_reply_failed", conversation_id=dest.conversation_id)
+
+
+async def _deliver_text(phone: str, text: str, process_fn) -> None:
+    """Hand text to the agent through the debounce buffer, or directly when it is off."""
+    if settings.BUFFER_ENABLED:
+        await message_buffer_service.enqueue(phone, text, process_fn)
+    else:
+        await process_fn(phone, text)
+
+
+async def _read_and_deliver(dest: Destination, event: CrmWebhookEvent, caption: str, process_fn) -> None:
+    """Read an attachment off the request path (it can take seconds) and pass it to the agent."""
+    contenido = await read_attachment(event.message.type, event.message.media)
+    logger.info("crm_media_read", conversation_id=dest.conversation_id, chars=len(contenido))
+    text = "\n".join(part for part in (caption, contenido) if part)
+    if text:
+        await _deliver_text(dest.wa_id, text, process_fn)
+    else:
+        await _send_media_notice(dest, event.message.type)
 
 
 def _mensajes_crm(history: list[CrmHistoryItem]) -> list[dict]:
@@ -309,13 +340,10 @@ async def receive_crm_event(request: Request) -> dict:
     reply_url = event.reply.url if event.reply else ""
     dest = Destination(wa_id=phone, conversation_id=event.conversation_id, reply_url=reply_url)
 
-    # An attachment with a caption goes on as text; without one there is nothing to read.
-    if not text:
-        if _should_send_media_reply(event.conversation_id):
-            try:
-                await get_gateway().send_text(dest, _MEDIA_REPLIES[event.message.type])
-            except Exception:
-                logger.exception("crm_media_reply_failed", conversation_id=event.conversation_id)
+    readable = event.message.type in _READABLE_MEDIA and event.message.media is not None
+    # Nothing to read and no caption (a video, or a file the CRM failed to store).
+    if not text and not readable:
+        await _send_media_notice(dest, event.message.type)
         logger.info("crm_media_without_text", conversation_id=event.conversation_id, msg_type=event.message.type)
         return {"status": "ok"}
 
@@ -365,6 +393,12 @@ async def receive_crm_event(request: Request) -> dict:
         es_primer_contacto=es_primer_contacto,
         mensajes_crm=_mensajes_crm(event.history or []),
     )
+    if readable:
+        task = asyncio.create_task(_read_and_deliver(dest, event, text, process_fn))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+        return {"status": "ok"}
+
     # A flow_reply is a single discrete event (not free text) — process it immediately instead of
     # buffering/concatenating it with other messages.
     if settings.BUFFER_ENABLED and not is_flow_reply:

@@ -18,6 +18,16 @@ class CrmContact(BaseModel):
     lead_id: Optional[int] = None
 
 
+class CrmMedia(BaseModel):
+    """An attachment already stored by the CRM."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    url: str
+    mime: Optional[str] = None
+    name: Optional[str] = None
+
+
 class CrmMessage(BaseModel):
     """The inbound message that triggered the event."""
 
@@ -30,6 +40,8 @@ class CrmMessage(BaseModel):
     # Present only when type == "flow_reply": the data the patient submitted in a WhatsApp form
     # (keys: flow, status, patient_name, relation, specialty, doctor_name, date, time, …).
     flow: Optional[dict] = None
+    # Present when the patient sent an attachment the CRM could store.
+    media: Optional[CrmMedia] = None
 
 
 class CrmHistoryItem(BaseModel):
