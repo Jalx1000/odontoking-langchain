@@ -16,6 +16,7 @@ from app.schemas.crm import CrmMedia
 from app.services.whatsapp_client import transcribe_audio
 
 _OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
+_READER_MODEL = "gpt-4o-mini"  # Needs vision: independent of the chat model configured for the agent.
 _MAX_BYTES = 25 * 1024 * 1024
 _IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 _READER_PROMPT = (
@@ -45,7 +46,7 @@ async def _download(url: str) -> bytes:
 async def _ask_reader(part: dict) -> str:
     """Send one image or PDF part to the vision model and return what it read."""
     payload = {
-        "model": settings.DEFAULT_LLM_MODEL,
+        "model": _READER_MODEL,
         "max_tokens": 500,
         "messages": [
             {"role": "system", "content": _READER_PROMPT},
