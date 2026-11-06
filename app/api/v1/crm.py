@@ -37,6 +37,21 @@ _WAITING_MSG = (
     "La consulta está tardando un poco más de lo normal. "
     "Sigo revisando y le responderé en este mismo chat en un momento 🙏."
 )
+# Attachments the agent cannot read yet: the CRM does not download Cloud API media, so there is
+# nothing to look at or transcribe. Stickers are left out on purpose: they are not a question.
+_MEDIA_REPLIES = {
+    "audio": "Disculpe, por ahora no puedo escuchar audios. ¿Podría escribirme su consulta en un mensaje? 🙏",
+    "image": "Disculpe, por ahora no puedo ver imágenes. ¿Podría contarme por escrito qué necesita? 🙏",
+    "video": "Disculpe, por ahora no puedo ver videos. ¿Podría contarme por escrito qué necesita? 🙏",
+    "document": "Disculpe, por ahora no puedo abrir archivos. ¿Podría contarme por escrito qué necesita? 🙏",
+}
+# A patient often sends several photos in a row: one notice covers all of them.
+_MEDIA_REPLY_TTL = 600.0
+_media_replied_at: dict[int, float] = {}
+_CRM_SENDERS = {"human": "recepción", "system": "sistema"}
+_MENSAJES_CRM_LIMIT = 3
+_MENSAJE_CRM_MAX_CHARS = 300
+
 _HARD_TIMEOUT_MSG = (
     "Disculpe, la consulta no pudo completarse en este momento. "
     "Por favor intente de nuevo en unos minutos 🙏."
@@ -67,6 +82,27 @@ def _is_duplicate_message(msg_id: str) -> bool:
         return True
     _seen_message_ids[msg_id] = now
     return False
+
+
+def _should_send_media_reply(conversation_id: int) -> bool:
+    """True once per conversation within the TTL window, so a burst of photos gets one notice."""
+    now = time.monotonic()
+    for k in [k for k, v in _media_replied_at.items() if now - v > _MEDIA_REPLY_TTL]:
+        del _media_replied_at[k]
+    if conversation_id in _media_replied_at:
+        return False
+    _media_replied_at[conversation_id] = now
+    return True
+
+
+def _mensajes_crm(history: list[CrmHistoryItem]) -> list[dict]:
+    """Latest texts the CRM or reception sent: the agent's own memory does not contain them."""
+    mensajes = [
+        {"origen": _CRM_SENDERS[item.sender], "texto": item.content.strip()[:_MENSAJE_CRM_MAX_CHARS]}
+        for item in history
+        if item.sender in _CRM_SENDERS and item.content.strip()
+    ]
+    return mensajes[-_MENSAJES_CRM_LIMIT:]
 
 
 def _is_first_contact(history: list[CrmHistoryItem]) -> bool:
@@ -135,6 +171,7 @@ def _make_process_fn(
     citas_activas: list[dict] | None = None,
     fuera_de_horario: bool | None = None,
     es_primer_contacto: bool = False,
+    mensajes_crm: list[dict] | None = None,
 ):
     """Return a ProcessFn closure bound to the CRM destination + patient context."""
     gateway = get_gateway()
@@ -167,6 +204,7 @@ def _make_process_fn(
                     citas_activas=citas_activas,
                     fuera_de_horario=fuera_de_horario,
                     es_primer_contacto=es_primer_contacto,
+                    mensajes_crm=mensajes_crm,
                     handoff_callback=_on_handoff,
                 )
             )
@@ -253,7 +291,9 @@ async def receive_crm_event(request: Request) -> dict:
     text = (event.message.text or "").strip()
     if is_flow_reply:
         text = _format_flow_reply(event.message.flow or {})
-    elif event.message.type not in ("text", "button", "interactive") or not text:
+    elif event.message.type not in ("text", "button", "interactive", *_MEDIA_REPLIES) or (
+        not text and event.message.type not in _MEDIA_REPLIES
+    ):
         logger.info("crm_unsupported_message", msg_type=event.message.type)
         return {"status": "ignored"}
 
@@ -268,6 +308,16 @@ async def receive_crm_event(request: Request) -> dict:
         return {"status": "ok"}
     reply_url = event.reply.url if event.reply else ""
     dest = Destination(wa_id=phone, conversation_id=event.conversation_id, reply_url=reply_url)
+
+    # An attachment with a caption goes on as text; without one there is nothing to read.
+    if not text:
+        if _should_send_media_reply(event.conversation_id):
+            try:
+                await get_gateway().send_text(dest, _MEDIA_REPLIES[event.message.type])
+            except Exception:
+                logger.exception("crm_media_reply_failed", conversation_id=event.conversation_id)
+        logger.info("crm_media_without_text", conversation_id=event.conversation_id, msg_type=event.message.type)
+        return {"status": "ok"}
 
     patient_ctx: dict = {}
     if settings.WHATSAPP_AUTO_CREATE_PERSON:
@@ -313,6 +363,7 @@ async def receive_crm_event(request: Request) -> dict:
         citas_activas=citas_activas,
         fuera_de_horario=fuera_de_horario,
         es_primer_contacto=es_primer_contacto,
+        mensajes_crm=_mensajes_crm(event.history or []),
     )
     # A flow_reply is a single discrete event (not free text) — process it immediately instead of
     # buffering/concatenating it with other messages.

@@ -148,7 +148,7 @@ with open(_PROMPT_FILE, "r") as _f:
 def _format_citas_context(citas: list[dict] | None, cita_activa: int | None) -> list[str]:
     """Render the patient's cita history as context lines (CONTRATO A: preloaded, don't re-ask)."""
     if not citas:
-        return ["citas_previas: []  # el paciente no tiene citas registradas en el CRM"]
+        return ["citas_previas: []  # sin historial; las citas futuras, si las hay, están en citas_activas"]
     lines = ["citas_previas:  # historial completo — cada lead-cita es UNA cita (no vuelvas a preguntar)"]
     for c in citas:
         fecha = f"{c.get('fecha') or 's/fecha'} {c.get('hora') or ''}".strip()
@@ -194,7 +194,7 @@ def _format_citas_activas(citas_activas: list[dict] | None) -> list[str]:
     """
     if not citas_activas:
         return []
-    lines = ["citas_activas:  # citas vigentes (incluye pacientes a cargo) — usar para cancelar/reprogramar"]
+    lines = ["citas_activas:  # citas futuras vigentes (incluye pacientes a cargo) — fuente de verdad"]
     for c in citas_activas:
         if not isinstance(c, dict):
             continue
@@ -204,6 +204,16 @@ def _format_citas_activas(citas_activas: list[dict] | None) -> list[str]:
         lines.append(
             f"  - lead_id={c.get('lead_id')} | {fecha} | Dr. {c.get('doctor') or 's/doctor'}{quien}"
         )
+    return lines
+
+
+def _format_mensajes_crm(mensajes: list[dict] | None) -> list[str]:
+    """Render what the CRM or reception told the patient outside the agent's own memory."""
+    if not mensajes:
+        return []
+    lines = ["mensajes_crm:  # enviados por fuera del agente, del más antiguo al más reciente"]
+    for m in mensajes:
+        lines.append(f"  - {m.get('origen')}: {m.get('texto')}")
     return lines
 
 
@@ -450,6 +460,7 @@ def _load_odontoking_prompt(
     recordatorios: list[dict] | None = None,
     citas_activas: list[dict] | None = None,
     fuera_de_horario: bool | None = None,
+    mensajes_crm: list[dict] | None = None,
 ) -> str:
     """Render the odontoking system prompt with Bolivia local datetime and patient context."""
     now = datetime.now(_TZ_BOLIVIA)
@@ -522,6 +533,7 @@ def _load_odontoking_prompt(
     context_lines.extend(_format_recordatorios(recordatorios))
     # Active citas (CRM, incl. dependents) — authoritative for cancelar/reprogramar.
     context_lines.extend(_format_citas_activas(citas_activas))
+    context_lines.extend(_format_mensajes_crm(mensajes_crm))
     # Clinic-computed out-of-hours flag — the agent uses it directly for handoffs (no re-deriving).
     if fuera_de_horario is not None:
         estado = "true" if fuera_de_horario else "false"
@@ -711,6 +723,7 @@ class OdontokingAgent:
             recordatorios=metadata.get("recordatorios"),
             citas_activas=metadata.get("citas_activas"),
             fuera_de_horario=metadata.get("fuera_de_horario"),
+            mensajes_crm=metadata.get("mensajes_crm"),
         )
         # When the deterministic intake already collected steps 1-6, inject that data so the
         # LLM continues from step 7 and never re-asks.
@@ -1048,6 +1061,7 @@ class OdontokingAgent:
         citas_activas: list[dict] | None = None,
         fuera_de_horario: bool | None = None,
         es_primer_contacto: bool = False,
+        mensajes_crm: list[dict] | None = None,
         handoff_callback: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
         """Process a WhatsApp message and return the agent's texto response.
@@ -1147,6 +1161,7 @@ class OdontokingAgent:
                 "recordatorios": recordatorios,
                 "citas_activas": citas_activas,
                 "fuera_de_horario": fuera_de_horario,
+                "mensajes_crm": mensajes_crm,
                 "intake_handoff": intake_handoff,
             },
             "recursion_limit": 50,

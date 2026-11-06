@@ -79,3 +79,29 @@ class TestInsuranceGate:
         assert "SEGURO NO VERIFICADO" not in prompt
         assert "ci_paciente_registrada: 12387735" in prompt
         assert "seguro_registrado: Membresía Odontoking" in prompt
+
+
+class TestCitasActivasContext:
+    """Upcoming citas and CRM messages reach the model as context."""
+
+    def test_citas_activas_rendered_even_without_history(self):
+        """No past history must not read as 'no appointment' when an upcoming one exists."""
+        prompt = _load_odontoking_prompt(
+            "591700",
+            citas_activas=[{"lead_id": 9, "fecha": "09/11/2026", "hora": "09:30", "doctor": "Rojas", "paciente": "Ana"}],
+        )
+        assert "lead_id=9 | 09/11/2026 09:30 | Dr. Rojas | Ana" in prompt
+        assert "no tiene citas registradas" not in prompt
+
+    def test_forms_prompt_trusts_citas_activas(self):
+        """Production prompt (forms mode), which tests do not load by default."""
+        with open("app/core/prompts/odontoking.md") as f:
+            template = f.read()
+        assert "NUNCA digas que el paciente no tiene cita si `citas_activas` trae alguna" in template
+        assert "responde con `citas_previas`" not in template
+
+    def test_mensajes_crm_rendered(self):
+        """Messages sent outside the agent are shown with their origin."""
+        prompt = _load_odontoking_prompt("591700", mensajes_crm=[{"origen": "recepción", "texto": "ya le agendé"}])
+        assert "mensajes_crm:" in prompt
+        assert "- recepción: ya le agendé" in prompt

@@ -40,8 +40,10 @@ class CrmHistoryItem(BaseModel):
     role: str = "user"
     content: str = ""
     type: str = "text"
+    # Who wrote an outbound message (ia, system, human). Absent on older CRM payloads.
+    sender: str = ""
 
-    @field_validator("role", "content", "type", mode="before")
+    @field_validator("role", "content", "type", "sender", mode="before")
     @classmethod
     def _null_to_empty(cls, v: object) -> object:
         """Coerce null history fields to empty strings.

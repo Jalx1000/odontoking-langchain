@@ -1,10 +1,13 @@
 """Unit tests for the sofo-crm inbound webhook (event parsing + agent-token auth)."""
 
+import asyncio
+import json
 from typing import cast
 
 from fastapi import Request
 
-from app.api.v1.crm import _format_flow_reply, _is_first_contact, _verify_agent_token
+from app.api.v1 import crm
+from app.api.v1.crm import _format_flow_reply, _is_first_contact, _mensajes_crm, _should_send_media_reply, _verify_agent_token
 from app.core.config import settings
 from app.schemas.crm import CrmHistoryItem, CrmWebhookEvent
 
@@ -165,3 +168,114 @@ class TestVerifyAgentToken:
         """With no WHATSAPP_AGENT_TOKEN configured, all requests are rejected."""
         monkeypatch.setattr(settings, "WHATSAPP_AGENT_TOKEN", "")
         assert _verify("Bearer anything") is False
+
+
+class TestMensajesCrm:
+    """What the CRM or reception sent is passed to the agent as context."""
+
+    def test_only_crm_and_reception_messages(self):
+        """The agent's own turns and the patient's messages are already in its memory."""
+        history = [
+            CrmHistoryItem(role="user", content="hola", sender="contact"),
+            CrmHistoryItem(role="assistant", content="soy el bot", sender="ia"),
+            CrmHistoryItem(role="assistant", content="recordatorio", sender="system"),
+            CrmHistoryItem(role="assistant", content="le escribe recepción", sender="human"),
+        ]
+        assert _mensajes_crm(history) == [
+            {"origen": "sistema", "texto": "recordatorio"},
+            {"origen": "recepción", "texto": "le escribe recepción"},
+        ]
+
+    def test_skips_empty_and_keeps_the_latest(self):
+        """A template without text adds nothing, and only the last messages are kept."""
+        history = [CrmHistoryItem(role="assistant", content=f"m{i}", sender="human") for i in range(5)]
+        history.append(CrmHistoryItem(role="assistant", content="", sender="system"))
+        assert [m["texto"] for m in _mensajes_crm(history)] == ["m2", "m3", "m4"]
+
+    def test_older_payload_without_sender(self):
+        """A CRM that does not send `sender` yet must not break the event."""
+        assert _mensajes_crm([CrmHistoryItem(role="assistant", content="x")]) == []
+
+
+class TestMediaReply:
+    """A patient who sends an attachment is told the agent cannot read it, once."""
+
+    def test_a_burst_gets_one_notice(self):
+        """Several photos in a row produce a single notice per conversation."""
+        crm._media_replied_at.clear()
+        assert _should_send_media_reply(1) is True
+        assert _should_send_media_reply(1) is False
+        assert _should_send_media_reply(2) is True
+
+    def test_notice_comes_back_after_the_ttl(self):
+        """Once the window passes the patient is told again."""
+        crm._media_replied_at.clear()
+        crm._media_replied_at[1] = crm.time.monotonic() - crm._MEDIA_REPLY_TTL - 1
+        assert _should_send_media_reply(1) is True
+
+    def test_stickers_get_no_notice(self):
+        """A sticker is not a question."""
+        assert "sticker" not in crm._MEDIA_REPLIES
+
+
+class _WebhookReq:
+    """Request stub for calling the webhook handler directly."""
+
+    def __init__(self, body: dict):
+        self._raw = json.dumps(body).encode()
+        self.headers: dict = {}
+
+    async def body(self) -> bytes:
+        return self._raw
+
+
+class _Gateway:
+    def __init__(self):
+        self.sent: list[str] = []
+
+    async def send_text(self, dest, text):
+        self.sent.append(text)
+
+
+def _deliver(monkeypatch, message: dict) -> tuple[_Gateway, list[str]]:
+    """Run one event through the webhook; returns what was sent and what reached the agent."""
+    gateway = _Gateway()
+    processed: list[str] = []
+
+    async def process(_phone, text):
+        processed.append(text)
+
+    crm._media_replied_at.clear()
+    crm._seen_message_ids.clear()
+    monkeypatch.setattr(crm.settings, "WHATSAPP_GATEWAY", "sofo-crm")
+    monkeypatch.setattr(crm.settings, "WHATSAPP_AUTO_CREATE_PERSON", False)
+    monkeypatch.setattr(crm.settings, "BUFFER_ENABLED", False)
+    monkeypatch.setattr(crm, "_verify_agent_token", lambda _r: True)
+    monkeypatch.setattr(crm, "get_gateway", lambda: gateway)
+    monkeypatch.setattr(crm, "_make_process_fn", lambda *a, **k: process)
+
+    async def run():
+        await crm.receive_crm_event.__wrapped__(_WebhookReq({**_DOC_EVENT, "message": message}))
+        await asyncio.gather(*crm._background_tasks)
+
+    asyncio.run(run())
+    return gateway, processed
+
+
+class TestWebhookAttachments:
+    """Attachments no longer vanish silently."""
+
+    def test_image_without_caption_gets_a_notice(self, monkeypatch):
+        gateway, processed = _deliver(monkeypatch, {"id": 1, "type": "image", "text": None})
+        assert gateway.sent == [crm._MEDIA_REPLIES["image"]]
+        assert processed == []
+
+    def test_caption_reaches_the_agent(self, monkeypatch):
+        gateway, processed = _deliver(monkeypatch, {"id": 2, "type": "image", "text": "este es mi carnet"})
+        assert gateway.sent == []
+        assert processed == ["este es mi carnet"]
+
+    def test_sticker_stays_ignored(self, monkeypatch):
+        gateway, processed = _deliver(monkeypatch, {"id": 3, "type": "sticker", "text": None})
+        assert gateway.sent == []
+        assert processed == []
