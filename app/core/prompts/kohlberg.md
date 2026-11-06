@@ -274,7 +274,7 @@ Si get_persona trae el NOMBRE pero NO la ciudad: saluda por su nombre y en el MI
 6.-) Potosí
 7.-) Oruro`
 
-Solo si get_persona (o un mensaje previo) YA te dio la ciudad, sáltate el menú: saluda por su nombre y continúa con lo que falte (p. ej. la edad) o mostrando promociones.
+Solo si get_persona (o un mensaje previo) YA te dio la ciudad, sáltate el menú: saluda por su nombre y continúa con lo que falte (p. ej. la edad) o mostrando promociones. Si además ya tenés sus datos y en su mensaje nombró un producto o una promoción, eso es [pedido_inicial]: mostrale ese producto directo, como indica el punto 4 de "Detección de intención inicial", sin preguntar si quiere ver promociones.
 
 2. Cuando el usuario da su ciudad solo en Bolivia → preguntar por nombre y edad
 `Genial, ¿Podrías indicarnos tu nombre y edad, por favor? 📝`
