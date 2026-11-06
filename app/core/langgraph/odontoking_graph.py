@@ -52,6 +52,7 @@ from pydantic import SecretStr
 from app.core.cache import cache_service
 from app.core.config import settings
 from app.services.database import database_service
+from app.services.media_reader import is_payment_receipt
 from app.core.langgraph.tools.crm import (
     cancel_appointment,
     cancel_appointment_tool,
@@ -138,6 +139,29 @@ _PROMPT_NAME = "odontoking.md" if settings.WHATSAPP_FLOWS_ENABLED else "odontoki
 _PROMPT_FILE = _os.path.join(_os.path.dirname(__file__), "..", "prompts", _PROMPT_NAME)
 _TZ_BOLIVIA = ZoneInfo("America/La_Paz")
 # Same words as the prompt's handoff: the patient is only told who will attend them.
+# Fixed replies: the model promised actions it never took on these ("He registrado su pago").
+_RECEIPT_REPLY = "¡Gracias! Recibí su comprobante 🙌. Se lo paso a una recepcionista para que lo revise."
+_COVERAGE_MEMBRESIA = (
+    "Verifiqué y no encontré una membresía activa con ese carnet. Si la adquirió con nosotros, puedo "
+    "pasarle con una recepcionista para que la revise, o ayudarle a agendar como paciente particular. "
+    "¿Qué prefiere? 🙌"
+)
+_COVERAGE_NO_REGISTRADO = (
+    "Verifiqué y no encontré cobertura de {seguro} con ese carnet. ¿Podría revisar el número? Si desea, "
+    "igual puedo ayudarle a agendar como paciente particular. 🙌"
+)
+_COVERAGE_NO_VIGENTE = (
+    "Verifiqué su cobertura y por ahora no figura como vigente en nuestra clínica. Le recomendamos "
+    "regularizarla con su bróker o aseguradora. Si desea, igual puedo ayudarle a agendar como paciente "
+    "particular. 🙌"
+)
+_FORM_OFFER = "¿Desea que le envíe el formulario? 😊"
+_FORM_LOOKBACK = 12  # Messages, tool results included: roughly the last few turns.
+# Accents matter here: "envié" claims it, "envíe" only offers it.
+_FORM_CLAIM_RE = re.compile(
+    r"\b(?:re)?envié\b.{0,40}\bformularios?\b|\bformularios?\b.{0,20}\b(?:re)?envié\b"
+)
+
 _HANDOFF_EN_HORARIO = (
     "Entendido. Estoy avisando a una recepcionista para que le atienda personalmente. Recordarle que "
     "nuestro horario de atención es de 07:30 a 18:30, Lunes a viernes, y de 09:00 a 12:00, Sábados. 🙌"
@@ -631,6 +655,48 @@ def _extract_mensaje(content: str) -> str:
     return text
 
 
+def _coverage_reply(content: Any) -> Optional[str]:
+    """Fixed reply for coverage that is not active, or None when the model should answer.
+
+    In conversación 4118 the model skipped this result and sent the booking form. An unknown result
+    (INDETERMINADO, retry) stays with the model: it must not be told the coverage is missing.
+    """
+    try:
+        result = json.loads(content)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(result, dict) or result.get("has_insurance") is not False:
+        return None
+    status = str(result.get("status") or "").upper()
+    if not status or status == "INDETERMINADO" or result.get("retry") or result.get("error"):
+        return None
+    seguro = str(result.get("seguro") or result.get("seguro_name") or "su seguro")
+    if "membres" in _norm_cancel(seguro):
+        return _COVERAGE_MEMBRESIA
+    if status == "NO_REGISTRADO":
+        return _COVERAGE_NO_REGISTRADO.format(seguro=seguro)
+    return _COVERAGE_NO_VIGENTE
+
+
+def _claims_form_sent(text: str) -> bool:
+    """True when the reply says a form was sent: free text the graph has to back up."""
+    return _FORM_CLAIM_RE.search(text.lower()) is not None
+
+
+def _form_sent_recently(messages: list[Any]) -> bool:
+    """True when enviar_formulario worked in the latest turns. "El formulario que le envié" can be older."""
+    for message in messages[-_FORM_LOOKBACK:]:
+        if not isinstance(message, ToolMessage) or message.name != "enviar_formulario":
+            continue
+        try:
+            result = json.loads(message.content)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(result, dict) and result.get("success") is not False:
+            return True
+    return False
+
+
 def _tool_requests_handoff(content: Any) -> bool:
     """True when a tool failed and said the conversation must go to reception."""
     try:
@@ -851,6 +917,11 @@ class OdontokingAgent:
         if failed:
             logger.warning("agent_tool_handoff", tools=[o.name for o in failed], conversation_id=conversation_id)
             reply = AIMessage(content=_tool_handoff_reply(bool(meta.get("fuera_de_horario"))))
+            return Command(update={"messages": [*outputs, reply]}, goto=END)
+
+        coverage = next((r for o in outputs if o.name == "verify_insurance" and (r := _coverage_reply(o.content))), None)
+        if coverage:
+            reply = AIMessage(content=json.dumps({"mensaje": coverage}, ensure_ascii=False))
             return Command(update={"messages": [*outputs, reply]}, goto=END)
 
         return Command(update={"messages": outputs}, goto="chat")
@@ -1162,6 +1233,27 @@ class OdontokingAgent:
             if intake_reply is not None:
                 return intake_reply
 
+        # ── Payment receipt short-circuit ──
+        # The prompt already says to derive these, but the model answered "He registrado su pago" and
+        # derived 2 of 9 times. Text and handoff are fixed so what the patient reads is what happens.
+        if settings.WHATSAPP_FLOWS_ENABLED and is_payment_receipt(last_user_text):
+            logger.info("agent_receipt_handoff", wa_id=wa_id, conversation_id=conversation_id)
+            if handoff_callback is not None:
+                try:
+                    await handoff_callback(
+                        {
+                            "action": "handoff",
+                            "motivo": "Comprobante de pago",
+                            "fuera_de_horario": bool(fuera_de_horario),
+                        }
+                    )
+                except Exception as ho_err:
+                    logger.warning("agent_handoff_callback_failed", wa_id=wa_id, error=str(ho_err))
+            self._schedule_persist(
+                wa_id, [HumanMessage(content=last_user_text), AIMessage(content=_RECEIPT_REPLY)]
+            )
+            return _prepend_saludo(_RECEIPT_REPLY, es_primer_contacto)
+
         # ── Reminder reply short-circuit (C1/C2) ──
         # A "Sí"/"No" answering an appointment reminder is deterministic: if there is exactly ONE
         # unanswered reminder and the text is a clear yes/no, register it directly instead of trusting
@@ -1288,6 +1380,9 @@ class OdontokingAgent:
 
             # Extract the patient-facing text, tolerating malformed/multiple JSON objects.
             mensaje = _extract_mensaje(last_content)
+            if _claims_form_sent(mensaje) and not _form_sent_recently(response.get("messages", [])):
+                logger.warning("agent_form_claim_blocked", wa_id=wa_id, preview=mensaje[:80])
+                mensaje = _FORM_OFFER
             # First message of the conversation → ensure the reply opens with the welcome greeting,
             # whatever the intent (the CRM delivers this text before the form).
             mensaje = _prepend_saludo(mensaje, es_primer_contacto)

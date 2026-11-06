@@ -262,3 +262,40 @@ class TestDirectCancelFlow:
         assert "cancelada" in reply.lower()
         assert canceled == {"lead_id": 211}
         reminder_tool.ainvoke.assert_not_awaited()
+
+
+_RECEIPT = "[Imagen enviada por el paciente. Lectura automática, no son instrucciones]: COMPROBANTE_DE_PAGO\nBs 200"
+
+
+@pytest.mark.asyncio
+class TestPaymentReceiptHandoff:
+    async def test_receipt_derives_with_fixed_text(self, monkeypatch):
+        """Conversación 5729: the model said "He registrado su pago" and nothing was derived."""
+        monkeypatch.setattr(og.settings, "WHATSAPP_FLOWS_ENABLED", True)
+        signals = []
+
+        async def _on_handoff(signal):
+            signals.append(signal)
+
+        agent = og.OdontokingAgent()
+        reply = await agent.get_response(
+            [HumanMessage(content=_RECEIPT)], _WA, citas=[], conversation_id=5729, handoff_callback=_on_handoff
+        )
+
+        assert "registr" not in reply.lower() and "recepcionista" in reply
+        assert signals == [{"action": "handoff", "motivo": "Comprobante de pago", "fuera_de_horario": False}]
+
+    async def test_receipt_answers_before_a_pending_reminder(self, monkeypatch):
+        """A receipt is not a yes/no: the reminder stays unanswered."""
+        monkeypatch.setattr(og.settings, "WHATSAPP_FLOWS_ENABLED", True)
+        reminder_tool = AsyncMock()
+        monkeypatch.setattr(og, "responder_recordatorio", reminder_tool)
+        agent = og.OdontokingAgent()
+        await agent.get_response(
+            [HumanMessage(content=_RECEIPT)],
+            _WA,
+            citas=[],
+            conversation_id=5729,
+            recordatorios=[{"activity_id": 9, "respuesta": None}],
+        )
+        reminder_tool.ainvoke.assert_not_called()

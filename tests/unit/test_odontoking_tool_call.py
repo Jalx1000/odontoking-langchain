@@ -5,6 +5,7 @@ also an Exception). The tool-execution node must let that signal bubble up to pa
 graph, while still converting ordinary tool errors into an error ToolMessage.
 """
 
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,7 +15,15 @@ from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command
 
-from app.core.langgraph.odontoking_graph import OdontokingAgent, _extract_handoff, _extract_mensaje
+from app.core.langgraph.odontoking_graph import (
+    _FORM_LOOKBACK,
+    OdontokingAgent,
+    _claims_form_sent,
+    _coverage_reply,
+    _extract_handoff,
+    _extract_mensaje,
+    _form_sent_recently,
+)
 from app.schemas import GraphState
 
 
@@ -283,3 +292,74 @@ async def test_failed_tool_ends_the_turn_in_a_compiled_graph():
     assert len(llm_calls) == 1
     assert "recepcionista" in result["messages"][-1].content
     assert _extract_handoff(result["messages"][-1].content) is not None
+
+
+def _coverage(status, seguro="Nacional Vida", **extra):
+    return json.dumps({"has_insurance": status == "VIGENTE", "status": status, "seguro": seguro, **extra})
+
+
+class TestCoverageReply:
+    def test_active_coverage_stays_with_the_model(self):
+        assert _coverage_reply(_coverage("VIGENTE")) is None
+
+    def test_unknown_result_never_says_it_is_missing(self):
+        assert _coverage_reply(_coverage("INDETERMINADO", retry=True)) is None
+        assert _coverage_reply(_coverage("INDETERMINADO", error="timeout")) is None
+        assert _coverage_reply("no es json") is None
+
+    def test_membership_never_sends_the_patient_to_a_broker(self):
+        """Conversación 4013: a clinic membership answered with "regularícela con su bróker"."""
+        reply = _coverage_reply(_coverage("NO_REGISTRADO", "Membresía Odontoking"))
+        assert "bróker" not in reply and "recepcionista" in reply
+
+    def test_not_registered_names_the_insurer(self):
+        reply = _coverage_reply(_coverage("NO_REGISTRADO"))
+        assert "Nacional Vida" in reply and "bróker" not in reply
+
+    def test_overdue_keeps_the_broker_advice(self):
+        assert "bróker" in _coverage_reply(_coverage("EN_MORA", "Alianza"))
+
+
+@pytest.mark.asyncio
+async def test_inactive_coverage_ends_the_turn_before_any_form():
+    """Conversación 4118: NO_REGISTRADO came back and the model sent the booking form anyway."""
+    agent = OdontokingAgent()
+    agent.tools_by_name = {"verify_insurance": _failing_tool(_coverage("NO_REGISTRADO"))}
+
+    command = await agent._tool_call(_state_with_tool_call("verify_insurance"), {"metadata": {}})
+
+    assert command.goto == END
+    assert "Nacional Vida" in json.loads(command.update["messages"][-1].content)["mensaje"]
+
+
+@pytest.mark.asyncio
+async def test_active_coverage_returns_to_the_model():
+    agent = OdontokingAgent()
+    agent.tools_by_name = {"verify_insurance": _failing_tool(_coverage("VIGENTE"))}
+
+    command = await agent._tool_call(_state_with_tool_call("verify_insurance"), {"metadata": {}})
+
+    assert command.goto == "chat"
+
+
+def _form_result(ok=True):
+    return ToolMessage(content=json.dumps({"success": ok}), name="enviar_formulario", tool_call_id="c")
+
+
+class TestFormClaim:
+    def test_detects_the_claim(self):
+        assert _claims_form_sent("No hay problema. Si desea, le envié un formulario para que complete sus datos")
+        assert _claims_form_sent("Le reenvié el formulario para reprogramar")
+        assert _claims_form_sent("complete el formulario que le envié")
+
+    def test_ignores_an_offer(self):
+        assert not _claims_form_sent("¿Desea que le envíe el formulario?")
+        assert not _claims_form_sent("Hola, ¿en qué le ayudo?")
+
+    def test_a_working_form_backs_the_claim(self):
+        assert _form_sent_recently([_form_result()])
+
+    def test_a_failed_or_old_form_does_not(self):
+        assert not _form_sent_recently([_form_result(ok=False)])
+        assert not _form_sent_recently([_form_result(), *[AIMessage(content="x")] * _FORM_LOOKBACK])
+        assert not _form_sent_recently([])

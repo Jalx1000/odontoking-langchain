@@ -94,6 +94,7 @@ async def verify_insurance(wa_id: str, ci_paciente: str, seguro_paciente: str) -
                 "has_insurance": has_insurance,
                 "status": status or "INDETERMINADO",
                 "message": result.get("message"),
+                "seguro": seguro_paciente,
                 "seguro_name": result.get("seguro_name"),
                 "patient_name": _extract_patient_name(result.get("data") or {}),
             }
